@@ -114,7 +114,7 @@ class SpyreVocabParallelEmbedding(VocabParallelEmbedding):
         Returns:
             Embedding output [num_tokens, embedding_dim] in weight dtype
         """
-        if x.device.type == 'spyre':
+        if x.device.type == "spyre":
             return self._forward_spyre_impl(x)
 
         # CPU path via custom op

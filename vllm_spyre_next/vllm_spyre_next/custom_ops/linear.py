@@ -104,7 +104,7 @@ class SpyreMergedColumnParallelLinear(SpyreLinearBase, MergedColumnParallelLinea
     # `MergedColumnParallelLinear` is a PluggableLayer and we register a class as OOT,
     # thus, the `forward` method is invoked when the OOT is triggered.
     def forward(self, input_: torch.Tensor):
-        if input_.device.type == 'spyre':
+        if input_.device.type == "spyre":
             bias = self.bias.data if (self.bias is not None and not self.skip_bias_add) else None
             output = self.maybe_compiled_forward_spyre(input_, self.weight.data, bias)
         else:
@@ -129,7 +129,7 @@ class SpyreQKVParallelLinear(SpyreLinearBase, QKVParallelLinear):
         self._init_spyre_linear("spyre_qkv_parallel_linear")
 
     def forward(self, input_: torch.Tensor):
-        if input_.device.type == 'spyre':
+        if input_.device.type == "spyre":
             bias = self.bias.data if (self.bias is not None and not self.skip_bias_add) else None
             output = self.maybe_compiled_forward_spyre(input_, self.weight.data, bias)
             # D2H contiguous output to CPU BEFORE model code calls .split().
@@ -164,7 +164,7 @@ class SpyreRowParallelLinear(SpyreLinearBase, RowParallelLinear):
     def forward(self, input_: torch.Tensor):
         # Always compute on Spyre. When input is CPU (e.g. o_proj after
         # CPU attention), H2D first so output is on Spyre for residual add.
-        spyre_input = input_ if input_.device.type == 'spyre' else input_.to(self._target_device)
+        spyre_input = input_ if input_.device.type == "spyre" else input_.to(self._target_device)
         bias = self.bias.data if (self.bias is not None and not self.skip_bias_add) else None
         output = self.maybe_compiled_forward_spyre(spyre_input, self.weight.data, bias)
 
@@ -191,7 +191,11 @@ def _make_spyre_linear_op_func(op_name: str):
 @lru_cache(maxsize=1)
 def register():
     """Register Spyre linear custom ops."""
-    for op_name in ["spyre_merged_col_linear", "spyre_qkv_parallel_linear", "spyre_row_parallel_linear"]:
+    for op_name in [
+        "spyre_merged_col_linear",
+        "spyre_qkv_parallel_linear",
+        "spyre_row_parallel_linear",
+    ]:
         direct_register_custom_op(
             op_name=op_name,
             op_func=_make_spyre_linear_op_func(op_name),

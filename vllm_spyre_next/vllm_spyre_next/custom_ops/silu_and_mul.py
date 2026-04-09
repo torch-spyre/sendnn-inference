@@ -91,7 +91,7 @@ class SpyreSiluAndMul(SiluAndMul):
         Returns:
             Activated output tensor [..., d]
         """
-        if x.device.type == 'spyre':
+        if x.device.type == "spyre":
             x1, x2 = torch.chunk(x, 2, dim=-1)
             return self.maybe_compiled_forward_spyre(x1, x2)
         return self._forward_spyre_impl(x)

@@ -22,6 +22,8 @@ from contextlib import contextmanager
 import torch
 import torch.nn as nn
 
+import numpy as np
+
 from vllm.config import VllmConfig
 from vllm.logger import init_logger
 from vllm.model_executor.model_loader import get_model
@@ -193,6 +195,7 @@ class TorchSpyreModelRunner(GPUModelRunner):
         # the CPU attention backend can access scale buffers without device
         # mismatch.
         from vllm.model_executor.layers.attention.attention import Attention
+
         for module in self.model.modules():
             if isinstance(module, Attention):
                 module._apply = lambda fn, recurse=True, _m=module: _m
@@ -207,7 +210,8 @@ class TorchSpyreModelRunner(GPUModelRunner):
         # Compile for Spyre (no-op if enforce_eager=True)
         self._compile_for_spyre()
 
-        # Wrap model so ALL forward() calls to the entire model, for example in execute_model, _dummy_run, etc.,
+        # Wrap model so ALL forward() calls to the entire model,
+        # for example in execute_model, _dummy_run, etc.,
         # automatically convert Spyre outputs to CPU. This ensures downstream
         # indexing (logits_indices), lm_head (CPU weights), and sampling all
         # receive CPU tensors without needing per-call-site overrides.

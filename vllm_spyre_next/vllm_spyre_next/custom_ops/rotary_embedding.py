@@ -48,7 +48,7 @@ class SpyreRotaryEmbedding(SpyreCpuFallbackMixin, RotaryEmbedding):
 
         Falls back to custom op path for CPU inputs.
         """
-        if query.device.type == 'spyre':
+        if query.device.type == "spyre":
             return self.forward_impl_direct(positions, query, key)
 
         output_query = torch.empty_like(query)
@@ -100,7 +100,11 @@ class SpyreRotaryEmbedding(SpyreCpuFallbackMixin, RotaryEmbedding):
         )
 
         out_query = convert(result_query, device=target_device, dtype=target_dtype)
-        out_key = convert(result_key, device=target_device, dtype=target_dtype) if result_key is not None else None
+        out_key = (
+            convert(result_key, device=target_device, dtype=target_dtype)
+            if result_key is not None
+            else None
+        )
         return out_query, out_key
 
     def forward_impl(

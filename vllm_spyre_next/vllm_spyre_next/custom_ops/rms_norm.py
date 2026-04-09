@@ -31,12 +31,11 @@ References:
 """
 
 import torch
-import torch.utils._pytree as pytree
 
 from vllm.logger import init_logger
 from vllm.model_executor.layers.layernorm import RMSNorm
 
-from .utils import register_layer, convert
+from .utils import register_layer
 
 logger = init_logger(__name__)
 
@@ -166,7 +165,6 @@ class SpyreRMSNorm(RMSNorm):
             self.weight.data if self.has_weight else None,
             residual,
         )
-        
 
 
 def register():
