@@ -30,11 +30,12 @@ References:
 """
 
 import torch
+import torch.utils._pytree as pytree
 
 from vllm.logger import init_logger
 from vllm.model_executor.layers.layernorm import RMSNorm
 
-from .utils import register_layer
+from .utils import register_layer, convert
 
 logger = init_logger(__name__)
 
@@ -159,15 +160,6 @@ class SpyreRMSNorm(RMSNorm):
         if self.variance_size_override is not None:
             raise NotImplementedError("TODO: variance_size_override not yet implemented")
 
-        orig_batch_size = x.shape[0]
-
-        # Pad to minimum batch size of 64 (Spyre constraint)
-        if x.shape[0] < _SPYRE_MIN_BATCH_SIZE:
-            pad_amount = _SPYRE_MIN_BATCH_SIZE - x.shape[0]
-            x = torch.nn.functional.pad(x, (0, 0, 0, pad_amount))
-            if residual is not None:
-                residual = torch.nn.functional.pad(residual, (0, 0, 0, pad_amount))
-
         # Execute compiled kernel on Spyre device
         return self.maybe_compiled_forward_spyre(
             x,
@@ -176,6 +168,7 @@ class SpyreRMSNorm(RMSNorm):
             self.weight.data if self.has_weight else None,
             residual,
         )
+        
 
 
 def register():

@@ -96,12 +96,10 @@ class SpyreVocabParallelEmbedding(VocabParallelEmbedding):
         self._layer_name = register_layer(self, "spyre_vocab_parallel_embedding")
 
     def forward_oot(self, x: torch.Tensor) -> torch.Tensor:
-        """OOT forward pass using custom op to bypass torch.compile.
+        """OOT forward pass — calls _forward_spyre_impl directly.
 
-        Delegates to torch.ops.vllm.spyre_vocab_parallel_embedding which
-        retrieves this layer from the layer registry and calls
-        _forward_spyre_impl outside the compilation graph. This prevents
-        torch.compile from inlining the Spyre-specific operations.
+        No custom op boundary is used because the Spyre runtime does not
+        support in-device tensor copy_.
 
         Args:
             x: Token index tensor [num_tokens] (int64)
@@ -109,18 +107,18 @@ class SpyreVocabParallelEmbedding(VocabParallelEmbedding):
         Returns:
             Embedding output [num_tokens, embedding_dim] in weight dtype
         """
+        if x.device.type == 'spyre':
+            return self._forward_spyre_impl(x)
+
+        # CPU path via custom op
         output = torch.empty(
             *x.shape,
             self.embedding_dim,
             dtype=self.weight.dtype,
             device=x.device,
         )
-
-        # Custom op call - executes outside torch.compile graph
         torch.ops.vllm.spyre_vocab_parallel_embedding(x, output, self._layer_name)
-
         output = convert(output, dtype=self._weight_target_dtype, device=self._target_device)
-
         return output
 
     @staticmethod

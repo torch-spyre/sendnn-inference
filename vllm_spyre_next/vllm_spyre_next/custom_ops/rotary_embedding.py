@@ -40,11 +40,17 @@ class SpyreRotaryEmbedding(SpyreCpuFallbackMixin, RotaryEmbedding):
         query: torch.Tensor,
         key: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
-        """Forward pass using custom op to bypass torch.compile.
+        """Forward pass — bypasses custom op when on Spyre.
 
-        Pre-allocates output tensors on the input device (Spyre), then
-        delegates to the custom op which executes on CPU.
+        When inputs are on Spyre, calls forward_impl_direct which executes
+        on CPU and returns results converted to the original device, avoiding
+        the custom op boundary (Spyre does not support in-device copy_).
+
+        Falls back to custom op path for CPU inputs.
         """
+        if query.device.type == 'spyre':
+            return self.forward_impl_direct(positions, query, key)
+
         output_query = torch.empty_like(query)
 
         if key is not None:
@@ -67,6 +73,35 @@ class SpyreRotaryEmbedding(SpyreCpuFallbackMixin, RotaryEmbedding):
             self.prefix,
         )
         return output_query, None
+
+    def forward_impl_direct(
+        self,
+        positions: torch.Tensor,
+        query: torch.Tensor,
+        key: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        """Direct forward: CPU execution, returns results on original device.
+
+        Bypasses custom op boundary entirely. Moves inputs to CPU, calls
+        upstream forward_native, converts results back to the input device.
+        """
+        target_device = query.device
+        target_dtype = query.dtype
+
+        cpu_positions = convert(positions, device="cpu")
+        cpu_query = convert(query, device="cpu")
+        cpu_key = convert(key, device="cpu")
+
+        result_query, result_key = RotaryEmbedding.forward_native(
+            self,
+            cpu_positions,
+            cpu_query,
+            cpu_key,
+        )
+
+        out_query = convert(result_query, device=target_device, dtype=target_dtype)
+        out_key = convert(result_key, device=target_device, dtype=target_dtype) if result_key is not None else None
+        return out_query, out_key
 
     def forward_impl(
         self,

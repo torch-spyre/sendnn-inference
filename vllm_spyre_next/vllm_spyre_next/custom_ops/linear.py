@@ -32,6 +32,7 @@ from vllm.logger import init_logger
 from vllm.utils.torch_utils import direct_register_custom_op
 from vllm.model_executor.layers.linear import (
     MergedColumnParallelLinear,
+    QKVParallelLinear,
     RowParallelLinear,
 )
 
@@ -103,11 +104,46 @@ class SpyreMergedColumnParallelLinear(SpyreLinearBase, MergedColumnParallelLinea
     # `MergedColumnParallelLinear` is a PluggableLayer and we register a class as OOT,
     # thus, the `forward` method is invoked when the OOT is triggered.
     def forward(self, input_: torch.Tensor):
-        output = input_.new_empty(
-            input_.shape[0],
-            self.output_size_per_partition,
-        )
-        torch.ops.vllm.spyre_merged_col_linear(input_, output, self._layer_name)
+        if input_.device.type == 'spyre':
+            bias = self.bias.data if (self.bias is not None and not self.skip_bias_add) else None
+            output = self.maybe_compiled_forward_spyre(input_, self.weight.data, bias)
+        else:
+            output = input_.new_empty(
+                input_.shape[0],
+                self.output_size_per_partition,
+            )
+            torch.ops.vllm.spyre_merged_col_linear(input_, output, self._layer_name)
+
+        if not self.return_bias:
+            return output
+        output_bias = self.bias if self.skip_bias_add else None
+        return output, output_bias
+
+
+@QKVParallelLinear.register_oot(name="QKVParallelLinear")
+class SpyreQKVParallelLinear(SpyreLinearBase, QKVParallelLinear):
+    """Spyre QKVParallelLinear (TP=1 only)."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._init_spyre_linear("spyre_qkv_parallel_linear")
+
+    def forward(self, input_: torch.Tensor):
+        if input_.device.type == 'spyre':
+            bias = self.bias.data if (self.bias is not None and not self.skip_bias_add) else None
+            output = self.maybe_compiled_forward_spyre(input_, self.weight.data, bias)
+            # D2H contiguous output to CPU BEFORE model code calls .split().
+            # Spyre cannot D2H strided views (from split), so we move the
+            # contiguous F.linear result to CPU while it's still contiguous.
+            # Downstream: rotary_emb runs on CPU, attention runs on CPU,
+            # o_proj (RowParallelLinear) converts back to Spyre for residual add.
+            output = output.cpu()
+        else:
+            output = input_.new_empty(
+                input_.shape[0],
+                self.output_size_per_partition,
+            )
+            torch.ops.vllm.spyre_qkv_parallel_linear(input_, output, self._layer_name)
 
         if not self.return_bias:
             return output
@@ -126,12 +162,11 @@ class SpyreRowParallelLinear(SpyreLinearBase, RowParallelLinear):
     # `SpyreRowParallelLinear` is a PluggableLayer and we register a class as OOT,
     # thus, the `forward` method is invoked when the OOT is triggered.
     def forward(self, input_: torch.Tensor):
-        output = input_.new_empty(
-            *input_.shape[:-1],
-            self.output_size_per_partition,
-        )
-
-        torch.ops.vllm.spyre_row_parallel_linear(input_, output, self._layer_name)
+        # Always compute on Spyre. When input is CPU (e.g. o_proj after
+        # CPU attention), H2D first so output is on Spyre for residual add.
+        spyre_input = input_ if input_.device.type == 'spyre' else input_.to(self._target_device)
+        bias = self.bias.data if (self.bias is not None and not self.skip_bias_add) else None
+        output = self.maybe_compiled_forward_spyre(spyre_input, self.weight.data, bias)
 
         if not self.return_bias:
             return output
@@ -156,7 +191,7 @@ def _make_spyre_linear_op_func(op_name: str):
 @lru_cache(maxsize=1)
 def register():
     """Register Spyre linear custom ops."""
-    for op_name in ["spyre_merged_col_linear", "spyre_row_parallel_linear"]:
+    for op_name in ["spyre_merged_col_linear", "spyre_qkv_parallel_linear", "spyre_row_parallel_linear"]:
         direct_register_custom_op(
             op_name=op_name,
             op_func=_make_spyre_linear_op_func(op_name),
