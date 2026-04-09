@@ -160,7 +160,7 @@ def _get_paths_from_yaml() -> str:
 
 def _cache_root() -> Path:
     """
-    Cache directory for cloned tests (sticky between runs)
+    Cache directory for cloned tests (persists across runs)
     """
     # Respect XDG if present, fallback to ~/.cache
     xdg = os.environ.get("XDG_CACHE_HOME")
@@ -171,7 +171,8 @@ def _cache_root() -> Path:
 def _extract_vllm_commit_from_pyproject() -> str:
     """
     Extract the vLLM git reference from pyproject.toml [tool.uv.sources] section.
-    Returns None if not found or parseable.
+    Raises FileNotFoundError if pyproject.toml is missing, or KeyError
+    if the expected source entry is not found.
     """
     pyproject_path = Path(__file__).parent.parent.parent / "pyproject.toml"
     if not pyproject_path.exists():
@@ -498,7 +499,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         elif allow_entry.mode == "xfail_strict":
             item.add_marker(pytest.mark.xfail(strict=True))
 
-    # Reorder tests so that tests with "model" in the name run first
+    # Reorder tests so that tests with "uses_subprocess" marker run first
     _reorder_tests_by_name(items)
 
 
@@ -582,7 +583,7 @@ def _spyre_default_vllm_config(monkeypatch):
         compilation_config=CompilationConfig(custom_ops=["all"]),
     )
     with set_current_vllm_config(config), set_forward_context(None, config):
-        # Set forward context so custom ops can access no_compile_layers
+        # Set forward context so custom ops can access the vllm config
         yield
 
 

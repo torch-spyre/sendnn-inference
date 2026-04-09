@@ -99,7 +99,7 @@ def main():
     t0 = time.time()
     outputs = llm.generate(prompts, sampling_params)
     print(
-        "Time elaspsed for %d tokens is %.2f sec"
+        "Time elapsed for %d tokens is %.2f sec"
         % (len(outputs[0].outputs[0].token_ids), time.time() - t0)
     )
     print("===============")

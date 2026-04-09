@@ -733,4 +733,10 @@ class PoolingInputBatch(BaseInputBatch[PoolingRequestState]):
             prompt_token_ids=prompt_token_ids,
             pooling_params=pooling_params,
             pooling_states=[],
+            prompt_token_ids_cpu=(
+                prompt_token_ids.cpu()
+                if prompt_token_ids is not None
+                and any(p.requires_token_ids for p in pooling_params)
+                else None
+            ),
         )

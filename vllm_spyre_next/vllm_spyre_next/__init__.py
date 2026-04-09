@@ -23,13 +23,13 @@ def register_ops():
 
 def _init_logging():
     """Setup logging, extending from the vLLM logging config"""
-    config = dict[str, Any]()
+    config: dict[str, Any] = {}
 
     if VLLM_CONFIGURE_LOGGING:
         config = {**DEFAULT_LOGGING_CONFIG}
 
     if VLLM_LOGGING_CONFIG_PATH:
-        # Error checks must be done already in vllm.logger.py
+        # Error checks must already be done in vllm.logger
         with open(VLLM_LOGGING_CONFIG_PATH, encoding="utf-8") as file:
             config = json.loads(file.read())
 

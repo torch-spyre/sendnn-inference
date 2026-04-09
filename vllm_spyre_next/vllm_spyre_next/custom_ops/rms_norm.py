@@ -15,9 +15,10 @@ Architecture:
 
 Spyre Device Constraints:
     - Minimum batch size: 64 (due to spyre constraint, automatically padded)
-    - Device dtype: float16 (converted for CPU)
-    - Output dtype: bfloat16 (converted on CPU)
-    - Algorithm: Transpose-based computation with torch.ops.spyre.full()
+    - Computations performed in torch.float16:
+      Input (dtype defined by model / user) converted to torch.float16 for
+      operations on spyre and then converted back to original dtype for cpu.
+    - Epsilon as tensor: Instead of a scalar, a tensor is created via torch.full()
 
 Limitations:
     Currently the implementation in `forward_spyre` is similar to the
@@ -101,18 +102,15 @@ class SpyreRMSNorm(RMSNorm):
         hidden_size: int,
         weight: torch.Tensor | None = None,
         residual: torch.Tensor | None = None,
-        variance_size_override: int | None = None,
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
-        """Spyre-optimized RMS norm using transpose-based computation (active implementation).
+        """Spyre-optimized RMS norm implementation.
 
         Based on upstream vLLM's forward_static (vllm/model_executor/layers/layernorm.py)
-        but adapted for Spyre device with transpose operations and torch.ops.spyre.full().
-        Compiled separately via torch.compile in __init__.
+        but adapted for Spyre device. Compiled separately via torch.compile in __init__.
 
         Key differences from upstream:
-            - Uses transpose(-1, -2) for computation efficiency on Spyre
-            - Creates epsilon tensor via torch.ops.spyre.full() instead of scalar
-            - No dtype promotion support (torch-spyre limitation)
+            - Creates epsilon tensor via torch.full() instead of scalar
+            - No dtype promotion support to torch.float32 (torch-spyre limitation)
         """
         if residual is not None:
             x = x + residual
@@ -155,7 +153,7 @@ class SpyreRMSNorm(RMSNorm):
             residual: Optional residual tensor
 
         Returns:
-            Normalized output, or (output, residual) tuple if residual provided.
+            Normalized output [batch_size, hidden_size] in input dtype
         """
         if self.variance_size_override is not None:
             raise NotImplementedError("TODO: variance_size_override not yet implemented")

@@ -112,6 +112,8 @@ class TorchSpyrePlatform(CpuPlatform):
         # ---- worker ----
         parallel_config = vllm_config.parallel_config
         if parallel_config.worker_cls == "auto":
+            # "auto" defaults to the CPUWorker as we inherit from the CpuPlatform
+            # Override with TorchSpyreWorker for Spyre-specific functionality
             worker_class = "vllm_spyre_next.v1.worker.spyre_worker.TorchSpyreWorker"
             logger.info("Loading worker from: %s", worker_class)
             parallel_config.worker_cls = worker_class
