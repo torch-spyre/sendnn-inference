@@ -89,7 +89,9 @@ class SpyreSiluAndMul(SiluAndMul):
             Activated output tensor [..., d]
         """
         if x.device.type == "spyre":
-            return self._forward_spyre_impl(x)
+            # Use torch.chunk (not slicing) — Spyre doesn't support strided views
+            x1, x2 = torch.chunk(x, 2, dim=-1)
+            return self.maybe_compiled_forward_spyre(x1, x2)
 
         d = x.shape[-1] // 2
         output = torch.empty(x.shape[:-1] + (d,), dtype=x.dtype, device=x.device)

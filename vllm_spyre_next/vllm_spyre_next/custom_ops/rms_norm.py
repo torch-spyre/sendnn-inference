@@ -35,7 +35,7 @@ import torch
 from vllm.logger import init_logger
 from vllm.model_executor.layers.layernorm import RMSNorm
 
-from .utils import register_layer
+from .utils import convert, register_layer
 
 logger = init_logger(__name__)
 
@@ -163,14 +163,28 @@ class SpyreRMSNorm(RMSNorm):
         if self.variance_size_override is not None:
             raise NotImplementedError("TODO: variance_size_override not yet implemented")
 
+        out_dtype = x.dtype
+        out_device = x.device
+
         # Execute compiled kernel on Spyre device
-        return self.maybe_compiled_forward_spyre(
-            x,
+        outs = self.maybe_compiled_forward_spyre(
+            convert(x, self._target_device, self._target_dtype),
             self.variance_epsilon,
             self.hidden_size,
-            self.weight.data if self.has_weight else None,
-            residual,
+            convert(self.weight.data, self._target_device, self._target_dtype)
+            if self.has_weight
+            else None,
+            convert(residual, self._target_device, self._target_dtype)
+            if residual is not None
+            else None,
         )
+
+        # Convert back to original device/dtype
+        if isinstance(outs, tuple):
+            return tuple(
+                convert(o, device=out_device, dtype=out_dtype) for o in outs
+            )
+        return convert(outs, device=out_device, dtype=out_dtype)
 
 
 def register():

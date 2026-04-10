@@ -129,6 +129,8 @@ class SpyreVocabParallelEmbedding(VocabParallelEmbedding):
         # Custom op call - executes outside torch.compile graph
         torch.ops.vllm.spyre_vocab_parallel_embedding(x, output, self._layer_name)
 
+        # Push output to Spyre so hidden_states flows on Spyre between layers
+        output = convert(output, dtype=self._weight_target_dtype, device=self._target_device)
         return output
 
     @staticmethod
