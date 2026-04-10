@@ -103,10 +103,12 @@ class SpyreVocabParallelEmbedding(VocabParallelEmbedding):
         )
 
     def forward_oot(self, x: torch.Tensor) -> torch.Tensor:
-        """OOT forward pass — calls _forward_spyre_impl directly.
+        """OOT forward pass with Spyre fast-path.
 
-        No custom op boundary is used because the Spyre runtime does not
-        support in-device tensor copy_.
+        When input is on Spyre, calls _forward_spyre_impl directly to avoid
+        the custom op boundary (Spyre does not support in-device copy_).
+        Falls back to the opaque custom op for CPU inputs, which keeps
+        fullgraph=True compatibility (custom ops are graph nodes, not breaks).
 
         Args:
             x: Token index tensor [num_tokens] (int64)
@@ -117,15 +119,16 @@ class SpyreVocabParallelEmbedding(VocabParallelEmbedding):
         if x.device.type == "spyre":
             return self._forward_spyre_impl(x)
 
-        # CPU path via custom op
         output = torch.empty(
             *x.shape,
             self.embedding_dim,
             dtype=self.weight.dtype,
             device=x.device,
         )
+
+        # Custom op call - executes outside torch.compile graph
         torch.ops.vllm.spyre_vocab_parallel_embedding(x, output, self._layer_name)
-        output = convert(output, dtype=self._weight_target_dtype, device=self._target_device)
+
         return output
 
     @staticmethod
@@ -173,7 +176,6 @@ class SpyreVocabParallelEmbedding(VocabParallelEmbedding):
             lambda el: convert(el, dtype=out_dtype, device=out_device),
             out,
         )
-        # return out
 
 
 def _op_func(

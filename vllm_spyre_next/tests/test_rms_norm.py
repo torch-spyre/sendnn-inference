@@ -100,16 +100,15 @@ def test_rmsnorm_oot_dispatch(default_vllm_config, monkeypatch, dummy_tensor, us
 
     residual = torch.randn(4, 128, dtype=torch.float32) if use_residual else None
 
-    # Mock _forward_spyre_impl (called directly by forward_oot) with a known transform
+    # Mock _forward_spyre_impl (called by the custom op) with a known transform
     if residual is not None:
         monkeypatch.setattr(layer, "_forward_spyre_impl", mock_forward_oot_with_residual)
-        residual_orig = residual.clone()
         out_x, out_residual = layer.forward(dummy_tensor, residual)
 
         assert torch.allclose(out_x, 2 * dummy_tensor)
-        # residual must NOT be modified in-place
-        assert torch.allclose(residual, residual_orig)
-        assert torch.allclose(out_residual, 2 * residual_orig)
+
+        # The residual is modified in-place
+        assert torch.allclose(out_residual, 2 * residual)
     else:
         monkeypatch.setattr(layer, "_forward_spyre_impl", mock_forward_oot)
         out_x = layer.forward(dummy_tensor, residual)

@@ -35,7 +35,7 @@ from vllm.utils.torch_utils import direct_register_custom_op
 from vllm.model_executor.layers.activation import SiluAndMul
 from functools import lru_cache
 
-from .utils import convert, register_layer, get_layer, _fake_impl, register_spyre_dispatch
+from .utils import convert, register_layer, get_layer, _fake_impl
 
 logger = init_logger(__name__)
 
@@ -75,15 +75,12 @@ class SpyreSiluAndMul(SiluAndMul):
         )
 
     def forward_oot(self, x: torch.Tensor) -> torch.Tensor:
-        """OOT forward pass — calls compiled kernel directly.
+        """OOT forward pass with Spyre fast-path.
 
-        No custom op boundary is used because the Spyre runtime does not
-        support in-device tensor copy_.
-
-        When input is already on Spyre, splits using torch.chunk (which
-        produces contiguous tensors) to avoid the CPU round-trip in
-        _forward_spyre_impl — Spyre does not support D2H copy from
-        custom op dispatch.
+        When input is on Spyre, calls _forward_spyre_impl directly to avoid
+        the custom op boundary (Spyre does not support in-device copy_).
+        Falls back to the opaque custom op for CPU inputs, which keeps
+        fullgraph=True compatibility (custom ops are graph nodes, not breaks).
 
         Args:
             x: Input tensor [..., 2*d]
@@ -92,9 +89,15 @@ class SpyreSiluAndMul(SiluAndMul):
             Activated output tensor [..., d]
         """
         if x.device.type == "spyre":
-            x1, x2 = torch.chunk(x, 2, dim=-1)
-            return self.maybe_compiled_forward_spyre(x1, x2)
-        return self._forward_spyre_impl(x)
+            return self._forward_spyre_impl(x)
+
+        d = x.shape[-1] // 2
+        output = torch.empty(x.shape[:-1] + (d,), dtype=x.dtype, device=x.device)
+
+        # Custom op call - executes outside torch.compile graph
+        torch.ops.vllm.spyre_siluandmul(x, output, self._layer_name)
+
+        return output
 
     @staticmethod
     def forward_spyre(x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:
@@ -122,7 +125,8 @@ class SpyreSiluAndMul(SiluAndMul):
 
         The Spyre device does not currently support strided tensor views (slicing),
         so the input is split into its two halves on the CPU before being
-        transferred to the device.
+        transferred to the device.  Once tensor slicing is supported this method
+        should revert to the simpler single-tensor path (see commented-out block).
 
         Execution steps:
             1. Slice on CPU: split x into x1 = x[..., :d] and x2 = x[..., d:]
@@ -139,21 +143,19 @@ class SpyreSiluAndMul(SiluAndMul):
             the original dtype.
         """
         x_dtype = x.dtype
+        x_device = x.device
 
-        # Workaround: Spyre doesn't support strided views (slicing).
-        # Move to CPU for slicing, then transfer halves to Spyre.
-        x = convert(x, device="cpu")
+        # Note: Workaround with tensor slicing on CPU
         d = x.shape[-1] // 2
         x1 = x[..., :d]
         x2 = x[..., d:]
-
         out = self.maybe_compiled_forward_spyre(
             convert(x1, self._target_device, self._target_dtype),
             convert(x2, self._target_device, self._target_dtype),
         )
 
         # Transfer back to original device and restore original dtype
-        return convert(out, "cpu", x_dtype)
+        return convert(out, x_device, x_dtype)
 
 
 def _op_func(
@@ -176,5 +178,4 @@ def register():
         mutates_args=["output"],
         fake_impl=_fake_impl,
     )
-    register_spyre_dispatch("spyre_siluandmul", _op_func)
     logger.info("Registered custom op: SpyreSiluAndMul")
