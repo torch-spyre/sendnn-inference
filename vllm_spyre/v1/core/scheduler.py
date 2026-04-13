@@ -508,7 +508,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         for req in running:
             # current tkv of the (left aligned) decode sequence
             dec_req_tkv = (
-                n_blocks + 1
+                n_blocks + 2
             ) * self.block_size + req.num_computed_tokens % self.block_size
             n_generated_output_tokens = req.num_computed_tokens - req.num_prompt_tokens
             dec_req_max_tkv = dec_req_tkv + (req.max_tokens - n_generated_output_tokens) - 1
