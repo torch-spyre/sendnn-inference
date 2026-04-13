@@ -91,6 +91,5 @@ def test_batch_tkv_padding_alignment_bug(
         sched_output = scheduler.schedule()
         output = model_runner.execute_model(sched_output)
         scheduler.update_from_output(sched_output, output)
-        print(f"Scheduler running: {len(scheduler.running)}")
         running = len(scheduler.running) > 0
 
