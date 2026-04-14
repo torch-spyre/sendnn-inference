@@ -2,7 +2,6 @@
 
 Self-contained provider that handles:
 - Device transfer: CPU → Spyre → compute → CPU
-- Padding: batch < 64 → pad to Spyre minimum batch size
 - No dtype promotion (torch-spyre limitation, stays in input dtype)
 - Epsilon as tensor (scalar broadcast limited on Spyre)
 """
@@ -19,7 +18,7 @@ def _supports_spyre(x, weight, epsilon, variance_size=None):
     Falls back to native provider when
     variance_size is set (not yet supported on Spyre).
     """
-    return variance_size is None
+    return variance_size is None and all(t.dtype == torch.float16 for t in [x, weight])
 
 
 @ir.ops.rms_norm.register_impl("spyre", supports_args=_supports_spyre, supported=True)
@@ -41,15 +40,12 @@ def spyre_rms_norm(
       falls back to native.
     """
     target_device = torch.device("spyre")
-    target_dtype = torch.float16
-
-    x_device = x.device
-    x_dtype = x.dtype
+    original_device = x.device
 
     # Transfer to Spyre
-    x = convert(x, target_device, target_dtype)
+    x = convert(x, target_device)
     if weight is not None:
-        weight = convert(weight, target_device, target_dtype)
+        weight = convert(weight, target_device)
 
     # Compute (no float32 upcast, epsilon as tensor)
     eps_tensor = torch.full(x.shape, epsilon, dtype=x.dtype, device=x.device)
@@ -59,5 +55,5 @@ def spyre_rms_norm(
     if weight is not None:
         x = x * weight
 
-    # Transfer back to original device/dtype, remove padding
-    return convert(x, x_device, x_dtype)
+    # Transfer back to original device, remove padding
+    return convert(x, original_device)

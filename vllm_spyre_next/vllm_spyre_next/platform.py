@@ -104,22 +104,14 @@ class TorchSpyrePlatform(CpuPlatform):
         cls.log_server_boot(vllm_config)
 
         # ---- compilation / custom ops ----
-        # Upstream defaults custom_ops to ["none"] when backend == "inductor",
-        # which disables all CustomOp forward_oot methods. Spyre needs
-        # forward_oot to run (device sandwich, padding, IR dispatch to Spyre
-        # provider). Force custom ops ON so dispatch_forward selects forward_oot
-        # regardless of compilation mode.
         compilation_config = vllm_config.compilation_config
-        custom_ops = compilation_config.custom_ops
-        if "none" in custom_ops:
-            custom_ops.remove("none")
-        if "all" not in custom_ops:
-            custom_ops.append("all")
 
-        # Must use torch wrapping (True) so ir.ops.rms_norm() routes through
+        # Must use ir_enable_torch_wrap wrapping=True.
+        # With this, for example ir.ops.rms_norm() routes through
         # torch.ops.vllm_ir.rms_norm (a registered custom op). This creates
         # an opaque boundary that Dynamo captures without tracing inside.
         # Inductor. The provider therefore runs eagerly at each forward call.
+        # This is necessary because the D2H and H2D transfers are not traceable.
         compilation_config.ir_enable_torch_wrap = True
 
         # ---- worker ----
