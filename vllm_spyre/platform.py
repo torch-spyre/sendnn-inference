@@ -25,14 +25,14 @@ if TYPE_CHECKING:
     from vllm.config import ModelConfig, VllmConfig
     from vllm.pooling_params import PoolingParams
     from vllm.sampling_params import SamplingParams
-    from vllm.inputs import ProcessorInputs, TokenInputs
+    from vllm.inputs import EngineInput, TokensInput
 else:
     ModelConfig = None
     VllmConfig = None
     SamplingParams = None
     PoolingParams = None
-    ProcessorInputs = None
-    TokenInputs = None
+    EngineInput = None
+    TokensInput = None
 from vllm.platforms import Platform, PlatformEnum
 
 import vllm_spyre.envs as envs_spyre
@@ -427,7 +427,7 @@ class SpyrePlatform(Platform):
     @classmethod
     def validate_request(
         cls,
-        processed_inputs: "ProcessorInputs",
+        processed_inputs: "EngineInput",
         params: "SamplingParams | PoolingParams",
     ) -> None:
         """Raises if this request is unsupported on this platform"""
@@ -457,7 +457,7 @@ class SpyrePlatform(Platform):
         if "prompt_token_ids" not in processed_inputs:
             # Can't do any extra validation on embedding-only inputs
             return
-        prompt_len = len(cast(TokenInputs, processed_inputs)["prompt_token_ids"])
+        prompt_len = len(cast(TokensInput, processed_inputs)["prompt_token_ids"])
 
         max_tokens = 0
         if params is not None and params.max_tokens is not None:

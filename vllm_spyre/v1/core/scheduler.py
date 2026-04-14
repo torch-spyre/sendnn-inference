@@ -505,13 +505,13 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
 
         # Compute token lengths for all running requests (decode batch)
         decode_req_max_tkvs = []
+        # Decide new tkv based on max of current tkv or new request prompt tokens
+        dec_req_tkv = max(self.tkv, request.num_prompt_tokens)
         for req in running:
-            # current tkv of the (left aligned) decode sequence
-            dec_req_tkv = (
-                n_blocks + 1
-            ) * self.block_size + req.num_computed_tokens % self.block_size
             n_generated_output_tokens = req.num_computed_tokens - req.num_prompt_tokens
             dec_req_max_tkv = dec_req_tkv + (req.max_tokens - n_generated_output_tokens) - 1
+            # Account for potential padding block
+            dec_req_max_tkv += self.block_size
             decode_req_max_tkvs.append(dec_req_max_tkv)
 
         # Sort decode requests token lengths in ascending order

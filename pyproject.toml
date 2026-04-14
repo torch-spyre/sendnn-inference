@@ -12,10 +12,10 @@ readme = "README.md"
 license = {text = "Apache 2"}
 dependencies = [
     "fms-model-optimizer[fp8]>=0.8.2,<0.9",
-    "ibm-fms>=1.8.0,<2.0",
+    "ibm-fms>=1.9.0,<2",
     # NB: use strict < with the next patch version to not exclude versions with
     # build metadata suffixes
-    "vllm>=0.18.0,<0.18.2",
+    "vllm>=0.19.0,<0.19.1",
     
     # Specific torch version overrides handled by uv
     "torch",
@@ -76,8 +76,8 @@ override-dependencies = [
     # requests is used by many dependencies, make sure it's patched for CVEs
     "requests>=2.32.4",
 
-    # temporarily bypass vllm 0.18.0 compressed-tensors==0.13.0 requirement
-    # TODO: remove once vllm pins correct version bounds
+    # vllm 0.18.0 pins compressed-tensors==0.13.0; override to 0.14.0.1
+    # TODO: remove once minimum vllm is bumped past 0.18.0
     "compressed-tensors==0.14.0.1",
 ]
 # This adds constraints to all dependent build environments, which will ensure everything is built
@@ -87,7 +87,7 @@ build-constraint-dependencies = ["torch==2.10.0"]
 extra-build-variables = { vllm = { VLLM_TARGET_DEVICE = "empty" } }
 
 [tool.uv.sources]
-vllm = { git = "https://github.com/vllm-project/vllm", rev = "v0.18.1" }
+vllm = { git = "https://github.com/vllm-project/vllm", rev = "v0.19.0" }
 torch = [
   { index = "pytorch-cpu" },
 ]

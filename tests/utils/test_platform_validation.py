@@ -9,10 +9,8 @@ import os
 from unittest.mock import MagicMock
 import pytest
 from types import SimpleNamespace
-
-
 from vllm import SamplingParams
-from vllm.inputs.data import token_inputs
+from vllm.inputs import tokens_input
 from vllm.pooling_params import PoolingParams
 from vllm.sampling_params import StructuredOutputsParams
 from vllm_spyre.platform import SpyrePlatform
@@ -43,7 +41,7 @@ class TestStructuredOutputValidation:
 
         assert params.structured_outputs is not None
 
-        SpyrePlatform.validate_request(token_inputs(prompt_token_ids=[0]), params)
+        SpyrePlatform.validate_request(tokens_input(prompt_token_ids=[0]), params)
 
         assert params.structured_outputs is None
 
@@ -53,7 +51,7 @@ class TestStructuredOutputValidation:
             max_tokens=20, structured_outputs=StructuredOutputsParams(json_object=True)
         )
 
-        SpyrePlatform.validate_request(token_inputs(prompt_token_ids=[0]), params)
+        SpyrePlatform.validate_request(tokens_input(prompt_token_ids=[0]), params)
 
         assert len(caplog_vllm_spyre.records) > 0
         warning_record = caplog_vllm_spyre.records[0]
@@ -74,7 +72,7 @@ class TestStructuredOutputValidation:
 
         assert params.structured_outputs is not None
 
-        SpyrePlatform.validate_request(token_inputs(prompt_token_ids=[0]), params)
+        SpyrePlatform.validate_request(tokens_input(prompt_token_ids=[0]), params)
 
         assert params.structured_outputs is None
 
@@ -96,7 +94,7 @@ class TestStructuredOutputValidation:
             "top_k": params.top_k,
         }
 
-        SpyrePlatform.validate_request(token_inputs(prompt_token_ids=[0]), params)
+        SpyrePlatform.validate_request(tokens_input(prompt_token_ids=[0]), params)
 
         # Verify other params are unchanged
         assert params.max_tokens == original_values["max_tokens"]
@@ -111,7 +109,7 @@ class TestStructuredOutputValidation:
         pooling_params = PoolingParams()
 
         # Should not raise any errors and should return early
-        SpyrePlatform.validate_request(token_inputs(prompt_token_ids=[0]), pooling_params)
+        SpyrePlatform.validate_request(tokens_input(prompt_token_ids=[0]), pooling_params)
 
         # PoolingParams don't have structured_outputs, so just verify no exception
         assert True  # If we got here, the early return worked

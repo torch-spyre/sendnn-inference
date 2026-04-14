@@ -381,7 +381,7 @@ class SpyreWorker(WorkerBase):
         self.cache_config.num_gpu_blocks = num_gpu_blocks
         self.cache_config.num_cpu_blocks = num_cpu_blocks
 
-    def load_model(self):
+    def load_model(self, *, load_dummy_weights: bool = False) -> None:
         assert self._env_initialized
 
         is_local = os.path.isdir(self.model_config.model)

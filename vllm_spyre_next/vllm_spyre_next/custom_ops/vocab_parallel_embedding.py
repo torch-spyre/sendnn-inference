@@ -95,6 +95,13 @@ class SpyreVocabParallelEmbedding(VocabParallelEmbedding):
 
         self._layer_name = register_layer(self, "spyre_vocab_parallel_embedding")
 
+        logger.debug_once(
+            "SpyreVocabParallelEmbedding: Dispatch: enabled=%s, Forward method=%s, Compiled=%s",
+            self.enabled(),
+            self._forward_method.__name__,
+            self.maybe_compiled_forward_spyre is not self.forward_spyre,
+        )
+
     def forward_oot(self, x: torch.Tensor) -> torch.Tensor:
         """OOT forward pass using custom op to bypass torch.compile.
 
