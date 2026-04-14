@@ -62,9 +62,8 @@ class SpyreCausalLM(nn.Module):
         # number of right pads
         self.n_pads_right = 0
 
-        self._mask_dtype = (
-            torch.float16 if SpyrePlatform.is_backend_sendnn_enabled() else torch.float32
-        )
+        self.on_spyre = SpyrePlatform.is_backend_sendnn_enabled()
+        self._mask_dtype = torch.float16 if self.on_spyre else torch.float32
 
         self.config = self.resolve_hf_config(vllm_config)
 
@@ -94,7 +93,7 @@ class SpyreCausalLM(nn.Module):
             max_prompt_length=max_prompt_length,
             max_decode_length=max_decode_length,
             distributed_strategy="tp" if self.parallel_config.world_size > 1 else None,
-            sendnn_dynamic=SpyrePlatform.is_backend_sendnn_enabled(),
+            sendnn_dynamic=self.on_spyre,
             rank=rank,
             world_size=self.parallel_config.world_size,
         )
@@ -140,8 +139,6 @@ class SpyreCausalLM(nn.Module):
         self.past_key_value_states: list[
             tuple[torch.Tensor | ScaledTensor, torch.Tensor | ScaledTensor]
         ] = []
-
-        self.on_spyre = SpyrePlatform.is_backend_sendnn_enabled()
 
     def load_weights(
         self,
