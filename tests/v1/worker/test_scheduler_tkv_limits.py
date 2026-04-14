@@ -24,7 +24,8 @@ def test_scheduler_tkv_limits(monkeypatch: pytest.MonkeyPatch):
     violates the TKV limit of 131072.
 
     Expected behavior (when bug is fixed):
-    - Scheduler should reject requests that would cause TKV limit violations
+    - Scheduler should hold back the next request in queue
+      until it is guaranteed not to violate TKV limits later
     - Test should pass without exceeding hardware constraints
 
     Current behavior (with bug):
