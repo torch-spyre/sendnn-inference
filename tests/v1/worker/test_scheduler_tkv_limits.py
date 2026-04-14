@@ -11,23 +11,22 @@ from v1.worker.mock_model import InstrumentedModelRunner
 from spyre_util import REFERENCE_MODELS
 from vllm_spyre.platform import SpyrePlatform
 
+
 @pytest.mark.cpu
 @pytest.mark.chunked_prefill
-def test_scheduler_tkv_limits(
-    monkeypatch: pytest.MonkeyPatch
-):
+def test_scheduler_tkv_limits(monkeypatch: pytest.MonkeyPatch):
     """
     Test that the scheduler correctly enforces the TKV limit constraint.
-    
+
     The test creates 5 requests with varying prompt lengths and a large
     max_tokens value, then runs the scheduler to completion. With the bug
     present, the scheduler incorrectly accepts a batch configuration that
     violates the TKV limit of 131072.
-    
+
     Expected behavior (when bug is fixed):
     - Scheduler should reject requests that would cause TKV limit violations
     - Test should pass without exceeding hardware constraints
-    
+
     Current behavior (with bug):
     - Scheduler accepts invalid batch configurations
     - Test will fail with assertion errors
@@ -49,12 +48,12 @@ def test_scheduler_tkv_limits(
     scheduler.max_batch_tkv_limit = 131072
     SpyrePlatform._max_batch_tkv_limit = 131072
     monkeypatch.setenv("VLLM_DT_MAX_BATCH_TKV_LIMIT", "131072")
-    
+
     # Define prompt lengths for each request
     # This combination is designed to trigger the TKV limit bug
     prompt_lengths = [940, 412, 969, 949, 11946]
     max_tokens = 16384
-    
+
     # Create and add all requests to the scheduler
     requests = []
     for request_id, prompt_length in enumerate(prompt_lengths):
@@ -70,7 +69,7 @@ def test_scheduler_tkv_limits(
         ).request
         requests.append(request)
         scheduler.add_request(request)
-    
+
     # Run the scheduler loop until all requests complete
     # With the bug present, the scheduler will incorrectly accept a batch
     # configuration that exceeds the TKV limit
