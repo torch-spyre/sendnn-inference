@@ -10,6 +10,7 @@ from vllm.platforms import current_platform
 from vllm.utils.torch_utils import set_random_seed
 from vllm.v1.worker.cpu_worker import CPUWorker
 from vllm.v1.worker.gpu_worker import init_worker_distributed_environment
+from vllm.logger import init_logger
 
 from vllm_spyre_next.custom_ops import register_all
 from vllm_spyre_next.v1.worker.spyre_model_runner import TorchSpyreModelRunner
@@ -68,13 +69,25 @@ class TorchSpyreWorker(CPUWorker):
             torch.device("spyre"),
         )
 
-    def compile_or_warm_up_model(self) -> float:
-        set_random_seed(self.model_config.seed)
-        self.model_runner.warming_up_model()
-        return self.compilation_config.compilation_time
-
     def sleep(self, level: int = 1) -> None:
         logger.warning("Sleep mode is not supported on Spyre, ignoring.")
 
     def wake_up(self, tags: list[str] | None = None) -> None:
         logger.warning("Sleep mode is not supported on Spyre, ignoring.")
+
+    def compile_or_warm_up_model(self):
+        # FIXME: Work around for https://github.com/torch-spyre/torch-spyre/issues/1420
+        # Ensure registration of Spyre decompositions before FX Graph tracing
+        import torch._inductor.decomposition
+        from torch_spyre._inductor.decompositions import spyre_decompositions
+
+        for op, impl in spyre_decompositions.items():
+            if "addm" in op.name():
+                logger.warning(
+                    "FIXME: Adding %s decomposition to work-around torch-spyre crash", op.name()
+                )
+                torch._inductor.decomposition.decompositions[op] = impl
+                
+        set_random_seed(self.model_config.seed)
+        self.model_runner.warming_up_model()
+        return self.compilation_config.compilation_time
