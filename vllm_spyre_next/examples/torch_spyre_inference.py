@@ -24,6 +24,7 @@ def parse_args():
     parser.add_argument("--model", type=str, default="ibm-ai-platform/micro-g3.3-8b-instruct-1b")
     parser.add_argument("--max_model_len", "--max-model-len", type=int, default=2048)
     parser.add_argument("--max_num_seqs", "--max-num-seqs", type=int, default=2)
+    parser.add_argument("--max_num_batched_tokens", "--max-num-batched-tokens", type=int, default=2)
     parser.add_argument("--tp", type=int, default=1)
     parser.add_argument("--num-prompts", "-n", type=int, default=3)
     parser.add_argument(
@@ -34,6 +35,7 @@ def parse_args():
         "This list is repeated until prompts are exhausted.",
     )
     parser.add_argument("--compare-with-cpu", action=argparse.BooleanOptionalAction)
+    parser.add_argument("--attention_backend", "--attention-backend", type=str, default=None)
     parser.add_argument(
         "--enforce_eager",
         "--enforce-eager",
@@ -95,7 +97,11 @@ def main():
         "Compose a LinkedIn post about your company's latest product release.",
     ]
 
-    prompts = [template.format(instr) for instr in instructions]
+    simple_prompt = [
+        "What are IBMs main businesses?",
+    ]
+
+    prompts = simple_prompt + [template.format(instr) for instr in instructions]
 
     prompts = prompts * (args.num_prompts // len(prompts) + 1)
     prompts = prompts[0 : args.num_prompts]
@@ -111,6 +117,8 @@ def main():
     # lazy import to switch between old an new platform:
     # platform registration happens at import time
     from vllm import LLM, SamplingParams
+    from vllm.config import AttentionConfig
+    from vllm.v1.attention.backends.registry import AttentionBackendEnum
     from vllm.config import CompilationConfig
 
     sampling_params = [
@@ -124,10 +132,13 @@ def main():
         max_model_len=args.max_model_len,
         max_num_seqs=max_num_seqs,
         tensor_parallel_size=args.tp,
-        max_num_batched_tokens=1024,
+        max_num_batched_tokens=args.max_num_batched_tokens,
         dtype="float16",
         enforce_eager=args.enforce_eager,
         compilation_config=CompilationConfig(custom_ops=args.custom_ops),
+        attention_config=AttentionConfig(backend=AttentionBackendEnum[args.attention_backend])
+        if args.attention_backend is not None
+        else None,
     )
 
     # Generate texts from the prompts. The output is a list of RequestOutput objects

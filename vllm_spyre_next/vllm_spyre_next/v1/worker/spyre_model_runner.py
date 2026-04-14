@@ -4,11 +4,13 @@ Inherits from GPUModelRunner to preserve the CpuGpuBuffer
 dual-buffer pattern where .cpu = CPU staging and .gpu = Spyre device tensors.
 
 Data flow:
-- self.device = CPU. Input tensors (input_ids, positions) stay on CPU.
-- Embedding: CPU int input → CPU compute → float16 output on Spyre.
+- self.device = CPU. Buffers and scatter ops stay on CPU.
+- _SpyreModelWrapper converts input_ids/positions to Spyre int64 at the
+  model call boundary.
+- Embedding: Spyre int64 input → Spyre compute → float16 output on Spyre.
 - Hidden states flow on Spyre between decoder layers.
 - Attention block: Spyre input → CPU compute → Spyre output.
-- _SpyreOutputWrapper converts final hidden_states to CPU for downstream
+- _SpyreModelWrapper converts final hidden_states to CPU for downstream
   operations (logits indexing, lm_head, sampling).
 
 Float .gpu buffers are on Spyre (via _make_buffer / SpyreCpuGpuBuffer).
@@ -89,22 +91,38 @@ class SpyreCpuGpuBuffer(CpuGpuBuffer):
         return dst
 
 
-class _SpyreOutputWrapper:
-    """Transparent wrapper that converts model forward() outputs to CPU.
+class _SpyreModelWrapper:
+    """Transparent wrapper that converts model inputs/outputs at the boundary.
 
-    The model's final hidden_states come out on Spyre. Downstream operations
-    (indexing via logits_indices, compute_logits/lm_head, sampling) all run
-    on CPU. Wrapping at the model level ensures ALL call sites get CPU
-    outputs — both execute_model (via _model_forward) and _dummy_run
+    Input conversion (CPU → Spyre):
+        input_ids and positions arrive as CPU tensors (int32/int64) because
+        self.device=CPU in the runner and buffer scatter ops run on CPU.
+        Convert them to Spyre int64 here so the embedding layer takes the
+        Spyre fast-path and hidden_states flow on Spyre from the start.
+
+    Output conversion (Spyre → CPU):
+        The model's final hidden_states come out on Spyre. Downstream
+        operations (indexing via logits_indices, compute_logits/lm_head,
+        sampling) all run on CPU.
+
+    Wrapping at the model level ensures ALL call sites get the right
+    device — both execute_model (via _model_forward) and _dummy_run
     (which calls self.model(...) directly).
-
     """
 
-    def __init__(self, model: nn.Module):
+    def __init__(self, model: nn.Module, spyre_device: torch.device):
         # Use object.__setattr__ to avoid triggering __setattr__ override
         object.__setattr__(self, "_model", model)
+        object.__setattr__(self, "_spyre_device", spyre_device)
 
     def __call__(self, *args, **kwargs):
+        # Convert integer tensor inputs to Spyre int64
+        for key in ('input_ids', 'positions'):
+            val = kwargs.get(key)
+            if val is not None:
+                kwargs[key] = convert(val, dtype=torch.int64,
+                                      device=self._spyre_device)
+
         result = self._model(*args, **kwargs)
         if isinstance(result, torch.Tensor):
             if result.device.type == "spyre":
@@ -158,11 +176,10 @@ class TorchSpyreModelRunner(GPUModelRunner):
         with _torch_cuda_wrapper():
             super().__init__(vllm_config, torch.device("cpu"))
 
-        # Keep self.device as CPU. Input tensors (input_ids, positions) stay
-        # on CPU — the embedding layer takes CPU int input, computes on CPU,
-        # and returns float16 on Spyre. Hidden states then flow on Spyre
-        # between decoder layers. _SpyreOutputWrapper converts final output
-        # back to CPU for logits indexing and lm_head.
+        # Keep self.device as CPU so buffer management (scatter, copy) stays
+        # on CPU. _SpyreModelWrapper converts input_ids/positions to Spyre
+        # int64 at the model call boundary, so the embedding takes the Spyre
+        # fast-path and hidden_states flow on Spyre between decoder layers.
         # _make_buffer (overridden below) places float .gpu tensors on Spyre
         # regardless of self.device.
 
@@ -215,7 +232,7 @@ class TorchSpyreModelRunner(GPUModelRunner):
         # automatically convert Spyre outputs to CPU. This ensures downstream
         # indexing (logits_indices), lm_head (CPU weights), and sampling all
         # receive CPU tensors without needing per-call-site overrides.
-        self.model = _SpyreOutputWrapper(self.model)
+        self.model = _SpyreModelWrapper(self.model, self._spyre_device)
 
         logger.info("Model loaded and compiled for Spyre.")
 
@@ -262,10 +279,10 @@ class TorchSpyreModelRunner(GPUModelRunner):
     def warming_up_model(self) -> None:
         """Run a dummy forward pass to warm up the model.
 
-        With self.device=CPU, _dummy_run creates CPU int inputs (input_ids,
-        positions). The embedding layer takes CPU input and outputs on Spyre.
-        _SpyreOutputWrapper converts final hidden_states back to CPU, so
-        downstream indexing (logits_indices on CPU) works without errors.
+        _dummy_run creates CPU int inputs, but _SpyreModelWrapper converts
+        input_ids/positions to Spyre int64 at the model boundary. The
+        embedding thus runs on Spyre and hidden_states flow on Spyre.
+        _SpyreModelWrapper also converts final outputs back to CPU.
 
         When enforce_eager=False, this also triggers torch.compile.
         """
@@ -305,7 +322,7 @@ class TorchSpyreModelRunner(GPUModelRunner):
         # Return the unwrapped model for isinstance checks
         # (e.g. is_text_generation_model in get_supported_tasks).
         model = self.model
-        if isinstance(model, _SpyreOutputWrapper):
+        if isinstance(model, _SpyreModelWrapper):
             model = model._model
         # Unwrap torch.compile's OptimizedModule (has _orig_mod attribute)
         if hasattr(model, "_orig_mod"):

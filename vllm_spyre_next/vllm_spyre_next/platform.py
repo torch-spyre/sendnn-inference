@@ -4,6 +4,7 @@ from string import Template
 import multiprocessing
 import importlib.metadata
 
+
 # When running this plugin on a Mac, we assume it's for local development
 # purposes. However, due to a compatibility issue with vLLM, which overrides
 # the Triton module with a placeholder, vLLM may fail to load on macOS. To
@@ -17,6 +18,7 @@ if sys.platform.startswith("darwin"):
 from vllm.logger import init_logger
 from vllm.platforms import PlatformEnum
 from vllm.platforms.cpu import CpuPlatform
+from vllm.v1.attention.backends.registry import AttentionBackendEnum, register_backend
 
 if TYPE_CHECKING:
     # NB: We can't eagerly import many things from vllm since vllm.config
@@ -35,12 +37,19 @@ class TorchSpyrePlatform(CpuPlatform):
     device_name: str = "cpu"
     device_type: str = "cpu"
 
+
     # Primary dispatch key for direct_register_custom_op. Kept as CPU
     # because some custom ops receive CPU-only tensors (e.g. rotary_embedding).
     # All ops are ALSO registered for PrivateUse1 (Spyre) via
     # register_spyre_dispatch() in each module's register() function,
     # so dispatch works regardless of tensor device.
     dispatch_key: str = "CPU"
+
+    # Register the PyTorch Native Attention implementation as the CUSTOM backend
+    register_backend(
+        AttentionBackendEnum.CUSTOM,
+        "vllm_spyre_next.v1.attention.backends.spyre_attn.SpyreAttentionBackend",
+    )
 
     @classmethod
     def get_device_name(cls, device_id: int = 0) -> str:
@@ -81,17 +90,6 @@ class TorchSpyrePlatform(CpuPlatform):
         logger.info(message, version, model_name)
 
     @classmethod
-    def get_attn_backend_cls(
-        cls,
-        selected_backend,
-        attn_selector_config,
-        num_heads=None,
-    ) -> str:
-        """Use a wrapped cpu attention backend:
-        Upstream CPU attention backend with Spyre<->CPU device transfers."""
-        return "vllm_spyre_next.attention_backend.SpyreCPUAttentionBackend"
-
-    @classmethod
     def apply_config_platform_defaults(cls, vllm_config: VllmConfig) -> None:
         """Set Spyre-specific config defaults before vLLM's defaulting logic."""
         from vllm.config import CompilationMode
@@ -104,6 +102,15 @@ class TorchSpyrePlatform(CpuPlatform):
         # CPU tensors that the Spyre backend cannot codegen. Once all layers
         # run natively on Spyre, this can be removed to enable compilation.
         vllm_config.model_config.enforce_eager = True
+
+    def get_attn_backend_cls(cls, selected_backend, *args, **kwargs) -> str:
+        if selected_backend == AttentionBackendEnum.CUSTOM:
+            return AttentionBackendEnum.CUSTOM.get_path()
+        else:
+            if selected_backend is None:
+                # return dummy backend for spyre model runner
+                return "vllm_spyre_next.attention_backend.SpyreCPUAttentionBackend"
+            return super().get_attn_backend_cls(selected_backend, *args, **kwargs)
 
     @classmethod
     def check_and_update_config(cls, vllm_config: VllmConfig) -> None:

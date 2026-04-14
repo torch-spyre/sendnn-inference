@@ -62,9 +62,8 @@ class SpyreCausalLM(nn.Module):
         # number of right pads
         self.n_pads_right = 0
 
-        self._mask_dtype = (
-            torch.float16 if SpyrePlatform.is_backend_sendnn_enabled() else torch.float32
-        )
+        self.on_spyre = SpyrePlatform.is_backend_sendnn_enabled()
+        self._mask_dtype = torch.float16 if self.on_spyre else torch.float32
 
         self.config = self.resolve_hf_config(vllm_config)
 
@@ -94,7 +93,7 @@ class SpyreCausalLM(nn.Module):
             max_prompt_length=max_prompt_length,
             max_decode_length=max_decode_length,
             distributed_strategy="tp" if self.parallel_config.world_size > 1 else None,
-            sendnn_dynamic=SpyrePlatform.is_backend_sendnn_enabled(),
+            sendnn_dynamic=self.on_spyre,
             rank=rank,
             world_size=self.parallel_config.world_size,
         )
@@ -431,7 +430,13 @@ class SpyreCausalLM(nn.Module):
             attn_name=self.attention_name,
         )
 
-        logits, self.past_key_value_states = output
+        # The second item in the output tuple is the KV cache.
+        # However, on spyre these are ghost tensors- the data in these tensors does not reflect the
+        # actual kv cache data on the device. They exist only for proper compilation, so we don't
+        # waste any time assigning these tensors back to anything.
+        logits, kv_cache = output
+        if not self.on_spyre:
+            self.past_key_value_states = kv_cache
 
         if is_prompt:
             # assert that indeed received the last block of logits
