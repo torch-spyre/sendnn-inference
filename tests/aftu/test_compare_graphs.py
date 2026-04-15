@@ -13,6 +13,7 @@ from graph_compare_utils import (
     compare_graphs,
     get_model_path,
     run_inference_py_and_get_graphs,
+    save_normalized_graphs,
 )
 from spyre_util import ModelInfo, environ_checkpoint, patch_environment
 from vllm import LLM
@@ -78,6 +79,7 @@ def test_compare_graphs_chunked_prefill(
         print(f"\n[DEBUG] AFTU graphs directory: {aftu_tmpdir}")
         print(f"[DEBUG] AFTU graph count: {len(aftu_graphs)}")
         print(f"[DEBUG] AFTU graph keys: {sorted(aftu_graphs.keys())}")
+        save_normalized_graphs(aftu_graphs, aftu_tmpdir)
 
     # VLLM
 
@@ -135,6 +137,7 @@ def test_compare_graphs_chunked_prefill(
             print(f"\n[DEBUG] vLLM graphs directory: {vllm_tmpdir}")
             print(f"[DEBUG] vLLM graph count: {len(vllm_graphs)}")
             print(f"[DEBUG] vLLM graph keys: {sorted(vllm_graphs.keys())}")
+            save_normalized_graphs(vllm_graphs, tmpdir)
         elif tmpdir_ctx:
             tmpdir_ctx.__exit__(None, None, None)
 
@@ -147,8 +150,14 @@ def test_compare_graphs_chunked_prefill(
     if not graphs_match and keep_graphs:
         print("\n[DEBUG] Graph comparison failed. Directories preserved:")
         print(f"[DEBUG]   AFTU: {aftu_tmpdir}")
+        print(f"[DEBUG]     - Normalized: {aftu_tmpdir}/normalized_graphs/")
         print(f"[DEBUG]   vLLM: {vllm_tmpdir}")
+        print(f"[DEBUG]     - Normalized: {vllm_tmpdir}/normalized_graphs/")
         print(f"[DEBUG] Missing in vLLM: {set(aftu_graphs.keys()) - set(vllm_graphs.keys())}")
         print(f"[DEBUG] Missing in AFTU: {set(vllm_graphs.keys()) - set(aftu_graphs.keys())}")
+        print("\n[DEBUG] Tip: Use 'diff -u' on normalized graphs for cleaner comparison:")
+        print(
+            f"[DEBUG]   diff -u {aftu_tmpdir}/normalized_graphs/ {vllm_tmpdir}/normalized_graphs/"
+        )
 
     assert graphs_match

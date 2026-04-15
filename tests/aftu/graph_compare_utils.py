@@ -58,6 +58,27 @@ def collect_graph_files(input_dir: str) -> dict[str, tuple[str, str]]:
     return filemap
 
 
+def save_normalized_graphs(graph_map: dict[str, tuple[str, str]], output_dir: str) -> None:
+    """Save normalized versions of graphs for easier debugging.
+
+    Args:
+        graph_map: Dictionary mapping graph keys to (filepath, normalized_content) tuples
+        output_dir: Directory to save normalized graphs
+    """
+    normalized_dir = path.join(output_dir, "normalized_graphs")
+    os.makedirs(normalized_dir, exist_ok=True)
+
+    for key, (original_path, normalized_content) in graph_map.items():
+        # Create a clean filename from the key
+        filename = f"graph{key}.ops"
+        normalized_path = path.join(normalized_dir, filename)
+
+        with open(normalized_path, "w") as f:
+            f.write(normalized_content)
+
+    print(f"[DEBUG] Saved {len(graph_map)} normalized graphs to: {normalized_dir}")
+
+
 def diff_graph(a_filepath, a_file, b_filepath, b_file) -> Iterator[str]:
     return difflib.unified_diff(
         a_file.split("\n"), b_file.split("\n"), fromfile=a_filepath, tofile=b_filepath
