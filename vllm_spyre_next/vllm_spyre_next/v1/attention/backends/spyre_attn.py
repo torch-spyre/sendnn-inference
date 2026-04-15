@@ -177,11 +177,11 @@ class SpyreAttentionImpl(AttentionImpl[SpyreAttentionMetadata]):
         """4D broadcast attention for Spyre: handles batched GQA.
 
         Args:
-            q: Query [B*nkv, nqpkv, query_len, head_size]
-            k: Key [B*nkv, 1, kv_len, head_size]
-            v: Value [B*nkv, 1, kv_len, head_size]
+            q: Query [num_seqs*num_kv_heads, num_queries_per_kv, query_len, head_size]
+            k: Key [num_seqs*num_kv_heads, 1, kv_len, head_size]
+            v: Value [num_seqs*num_kv_heads, 1, kv_len, head_size]
             scale: Scale factor (float)
-            mask: Additive mask [B*nkv, 1, query_len, kv_len]
+            mask: Additive mask [num_seqs*num_kv_heads, 1, query_len, kv_len]
                   Pre-computed on CPU: 0.0 for valid, -65504.0 for masked/padded
         """
         scores = q @ k.transpose(-2, -1)
@@ -574,21 +574,23 @@ class SpyreAttentionImpl(AttentionImpl[SpyreAttentionMetadata]):
                 query, (0, 0, 0, 0, 0, padding_size), mode="constant", value=0.0
             )
 
-        # Q: [B, padQ, num_heads, D] -> [B, num_heads, padQ, D]
-        #    -> [B*nkv, nqpkv, padQ, D]
+        # Q: [num_seqs, query_len_padded, num_heads, head_size]
+        #    -> [num_seqs, num_heads, query_len_padded, head_size]
+        #    -> [num_seqs*num_kv_heads, num_queries_per_kv, query_len_padded, head_size]
         q = query.transpose(1, 2).contiguous()
         q = q.reshape(num_seqs * num_kv_heads, num_queries_per_kv, padded_query_len, head_size)
 
-        # K/V: [B, KV, nkv, D] -> [B*nkv, 1, KV, D]
+        # K/V: [num_seqs, kv_len, num_kv_heads, head_size]
+        #    -> [num_seqs*num_kv_heads, 1, kv_len, head_size]
         k = key.transpose(1, 2).contiguous()
         k = k.reshape(num_seqs * num_kv_heads, 1, kv_len, head_size)
         v = value.transpose(1, 2).contiguous()
         v = v.reshape(num_seqs * num_kv_heads, 1, kv_len, head_size)
 
-        # --- Build additive mask [B*nkv, 1, padQ, KV] ---
+        # --- Build additive mask [num_seqs*num_kv_heads, 1, query_len_padded, kv_len] ---
         if mask is not None:
-            # mask: [B, 1, max_query_len, kv_len] (bool: True = masked)
-            mask_3d = mask[:, 0, :, :]  # [B, max_query_len, kv_len]
+            # mask: [num_seqs, 1, max_query_len, kv_len] (bool: True = masked)
+            mask_3d = mask[:, 0, :, :]  # [num_seqs, max_query_len, kv_len]
             if padded_query_len > max_query_len:
                 padding_size = padded_query_len - max_query_len
                 mask_padding = torch.ones(
@@ -602,7 +604,9 @@ class SpyreAttentionImpl(AttentionImpl[SpyreAttentionMetadata]):
                 torch.tensor(-65504.0, dtype=dtype, device=device),
                 torch.tensor(0.0, dtype=dtype, device=device),
             )
-            # [B, padQ, KV] -> expand [B, nkv, padQ, KV] -> [B*nkv, 1, padQ, KV]
+            # [num_seqs, query_len_padded, kv_len]
+            #    -> expand [num_seqs, num_kv_heads, query_len_padded, kv_len]
+            #    -> [num_seqs*num_kv_heads, 1, query_len_padded, kv_len]
             mask_4d = (
                 mask_additive.unsqueeze(1)
                 .expand(-1, num_kv_heads, -1, -1)
@@ -622,8 +626,10 @@ class SpyreAttentionImpl(AttentionImpl[SpyreAttentionMetadata]):
         output_spyre = self.attn_op(q_spyre, k_spyre, v_spyre, self.scale, mask_spyre)
 
         # Transfer back to CPU
-        # [B*nkv, nqpkv, padQ, D] -> [B, num_heads, padQ, D]
-        #                          -> [B, padQ, num_heads, D] -> trim to [B, max_query_len, H, D]
+        # [num_seqs*num_kv_heads, num_queries_per_kv, query_len_padded, head_size]
+        #     -> [num_seqs, num_heads, query_len_padded, head_size]
+        #     -> [num_seqs, query_len_padded, num_heads, head_size]
+        #     -> trim to [num_seqs, max_query_len, num_heads, head_size]
         output_4d = convert(output_spyre, device, dtype)
         output_reshaped = output_4d.reshape(num_seqs, num_heads, padded_query_len, head_size)
         output = output_reshaped.transpose(1, 2).contiguous()
