@@ -85,9 +85,28 @@ def compare_graphs(a_map: dict[str, tuple[str, str]], b_map: dict[str, tuple[str
 
 
 def run_inference_py_and_get_graphs(
-    inference_py_args: list[str], extra_env: dict[str, str] | None = None
-) -> dict[str, tuple[str, str]]:
-    with tempfile.TemporaryDirectory() as tmpdir:
+    inference_py_args: list[str],
+    extra_env: dict[str, str] | None = None,
+    keep_temp: bool = False,
+) -> tuple[dict[str, tuple[str, str]], str]:
+    """Run AFTU inference and collect graphs.
+
+    Args:
+        inference_py_args: Command line arguments for inference.py
+        extra_env: Additional environment variables
+        keep_temp: If True, preserve the temporary directory
+
+    Returns:
+        Tuple of (graph_map, tmpdir_path)
+    """
+    if keep_temp:
+        tmpdir = tempfile.mkdtemp(prefix="aftu_graphs_")
+        tmpdir_ctx = None
+    else:
+        tmpdir_ctx = tempfile.TemporaryDirectory()
+        tmpdir = tmpdir_ctx.__enter__()
+
+    try:
         env = os.environ.copy()
         env.update({"DEE_DUMP_GRAPHS": "aftu", "TORCH_SENDNN_CACHE_ENABLE": "0"})
         if extra_env:
@@ -118,7 +137,16 @@ def run_inference_py_and_get_graphs(
 
         aftu_graphs = collect_graph_files(tmpdir)
 
-    return aftu_graphs
+        if not keep_temp and tmpdir_ctx:
+            tmpdir_ctx.__exit__(None, None, None)
+
+        return aftu_graphs, tmpdir
+
+    except Exception:
+        # Clean up on error if not keeping temp
+        if not keep_temp and tmpdir_ctx:
+            tmpdir_ctx.__exit__(None, None, None)
+        raise
 
 
 def get_model_path(model: ModelInfo):
