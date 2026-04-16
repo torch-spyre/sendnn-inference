@@ -730,7 +730,7 @@ class SpyreWorker(WorkerBase):
         }
         self.execute_model(scheduler_output)  # Prefill
 
-    def profile(self, is_start: bool = True):
+    def profile(self, is_start: bool = True, profile_prefix: str | None = None):
         if self.profiler is None:
             raise RuntimeError(
                 "Profiling is not enabled. Please set --profiler-config to enable "
