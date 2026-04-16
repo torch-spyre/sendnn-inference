@@ -12,17 +12,27 @@ Example usage:
         # Register conditional defaults that apply globally
         register_conditional_default(
             dest='config_format',
-            compute_default=lambda ns: 'mistral' if 'mistral' in getattr(ns, 'model', '').lower() else 'auto',
+            compute_default=lambda args: 'mistral' if 'mistral' args.model.lower() else 'auto',
         )
 
         manager = ConditionalDefaultManager(parser)
         manager.apply()
 """
 
+from __future__ import annotations
+
+from collections.abc import Sequence
+from typing import Any, Protocol
+
 import argparse
-from typing import Any, Callable
 
 from vllm.utils.argparse_utils import FlexibleArgumentParser
+
+
+class ComputeDefaultFunc(Protocol):
+    """Protocol for a callable that computes a default value from a namespace."""
+
+    def __call__(self, namespace: argparse.Namespace) -> Any: ...
 
 
 # Track which parsers have been patched to avoid duplicate work
@@ -62,14 +72,6 @@ class ConditionalDefaultManager:
        ConditionalDefaultAction, which tracks if the user explicitly set it.
     2. Patching the parser's parse_args method to apply conditional defaults
        after all arguments have been parsed.
-
-    Example:
-        manager = ConditionalDefaultManager(parser)
-        manager.add_conditional_default(
-            dest='config_format',
-            compute_default=lambda ns: 'mistral' if 'mistral' in getattr(ns, 'model', '').lower() else 'auto',
-        )
-        manager.apply()
     """
 
     def __init__(self, parser: FlexibleArgumentParser) -> None:
@@ -79,7 +81,7 @@ class ConditionalDefaultManager:
     def add_conditional_default(
         self,
         dest: str,
-        compute_default: Callable[[argparse.Namespace], Any],
+        compute_default: ComputeDefaultFunc,
         explicit_marker_attr: str | None = None,
     ) -> None:
         """
@@ -145,10 +147,11 @@ class ConditionalDefaultManager:
 
         def patched_parse_args(
             self: argparse.ArgumentParser,
-            args: list[str] | None = None,
+            args: Sequence[str] | None = None,
             namespace: argparse.Namespace | None = None,
         ) -> argparse.Namespace:
             result = original_parse_args(self, args, namespace)
+            assert result is not None  # type: ignore[redundant-expr]
 
             # Apply conditional defaults for any managed arguments
             for config in _all_conditional_defaults:
@@ -174,8 +177,8 @@ class ConditionalDefaultManager:
 
             return result
 
-        _argparse.ArgumentParser.parse_args = patched_parse_args
-        _argparse.ArgumentParser._spyre_conditional_defaults_patched = True
+        _argparse.ArgumentParser.parse_args = patched_parse_args  # type: ignore[invalid-assignment]
+        _argparse.ArgumentParser._spyre_conditional_defaults_patched = True  # type: ignore[attr-defined]
 
 
 # Global registry for conditional defaults across all parsers
@@ -184,7 +187,7 @@ _all_conditional_defaults: list[dict[str, Any]] = []
 
 def register_conditional_default(
     dest: str,
-    compute_default: Callable[[argparse.Namespace], Any],
+    compute_default: ComputeDefaultFunc,
     explicit_marker_attr: str | None = None,
 ) -> None:
     """
