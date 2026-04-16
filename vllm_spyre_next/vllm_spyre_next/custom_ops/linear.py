@@ -192,7 +192,11 @@ def _make_spyre_linear_op_func(op_name: str):
 @lru_cache(maxsize=1)
 def register():
     """Register Spyre linear custom ops."""
-    for op_name in ["spyre_merged_col_linear", "spyre_qkv_parallel_linear", "spyre_row_parallel_linear"]:
+    for op_name in [
+        "spyre_merged_col_linear",
+        "spyre_qkv_parallel_linear",
+        "spyre_row_parallel_linear",
+    ]:
         direct_register_custom_op(
             op_name=op_name,
             op_func=_make_spyre_linear_op_func(op_name),

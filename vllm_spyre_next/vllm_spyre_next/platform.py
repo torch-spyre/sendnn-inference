@@ -37,7 +37,6 @@ class TorchSpyrePlatform(CpuPlatform):
     device_name: str = "cpu"
     device_type: str = "cpu"
 
-
     # Primary dispatch key for direct_register_custom_op. Kept as CPU
     # because some custom ops receive CPU-only tensors (e.g. rotary_embedding).
     # All ops are ALSO registered for PrivateUse1 (Spyre) via

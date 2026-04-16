@@ -117,11 +117,10 @@ class _SpyreModelWrapper:
 
     def __call__(self, *args, **kwargs):
         # Convert integer tensor inputs to Spyre int64
-        for key in ('input_ids', 'positions'):
+        for key in ("input_ids", "positions"):
             val = kwargs.get(key)
             if val is not None:
-                kwargs[key] = convert(val, dtype=torch.int64,
-                                      device=self._spyre_device)
+                kwargs[key] = convert(val, dtype=torch.int64, device=self._spyre_device)
 
         result = self._model(*args, **kwargs)
         if isinstance(result, torch.Tensor):

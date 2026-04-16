@@ -181,9 +181,7 @@ class SpyreRMSNorm(RMSNorm):
 
         # Convert back to original device/dtype
         if isinstance(outs, tuple):
-            return tuple(
-                convert(o, device=out_device, dtype=out_dtype) for o in outs
-            )
+            return tuple(convert(o, device=out_device, dtype=out_dtype) for o in outs)
         return convert(outs, device=out_device, dtype=out_dtype)
 
 

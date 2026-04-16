@@ -10,7 +10,6 @@ from vllm.platforms import current_platform
 from vllm.utils.torch_utils import set_random_seed
 from vllm.v1.worker.cpu_worker import CPUWorker
 from vllm.v1.worker.gpu_worker import init_worker_distributed_environment
-from vllm.logger import init_logger
 
 from vllm_spyre_next.custom_ops import register_all
 from vllm_spyre_next.v1.worker.spyre_model_runner import TorchSpyreModelRunner
@@ -87,7 +86,7 @@ class TorchSpyreWorker(CPUWorker):
                     "FIXME: Adding %s decomposition to work-around torch-spyre crash", op.name()
                 )
                 torch._inductor.decomposition.decompositions[op] = impl
-                
+
         set_random_seed(self.model_config.seed)
         self.model_runner.warming_up_model()
         return self.compilation_config.compilation_time
