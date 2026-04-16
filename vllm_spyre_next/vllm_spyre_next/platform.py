@@ -1,3 +1,4 @@
+import torch
 import sys
 from typing import TYPE_CHECKING
 from string import Template
@@ -114,6 +115,14 @@ class TorchSpyrePlatform(CpuPlatform):
     @classmethod
     def check_and_update_config(cls, vllm_config: VllmConfig) -> None:
         cls.log_server_boot(vllm_config)
+
+        # Check if the model dtype is different from float16,
+        # which is only currently supported in torch-spyre
+        if vllm_config.model_config.dtype != torch.float16:
+            raise ValueError(
+                f"The model dtype needs to be torch.float16 for spyre, "
+                f"but was specified to be {vllm_config.model_config.dtype}"
+            )
 
         # ---- worker ----
         parallel_config = vllm_config.parallel_config

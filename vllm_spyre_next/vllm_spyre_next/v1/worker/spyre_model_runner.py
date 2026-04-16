@@ -159,14 +159,6 @@ class TorchSpyreModelRunner(GPUModelRunner):
         # _make_buffer can place .gpu tensors on Spyre directly.
         self._spyre_device = device
 
-        # Check if the model dtype is different from float16,
-        # which is only currently supported in torch-spyre
-        if vllm_config.model_config.dtype != torch.float16:
-            raise ValueError(
-                f"The model dtype needs to be torch.float16 for spyre, "
-                f"but was specified to be {vllm_config.model_config.dtype}"
-            )
-
         # Phase 1: Init with device="cpu" to avoid dtype/device errors.
         # Many components create tensors on self.device during init, and
         # Spyre doesn't support all dtypes (int32, bool) natively.
