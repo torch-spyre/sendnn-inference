@@ -3,18 +3,23 @@
 Inherits from GPUModelRunner to preserve the CpuGpuBuffer
 dual-buffer pattern where .cpu = CPU staging and .gpu = Spyre device tensors.
 
-Data flow:
+Data flow in the current WIP version:
 - self.device = CPU. Buffers and scatter ops stay on CPU.
 - _SpyreModelWrapper converts input_ids/positions to Spyre int64 at the
   model call boundary.
-- Embedding: Spyre int64 input → Spyre compute → float16 output on Spyre.
-- Hidden states flow on Spyre between decoder layers.
-- Attention block: Spyre input → CPU compute → Spyre output.
 - _SpyreModelWrapper converts final hidden_states to CPU for downstream
   operations (logits indexing, lm_head, sampling).
+- Embedding: Spyre int64 input → Spyre compute → float16 output on Spyre.
+- Hidden states flow on Spyre between decoder layers.
+- There are few exceptions where a CPU fallback is currently needed:
+  - Attention block: Spyre input → CPU (and partial Spyre) compute → Spyre output.
+  - Layers that are not yet wrapped for torch-spyre,
+    for example RotaryEmbedding or ParallelLMHead
 
-Float .gpu buffers are on Spyre (via _make_buffer / SpyreCpuGpuBuffer).
-Int/bool .gpu buffers stay on CPU and are are aliased to .cpu (CPUModelRunner pattern).
+As the TorchSpyreModelRunner is evolving, more layers will natively support inputs
+arriving as a Spyre tensor and perform their operations on Spyre.
+Thus, in the final state of the runner minimal D2H and H2D transfers will be necessary,
+the SpyreCpuFallbackMixin will be obsolete and most operations will be performed on Spyre.
 """
 
 from __future__ import annotations
@@ -43,7 +48,7 @@ class SpyreCpuGpuBuffer(CpuGpuBuffer):
 
     For float dtypes: .cpu on CPU, .gpu on Spyre (float16).
     For int/bool dtypes: .gpu aliased to .cpu (CPUModelRunner pattern).
-    All copies are synchronous (Spyre doesn't support non_blocking).
+    All copies are currently synchronous as torch-spyre does not yet support `non_blocking`.
     """
 
     def __init__(

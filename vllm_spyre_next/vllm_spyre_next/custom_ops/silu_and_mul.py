@@ -79,9 +79,9 @@ class SpyreSiluAndMul(SiluAndMul):
 
         When input is on Spyre, calls _forward_spyre_impl directly to avoid
         the custom op boundary (Spyre does not support in-device copy_).
-        When input is on CPU, delegates to torch.ops.vllm.spyre_siluandmul which retrieves this layer
-        from the layer registry and calls _forward_spyre_impl outside
-        the compilation graph.
+        When input is on CPU, delegates to torch.ops.vllm.spyre_siluandmul
+        which retrieves this layer from the layer registry and calls
+        _forward_spyre_impl outside the compilation graph.
 
         Args:
             x: Input tensor [..., 2*d]
