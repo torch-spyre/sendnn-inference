@@ -10,6 +10,7 @@ if sys.platform.startswith("darwin"):
     if sys.modules.get("triton"):
         del sys.modules["triton"]
 
+import argparse
 import math
 import operator
 import os
@@ -503,24 +504,24 @@ class SpyrePlatform(Platform):
 
         # Register conditional defaults for config_format and tokenizer_mode
         # based on whether the model name contains "mistral"
-        def _is_mistral_model(namespace: object) -> bool:
+        def _compute_config_format(namespace: argparse.Namespace) -> str:
             # Check both 'model' and 'model_tag' since vLLM uses different
             # attribute names in different contexts
             model = getattr(namespace, "model_tag", None) or getattr(namespace, "model", "") or ""
-            return "mistral" in model.lower()
+            return "mistral" if "mistral" in model.lower() else "auto"
+
+        def _compute_tokenizer_mode(namespace: argparse.Namespace) -> str:
+            model = getattr(namespace, "model_tag", None) or getattr(namespace, "model", "") or ""
+            return "mistral" if "mistral" in model.lower() else "auto"
 
         # Register conditional defaults that apply globally
         register_conditional_default(
             dest="config_format",
-            condition=_is_mistral_model,
-            true_value="mistral",
-            false_value="auto",
+            compute_default=_compute_config_format,
         )
         register_conditional_default(
             dest="tokenizer_mode",
-            condition=_is_mistral_model,
-            true_value="mistral",
-            false_value="auto",
+            compute_default=_compute_tokenizer_mode,
         )
 
         # Apply the conditional default manager to this parser

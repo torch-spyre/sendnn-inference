@@ -5,21 +5,17 @@ This module provides a mechanism to set argument defaults that depend on
 the values of other arguments, which is not natively supported by argparse.
 
 Example usage:
-    from vllm_spyre.argparse_utils import ConditionalDefaultManager
+    from vllm_spyre.argparse_utils import ConditionalDefaultManager, register_conditional_default
 
     @classmethod
     def pre_register_and_update(cls, parser):
-        manager = ConditionalDefaultManager(parser)
-
-        # Add a conditional default: config_format depends on model
-        manager.add_conditional_default(
+        # Register conditional defaults that apply globally
+        register_conditional_default(
             dest='config_format',
-            condition=lambda ns: 'mistral' in (getattr(ns, 'model', '') or '').lower(),
-            true_value='mistral',
-            false_value='auto',
+            compute_default=lambda ns: 'mistral' if 'mistral' in getattr(ns, 'model', '').lower() else 'auto',
         )
 
-        # Mark the parser for patching
+        manager = ConditionalDefaultManager(parser)
         manager.apply()
 """
 
@@ -71,9 +67,7 @@ class ConditionalDefaultManager:
         manager = ConditionalDefaultManager(parser)
         manager.add_conditional_default(
             dest='config_format',
-            condition=lambda ns: 'mistral' in getattr(ns, 'model', '').lower(),
-            true_value='mistral',
-            false_value='auto',
+            compute_default=lambda ns: 'mistral' if 'mistral' in getattr(ns, 'model', '').lower() else 'auto',
         )
         manager.apply()
     """
@@ -85,9 +79,7 @@ class ConditionalDefaultManager:
     def add_conditional_default(
         self,
         dest: str,
-        condition: Callable[[argparse.Namespace], bool],
-        true_value: Any,
-        false_value: Any,
+        compute_default: Callable[[argparse.Namespace], Any],
         explicit_marker_attr: str | None = None,
     ) -> None:
         """
@@ -95,10 +87,9 @@ class ConditionalDefaultManager:
 
         Args:
             dest: The argument destination name (e.g., 'config_format').
-            condition: A callable that takes the parsed namespace and returns
-                       True if the condition is met, False otherwise.
-            true_value: The value to use if condition returns True.
-            false_value: The value to use if condition returns False.
+            compute_default: A callable that takes the parsed namespace and
+                             returns the default value to use. Return None to
+                             skip applying a default.
             explicit_marker_attr: Optional custom attribute name for tracking
                                   whether the user explicitly set this argument.
                                   Defaults to f"_{dest}_explicit".
@@ -106,9 +97,7 @@ class ConditionalDefaultManager:
         self._conditional_defaults.append(
             {
                 "dest": dest,
-                "condition": condition,
-                "true_value": true_value,
-                "false_value": false_value,
+                "compute_default": compute_default,
                 "explicit_marker_attr": explicit_marker_attr or f"_{dest}_explicit",
             }
         )
@@ -162,8 +151,6 @@ class ConditionalDefaultManager:
             result = original_parse_args(self, args, namespace)
 
             # Apply conditional defaults for any managed arguments
-            # We iterate through all registered conditional defaults and apply
-            # them if the corresponding explicit marker is not set
             for config in _all_conditional_defaults:
                 explicit_marker = config["explicit_marker_attr"]
                 dest = config["dest"]
@@ -177,10 +164,10 @@ class ConditionalDefaultManager:
 
                 # Apply the conditional default
                 try:
-                    condition_met = config["condition"](result)
-                    value = config["true_value"] if condition_met else config["false_value"]
-                    setattr(result, dest, value)
-                    setattr(result, applied_attr, True)
+                    value = config["compute_default"](result)
+                    if value is not None:
+                        setattr(result, dest, value)
+                        setattr(result, applied_attr, True)
                 except Exception:
                     # If condition evaluation fails, skip this default
                     pass
@@ -197,9 +184,7 @@ _all_conditional_defaults: list[dict[str, Any]] = []
 
 def register_conditional_default(
     dest: str,
-    condition: Callable[[argparse.Namespace], bool],
-    true_value: Any,
-    false_value: Any,
+    compute_default: Callable[[argparse.Namespace], Any],
     explicit_marker_attr: str | None = None,
 ) -> None:
     """
@@ -211,18 +196,15 @@ def register_conditional_default(
 
     Args:
         dest: The argument destination name.
-        condition: A callable that takes the parsed namespace and returns
-                   True if the condition is met.
-        true_value: The value to use if condition returns True.
-        false_value: The value to use if condition returns False.
+        compute_default: A callable that takes the parsed namespace and
+                         returns the default value to use. Return None to
+                         skip applying a default.
         explicit_marker_attr: Optional custom attribute for tracking explicit values.
     """
     _all_conditional_defaults.append(
         {
             "dest": dest,
-            "condition": condition,
-            "true_value": true_value,
-            "false_value": false_value,
+            "compute_default": compute_default,
             "explicit_marker_attr": explicit_marker_attr or f"_{dest}_explicit",
         }
     )
