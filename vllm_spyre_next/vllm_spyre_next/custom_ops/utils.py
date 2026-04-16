@@ -68,14 +68,9 @@ def register_spyre_dispatch(op_name: str, op_func) -> None:
 def convert(tensor, device=None, dtype=None):
     """Convert tensor device and/or dtype. No-op when both are None.
 
-    When moving from Spyre to CPU, uses a safe D2H copy path that handles
-    torch-spyre's bug where D2H crashes on sliced views. Dtype conversion
-    is always done on CPU (torch-spyre doesn't support cross-dtype copy_).
-
     Args:
         tensor: Input tensor, or None (passed through as None).
-        device: Target device (None = keep current). Can be a string,
-            torch.device, or None.
+        device: Target device (None = keep current).
         dtype: Target dtype (None = keep current).
 
     Returns:
@@ -84,17 +79,20 @@ def convert(tensor, device=None, dtype=None):
     if tensor is None:
         return None
 
-    target = torch.device(device) if isinstance(device, str) else device
+    target_device = device if device is not None else tensor.device.type
+    target_dtype = dtype if dtype is not None else tensor.dtype
 
-    if tensor.device.type == "spyre":
-        # In case of spyre, first copy to CPU and then perform any potential dtype conversion
-        if target is not None and target.type != "spyre":
-            tensor = tensor.to(device=target)
-        elif target is None and dtype is not None:
-            tensor = tensor.to(dtype=dtype)
-    else:
-        if dtype is not None and tensor.dtype != dtype:
-            tensor = tensor.to(dtype=dtype)
-        if target is not None and tensor.device.type != target:
-            tensor = tensor.to(device=target)
+    if tensor.device.type == target_device and tensor.dtype == target_dtype:
+        return tensor
+
+    # Spyre requires CPU for dtype changes
+    if tensor.device.type == "spyre" and tensor.dtype != target_dtype:
+        tensor = tensor.to(device="cpu")
+
+    if tensor.dtype != target_dtype:
+        tensor = tensor.to(dtype=target_dtype)
+
+    if tensor.device.type != target_device:
+        tensor = tensor.to(device=target_device)
+
     return tensor
