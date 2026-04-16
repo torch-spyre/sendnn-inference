@@ -5,24 +5,24 @@ This module provides a mechanism to set argument defaults that depend on
 the values of other arguments, which is not natively supported by argparse.
 
 Example usage:
-    from vllm_spyre.argparse_utils import ConditionalDefaultManager, register_conditional_default
+    from vllm_spyre.argparse_utils import ConditionalDefaultManager
 
     @classmethod
     def pre_register_and_update(cls, parser):
         # Register conditional defaults that apply globally
-        register_conditional_default(
+        ConditionalDefaultManager.register(
             dest='config_format',
-            compute_default=lambda args: 'mistral' if 'mistral' args.model.lower() else 'auto',
+            compute_default=lambda ns: 'mistral' if 'mistral' in getattr(ns, 'model', '').lower() else 'auto',
         )
 
-        manager = ConditionalDefaultManager(parser)
-        manager.apply()
+        # Apply the patches to this parser
+        ConditionalDefaultManager.apply(parser)
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, Protocol
+from typing import Any, ClassVar, Protocol
 
 import argparse
 import logging
@@ -71,12 +71,37 @@ class ConditionalDefaultManager:
        ConditionalDefaultAction, which tracks if the user explicitly set it.
     2. Patching the parser's parse_args method to apply conditional defaults
        after all arguments have been parsed.
+
+    All methods are class methods since the state is global across all parsers
+    via the class variable _all_conditional_defaults.
     """
 
-    def __init__(self, parser: FlexibleArgumentParser) -> None:
-        self.parser = parser
+    _all_conditional_defaults: ClassVar[list[dict[str, Any]]] = []
 
-    def apply(self) -> None:
+    @classmethod
+    def register(
+        cls,
+        dest: str,
+        compute_default: ComputeDefaultFunc,
+    ) -> None:
+        """
+        Register a conditional default for an argument.
+
+        Args:
+            dest: The argument destination name (e.g., 'config_format').
+            compute_default: A callable that takes the parsed namespace and
+                             returns the default value to use. Return None to
+                             skip applying a default.
+        """
+        cls._all_conditional_defaults.append(
+            {
+                "dest": dest,
+                "compute_default": compute_default,
+            }
+        )
+
+    @classmethod
+    def apply(cls, parser: FlexibleArgumentParser) -> None:
         """
         Apply the conditional default logic to the parser.
 
@@ -86,26 +111,27 @@ class ConditionalDefaultManager:
         """
         logger.debug(
             "Enabling conditional defaults with %d config(s)",
-            len(_all_conditional_defaults),
+            len(cls._all_conditional_defaults),
         )
 
         # Step 1: Replace actions for managed arguments
         seen_dests: set[str] = set()
-        for config in _all_conditional_defaults:
+        for config in cls._all_conditional_defaults:
             dest = config["dest"]
             if dest in seen_dests:
                 continue
             seen_dests.add(dest)
-            for action in self.parser._actions:
+            for action in parser._actions:
                 if hasattr(action, "dest") and action.dest == dest:
                     action.__class__ = ConditionalDefaultAction
                     break
 
         # Step 2: Patch parse_args at the base ArgumentParser class level
         # This ensures it works even when the parser is used as a sub-parser
-        self._patch_parse_args()
+        cls._patch_parse_args()
 
-    def _patch_parse_args(self) -> None:
+    @classmethod
+    def _patch_parse_args(cls) -> None:
         """Patch ArgumentParser.parse_args to apply conditional defaults."""
         import argparse as _argparse
 
@@ -116,7 +142,7 @@ class ConditionalDefaultManager:
 
         logger.debug(
             "Patching ArgumentParser.parse_args to apply %d conditional default(s)",
-            len(_all_conditional_defaults),
+            len(cls._all_conditional_defaults),
         )
 
         original_parse_args = _argparse.ArgumentParser.parse_args
@@ -134,7 +160,7 @@ class ConditionalDefaultManager:
                 return result
 
             # Apply conditional defaults for any managed arguments
-            for config in _all_conditional_defaults:
+            for config in cls._all_conditional_defaults:
                 dest = config["dest"]
 
                 # Skip if already applied or if user explicitly set the value
@@ -171,32 +197,3 @@ class ConditionalDefaultManager:
 
         _argparse.ArgumentParser.parse_args = patched_parse_args  # type: ignore[invalid-assignment]
         _argparse.ArgumentParser._spyre_conditional_defaults_patched = True  # type: ignore[attr-defined]
-
-
-# Global registry for conditional defaults across all parsers
-_all_conditional_defaults: list[dict[str, Any]] = []
-
-
-def register_conditional_default(
-    dest: str,
-    compute_default: ComputeDefaultFunc,
-) -> None:
-    """
-    Register a conditional default that will be applied to any parser.
-
-    This is useful when you want to apply the same conditional default
-    across multiple parsers or when you don't have direct access to the
-    parser instance.
-
-    Args:
-        dest: The argument destination name.
-        compute_default: A callable that takes the parsed namespace and
-                         returns the default value to use. Return None to
-                         skip applying a default.
-    """
-    _all_conditional_defaults.append(
-        {
-            "dest": dest,
-            "compute_default": compute_default,
-        }
-    )

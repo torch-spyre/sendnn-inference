@@ -22,7 +22,7 @@ import torch
 from vllm.logger import init_logger
 from vllm.utils.argparse_utils import FlexibleArgumentParser
 
-from vllm_spyre.argparse_utils import ConditionalDefaultManager, register_conditional_default
+from vllm_spyre.argparse_utils import ConditionalDefaultManager
 
 if TYPE_CHECKING:
     # NB: We can't eagerly import many things from vllm since vllm.config
@@ -523,20 +523,19 @@ class SpyrePlatform(Platform):
             return "mistral" if "mistral" in model.lower() or local_mistral_configs else "auto"
 
         # Register conditional defaults that apply globally
-        register_conditional_default(
+        ConditionalDefaultManager.register(
             dest="config_format",
             compute_default=_compute_config_format,
         )
-        register_conditional_default(
+        ConditionalDefaultManager.register(
             dest="tokenizer_mode",
             compute_default=_compute_config_format,
         )
 
-        # Apply the conditional default manager to this parser
+        # Apply the conditional default patches to this parser
         # This replaces the actions for managed arguments and patches
         # the base ArgumentParser.parse_args method
-        manager = ConditionalDefaultManager(parser)
-        manager.apply()
+        ConditionalDefaultManager.apply(parser)
 
     @classmethod
     def _check_threading_config(cls, worker_count: int):
