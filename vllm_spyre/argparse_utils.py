@@ -12,7 +12,7 @@ Example usage:
         # Register conditional defaults that apply globally
         ConditionalDefaultManager.register(
             dest='config_format',
-            compute_default=lambda ns: 'mistral' if 'mistral' in getattr(ns, 'model', '').lower() else 'auto',
+            compute_default=lambda args: 'mistral' if 'mistral' in args.model.lower() else 'auto',
         )
 
         # Apply the patches to this parser
@@ -77,6 +77,15 @@ class ConditionalDefaultManager:
     """
 
     _all_conditional_defaults: ClassVar[list[dict[str, Any]]] = []
+
+    @classmethod
+    def clear(cls) -> None:
+        """Clear all registered conditional defaults.
+
+        This is useful for testing to ensure clean state between tests.
+        Note that this does not unpatch ArgumentParser.parse_args.
+        """
+        cls._all_conditional_defaults.clear()
 
     @classmethod
     def register(

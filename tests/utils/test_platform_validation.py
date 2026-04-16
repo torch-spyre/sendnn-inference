@@ -258,3 +258,73 @@ class TestSendnnConfigurationValidation:
 
         # Verify FLEX_DEVICE was set to COMPILE
         assert os.environ.get("FLEX_DEVICE") == "COMPILE"
+
+
+class TestPreRegisterAndUpdate:
+    """Test SpyrePlatform.pre_register_and_update conditional defaults."""
+
+    @pytest.fixture(autouse=True)
+    def clear_conditional_defaults(self):
+        """Clear conditional defaults before each test to ensure isolation."""
+        from vllm_spyre.argparse_utils import ConditionalDefaultManager
+
+        ConditionalDefaultManager.clear()
+        yield
+        ConditionalDefaultManager.clear()
+
+    def create_test_parser(self):
+        """Create a parser with the arguments used by pre_register_and_update."""
+        from vllm.utils.argparse_utils import FlexibleArgumentParser
+
+        parser = FlexibleArgumentParser()
+        parser.add_argument("--config-format", dest="config_format", default="auto")
+        parser.add_argument("--tokenizer-mode", dest="tokenizer_mode", default="auto")
+        parser.add_argument("model_tag", nargs="?", default=None)
+        return parser
+
+    def test_config_format_defaults_to_mistral_when_model_tag_contains_mistral(self):
+        """Test that config_format defaults to 'mistral' when model_tag contains 'mistral'."""
+        # Parse with a mistral model
+        parser = self.create_test_parser()
+        SpyrePlatform.pre_register_and_update(parser)
+        args = parser.parse_args(["mistralai/Mistral-7B-Instruct-v0.1"])
+
+        assert args.config_format == "mistral"
+        assert args.tokenizer_mode == "mistral"
+
+    def test_config_format_defaults_to_mistral_when_params_json_exists(self, tmp_path):
+        """Test that config_format defaults to 'mistral' when model_tag points to dir with
+        params.json."""
+        # Create a temporary directory with params.json (NB: path does not have mistral in the name)
+        model_dir = tmp_path / "some_model"
+        model_dir.mkdir()
+        params_file = model_dir / "params.json"
+        params_file.write_text('{"dim": 4096, "n_layers": 32}')
+
+        # Parse with the local directory as model
+        parser = self.create_test_parser()
+        SpyrePlatform.pre_register_and_update(parser)
+        args = parser.parse_args([str(model_dir)])
+
+        assert args.config_format == "mistral"
+        assert args.tokenizer_mode == "mistral"
+
+    def test_config_format_defaults_to_auto_for_non_mistral_models(self):
+        """Test that config_format defaults to 'auto' for non-mistral models."""
+        parser = self.create_test_parser()
+        SpyrePlatform.pre_register_and_update(parser)
+        args = parser.parse_args(["facebook/opt-125m"])
+
+        assert args.config_format == "auto"
+        assert args.tokenizer_mode == "auto"
+
+    def test_explicit_config_format_not_overridden(self):
+        """Test that user-provided config_format is not overridden."""
+        parser = self.create_test_parser()
+        SpyrePlatform.pre_register_and_update(parser)
+        args = parser.parse_args(["--config-format", "hf", "mistralai/Mistral-7B-Instruct-v0.1"])
+
+        # User explicitly set config_format to "hf", it should not be overridden
+        assert args.config_format == "hf"
+        # tokenizer_mode should still be set (since it depends on the same logic)
+        assert args.tokenizer_mode == "mistral"
