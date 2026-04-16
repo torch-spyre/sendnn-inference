@@ -2,8 +2,11 @@
 
 from vllm.config import VllmConfig
 from vllm.v1.worker.cpu_worker import CPUWorker
+from vllm.logger import init_logger
 
 from vllm_spyre_next.custom_ops import register_all
+
+logger = init_logger(__name__)
 
 
 class TorchSpyreWorker(CPUWorker):
@@ -23,3 +26,17 @@ class TorchSpyreWorker(CPUWorker):
         # This has to happen before the model is loaded, so that all the layers will be swapped out
         # with the custom implementations for spyre.
         register_all()
+
+    def compile_or_warm_up_model(self):
+        # FIXME: Work around for https://github.com/torch-spyre/torch-spyre/issues/1420
+        # Ensure registration of Spyre decompositions before FX Graph tracing
+        import torch._inductor.decomposition
+        from torch_spyre._inductor.decompositions import spyre_decompositions
+
+        for op, impl in spyre_decompositions.items():
+            if "addm" in op.name():
+                logger.warning(
+                    "FIXME: Adding %s decomposition to work-around torch-spyre crash", op.name()
+                )
+                torch._inductor.decomposition.decompositions[op] = impl
+        return super().compile_or_warm_up_model()

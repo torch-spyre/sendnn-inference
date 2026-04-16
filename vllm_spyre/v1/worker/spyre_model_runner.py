@@ -31,6 +31,7 @@ from vllm_spyre.model_executor.model_loader.spyre import (
     SpyreAttentionMetadata,
     SpyreCausalLM,
 )
+from vllm_spyre.perf_metrics import create_perf_metric_logger
 from vllm_spyre.platform import SpyrePlatform
 from vllm_spyre.utils import exact_div
 from vllm_spyre.v1.sample.spyre_logits_processor import build_logitsprocs_for_cb
@@ -714,6 +715,9 @@ class ChunkedPrefillModelRunner(
 
         self.prefix_cache_stats = None
 
+        # Initialize performance metric logger for tracking embedding times
+        self.perf_logger = create_perf_metric_logger(rank=rank)
+
     def load_model(self) -> None:
         self._model = SpyreCausalLM(
             vllm_config=self.vllm_config,
@@ -1038,9 +1042,16 @@ class ChunkedPrefillModelRunner(
                 is_decode=False,
             )
 
-            t1 = time.time() - t0
+            t_elapsed = time.time() - t0
 
-            logger.info("maybe_mm_embedding processing time: %.2fms", (t1 * 1000))
+            logger.info("maybe_mm_embedding processing time: %.2fms", (t_elapsed * 1000))
+            self.perf_logger.log(
+                "get_mm_embeddings_time_ms",
+                t_elapsed * 1000,
+                phase="prefill",
+                has_mm_features=True,
+                req_id=req_id,
+            )
 
             # Cache the full embeddings for subsequent chunks
             request.cached_mm_embeddings = full_embeds
@@ -1076,10 +1087,19 @@ class ChunkedPrefillModelRunner(
             )
         else:
             # Non-multimodal or decode: use standard token embedding
+            t0 = time.time()
             input_embeds = self.model.get_maybe_mm_embeddings(
                 input_tokens,
                 mm_features=None,
                 is_decode=False,
+            )
+            t_elapsed = time.time() - t0
+            self.perf_logger.log(
+                "get_mm_embeddings_time_ms",
+                t_elapsed * 1000,
+                phase="prefill",
+                has_mm_features=False,
+                req_id=req_id,
             )
 
         model_inputs = SamplingForwardInputs(
@@ -1173,11 +1193,22 @@ class ChunkedPrefillModelRunner(
 
         # None unless this model is multimodal; no mm_features since
         # all multimodal features are merged in prefill.
+        t0 = time.time()
         input_embeds = self.model.get_maybe_mm_embeddings(
             input_tokens,
             mm_features=None,
             is_decode=True,
         )
+        t_elapsed = time.time() - t0
+        # Log timing for each request in the decode batch
+        for req_id in cached_request_data.req_ids:
+            self.perf_logger.log(
+                "get_mm_embeddings_time_ms",
+                t_elapsed * 1000,
+                phase="decode",
+                has_mm_features=False,
+                req_id=req_id,
+            )
 
         model_inputs = SamplingForwardInputs(
             input_tokens=input_tokens,

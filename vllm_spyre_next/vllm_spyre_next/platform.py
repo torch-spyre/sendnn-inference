@@ -4,6 +4,7 @@ from string import Template
 import multiprocessing
 import importlib.metadata
 
+
 # When running this plugin on a Mac, we assume it's for local development
 # purposes. However, due to a compatibility issue with vLLM, which overrides
 # the Triton module with a placeholder, vLLM may fail to load on macOS. To
@@ -17,6 +18,7 @@ if sys.platform.startswith("darwin"):
 from vllm.logger import init_logger
 from vllm.platforms import PlatformEnum
 from vllm.platforms.cpu import CpuPlatform
+from vllm.v1.attention.backends.registry import AttentionBackendEnum, register_backend
 
 if TYPE_CHECKING:
     # NB: We can't eagerly import many things from vllm since vllm.config
@@ -34,6 +36,12 @@ class TorchSpyrePlatform(CpuPlatform):
     # "spyre" device_name no longer worked due to https://github.com/vllm-project/vllm/pull/16464
     device_name: str = "cpu"
     device_type: str = "cpu"
+
+    # Register the PyTorch Native Attention implementation as the CUSTOM backend
+    register_backend(
+        AttentionBackendEnum.CUSTOM,
+        "vllm_spyre_next.v1.attention.backends.spyre_attn.SpyreAttentionBackend",
+    )
 
     @classmethod
     def get_device_name(cls, device_id: int = 0) -> str:
@@ -74,6 +82,13 @@ class TorchSpyrePlatform(CpuPlatform):
         logger.info(message, version, model_name)
 
     @classmethod
+    def get_attn_backend_cls(cls, selected_backend, *args, **kwargs) -> str:
+        if selected_backend == AttentionBackendEnum.CUSTOM:
+            return AttentionBackendEnum.CUSTOM.get_path()
+        else:
+            return super().get_attn_backend_cls(selected_backend, *args, **kwargs)
+
+    @classmethod
     def check_and_update_config(cls, vllm_config: VllmConfig) -> None:
         cls.log_server_boot(vllm_config)
 
@@ -100,21 +115,6 @@ class TorchSpyrePlatform(CpuPlatform):
         # scheduler_class = "vllm_spyre_next.v1.core.scheduler.TorchSpyreScheduler"
         logger.info("Loading scheduler from: %s", scheduler_class)
         scheduler_config.scheduler_cls = scheduler_class
-
-        # ---- attention backend ----
-        # A custom attention backend can be registered with get_attn_backend_cls()
-        # see copied code from vllm/platforms/cpu.CpuPlatform illustrating the default
-        # TorchSDPABackend used for vLLM CPU execution
-
-        # @classmethod
-        # def get_attn_backend_cls(cls, selected_backend: _Backend, head_size: int,
-        #                      dtype: torch.dtype, kv_cache_dtype: Optional[str],
-        #                      block_size: int, use_v1: bool,
-        #                      use_mla: bool) -> str:
-        #     if selected_backend and selected_backend != _Backend.TORCH_SDPA:
-        #         logger.info("Cannot use %s backend on CPU.", selected_backend)
-        #     logger.info("Using Torch SDPA backend.")
-        #     return "vllm.attention.backends.torch_sdpa.TorchSDPABackend"
 
         # call CpuPlatform.check_and_update_config()
         super().check_and_update_config(vllm_config)
