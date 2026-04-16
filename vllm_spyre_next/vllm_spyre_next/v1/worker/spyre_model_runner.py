@@ -97,8 +97,7 @@ class _SpyreModelWrapper:
     Input conversion (CPU → Spyre):
         input_ids and positions arrive as CPU tensors (int32/int64) because
         self.device=CPU in the runner and buffer scatter ops run on CPU.
-        Convert them to Spyre int64 here so the embedding layer takes the
-        Spyre fast-path and hidden_states flow on Spyre from the start.
+        Convert them to int64 and provide them to the model.
 
     Output conversion (Spyre → CPU):
         The model's final hidden_states come out on Spyre. Downstream

@@ -9,8 +9,7 @@ when instantiated.
 Architecture:
     - OOT Registration: @RMSNorm.register_oot() replaces upstream at instantiation
     - forward_oot(): Entry point for OOT dispatch, calls _forward_spyre_impl
-      directly (no custom op boundary needed since Spyre does not support
-      in-device tensor copy)
+      directly (no custom op boundary needed)
     - Separate Compilation: forward_spyre is compiled independently via maybe_compile
 
 Spyre Device Constraints:
@@ -85,11 +84,14 @@ class SpyreRMSNorm(RMSNorm):
         x: torch.Tensor,
         residual: torch.Tensor | None = None,
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
-        """OOT forward pass — calls _forward_spyre_impl directly.
+        """OOT forward pass.
 
-        No custom op boundary is used because the Spyre runtime does not
-        support in-device tensor copy_ or returning Spyre tensors from
-        custom ops (triggers D2H copy in the dispatch machinery).
+        Handles Spyre-specific constraints:
+            1. Minimum batch size: Pads to 64 if needed
+            2. Kernel execution: Calls compiled maybe_compiled_forward_spyre
+
+        Limitations:
+            - variance_size_override not implemented (raises NotImplementedError)
 
         Args:
             x: Input tensor [batch_size, hidden_size]
@@ -98,7 +100,30 @@ class SpyreRMSNorm(RMSNorm):
         Returns:
             Normalized output, or (output, residual) tuple if residual provided
         """
-        return self._forward_spyre_impl(x, residual)
+        # return self._forward_spyre_impl(x, residual)
+        if self.variance_size_override is not None:
+            raise NotImplementedError("TODO: variance_size_override not yet implemented")
+
+        out_dtype = x.dtype
+        out_device = x.device
+
+        # Execute compiled kernel on Spyre device
+        outs = self.maybe_compiled_forward_spyre(
+            convert(x, self._target_device, self._target_dtype),
+            self.variance_epsilon,
+            self.hidden_size,
+            convert(self.weight.data, self._target_device, self._target_dtype)
+            if self.has_weight
+            else None,
+            convert(residual, self._target_device, self._target_dtype)
+            if residual is not None
+            else None,
+        )
+
+        # Convert back to original device/dtype
+        if isinstance(outs, tuple):
+            return tuple(convert(o, device=out_device, dtype=out_dtype) for o in outs)
+        return convert(outs, device=out_device, dtype=out_dtype)
 
     @staticmethod
     def forward_spyre(
@@ -139,54 +164,53 @@ class SpyreRMSNorm(RMSNorm):
         else:
             return x, residual
 
-    def _forward_spyre_impl(
-        self,
-        x: torch.Tensor,
-        residual: torch.Tensor | None = None,
-    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
-        """Spyre device execution with padding and kernel dispatch.
+    # def _forward_spyre_impl(
+    #     self,
+    #     x: torch.Tensor,
+    #     residual: torch.Tensor | None = None,
+    # ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+    #     """Spyre device execution with padding and kernel dispatch.
 
-        Handles Spyre-specific constraints:
-            1. Minimum batch size: Pads to 64 if needed
-            2. Kernel execution: Calls compiled maybe_compiled_forward_spyre
+    #     Handles Spyre-specific constraints:
+    #         1. Minimum batch size: Pads to 64 if needed
+    #         2. Kernel execution: Calls compiled maybe_compiled_forward_spyre
 
-        Limitations:
-            - variance_size_override not implemented (raises NotImplementedError)
+    #     Limitations:
+    #         - variance_size_override not implemented (raises NotImplementedError)
 
-        Args:
-            x: Input tensor [batch_size, hidden_size]
-            residual: Optional residual tensor
+    #     Args:
+    #         x: Input tensor [batch_size, hidden_size]
+    #         residual: Optional residual tensor
 
-        Returns:
-            Normalized output [batch_size, hidden_size] in input dtype
-        """
-        if self.variance_size_override is not None:
-            raise NotImplementedError("TODO: variance_size_override not yet implemented")
+    #     Returns:
+    #         Normalized output [batch_size, hidden_size] in input dtype
+    #     """
+    #     if self.variance_size_override is not None:
+    #         raise NotImplementedError("TODO: variance_size_override not yet implemented")
 
-        out_dtype = x.dtype
-        out_device = x.device
+    #     out_dtype = x.dtype
+    #     out_device = x.device
 
-        # Execute compiled kernel on Spyre device
-        outs = self.maybe_compiled_forward_spyre(
-            convert(x, self._target_device, self._target_dtype),
-            self.variance_epsilon,
-            self.hidden_size,
-            convert(self.weight.data, self._target_device, self._target_dtype)
-            if self.has_weight
-            else None,
-            convert(residual, self._target_device, self._target_dtype)
-            if residual is not None
-            else None,
-        )
+    #     # Execute compiled kernel on Spyre device
+    #     outs = self.maybe_compiled_forward_spyre(
+    #         convert(x, self._target_device, self._target_dtype),
+    #         self.variance_epsilon,
+    #         self.hidden_size,
+    #         convert(self.weight.data, self._target_device, self._target_dtype)
+    #         if self.has_weight
+    #         else None,
+    #         convert(residual, self._target_device, self._target_dtype)
+    #         if residual is not None
+    #         else None,
+    #     )
 
-        # Convert back to original device/dtype
-        if isinstance(outs, tuple):
-            return tuple(convert(o, device=out_device, dtype=out_dtype) for o in outs)
-        return convert(outs, device=out_device, dtype=out_dtype)
+    #     # Convert back to original device/dtype
+    #     if isinstance(outs, tuple):
+    #         return tuple(convert(o, device=out_device, dtype=out_dtype) for o in outs)
+    #     return convert(outs, device=out_device, dtype=out_dtype)
 
 
 def register():
-    """No-op: custom op registration is not needed when forward_oot calls
-    _forward_spyre_impl directly (Spyre does not support in-device copy_
-    or returning tensors from custom ops)."""
+    """No-op: forward_oot calls spyre-specific implementation directly,
+    no custom op boundary needed."""
     pass
