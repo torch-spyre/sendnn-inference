@@ -1,4 +1,6 @@
+from pathlib import Path
 import sys
+
 
 # When running this plugin on a Mac, we assume it's for local development
 # purposes. However, due to a compatibility issue with vLLM, which overrides
@@ -502,17 +504,23 @@ class SpyrePlatform(Platform):
             enable_chunked_prefill=True
         )  # set to pass vllm scheduler's max_model_len check
 
-        # Register conditional defaults for config_format and tokenizer_mode
-        # based on whether the model name contains "mistral"
         def _compute_config_format(namespace: argparse.Namespace) -> str:
+            """This is a much more relaxed check than vllm has to decide if a model is in mistral
+            format or not. We simply look for "mistral" in the name or the existence of the
+            mistral-specific params.json file.
+
+            This is required because in offline mode, vllm needs the consolidated safetensors file
+            to be cached locally in order to determine if a model is a mistral model. This is often
+            not the case as we load mistral models from the chunked safetensors files.
+            """
             # Check both 'model' and 'model_tag' since vLLM uses different
             # attribute names in different contexts
             model = getattr(namespace, "model_tag", None) or getattr(namespace, "model", "") or ""
-            return "mistral" if "mistral" in model.lower() else "auto"
-
-        def _compute_tokenizer_mode(namespace: argparse.Namespace) -> str:
-            model = getattr(namespace, "model_tag", None) or getattr(namespace, "model", "") or ""
-            return "mistral" if "mistral" in model.lower() else "auto"
+            maybe_local_path = Path(model)
+            local_mistral_configs = (
+                maybe_local_path.exists() and (maybe_local_path / "params.json").is_file()
+            )
+            return "mistral" if "mistral" in model.lower() or local_mistral_configs else "auto"
 
         # Register conditional defaults that apply globally
         register_conditional_default(
@@ -521,7 +529,7 @@ class SpyrePlatform(Platform):
         )
         register_conditional_default(
             dest="tokenizer_mode",
-            compute_default=_compute_tokenizer_mode,
+            compute_default=_compute_config_format,
         )
 
         # Apply the conditional default manager to this parser

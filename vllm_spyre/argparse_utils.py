@@ -25,18 +25,17 @@ from collections.abc import Sequence
 from typing import Any, Protocol
 
 import argparse
+import logging
 
 from vllm.utils.argparse_utils import FlexibleArgumentParser
+
+logger = logging.getLogger(__name__)
 
 
 class ComputeDefaultFunc(Protocol):
     """Protocol for a callable that computes a default value from a namespace."""
 
     def __call__(self, namespace: argparse.Namespace) -> Any: ...
-
-
-# Track which parsers have been patched to avoid duplicate work
-_PATCHED_PARSERS: set[int] = set()
 
 
 class ConditionalDefaultAction(argparse.Action):
@@ -76,33 +75,6 @@ class ConditionalDefaultManager:
 
     def __init__(self, parser: FlexibleArgumentParser) -> None:
         self.parser = parser
-        self._conditional_defaults: list[dict[str, Any]] = []
-
-    def add_conditional_default(
-        self,
-        dest: str,
-        compute_default: ComputeDefaultFunc,
-        explicit_marker_attr: str | None = None,
-    ) -> None:
-        """
-        Register a conditional default for an argument.
-
-        Args:
-            dest: The argument destination name (e.g., 'config_format').
-            compute_default: A callable that takes the parsed namespace and
-                             returns the default value to use. Return None to
-                             skip applying a default.
-            explicit_marker_attr: Optional custom attribute name for tracking
-                                  whether the user explicitly set this argument.
-                                  Defaults to f"_{dest}_explicit".
-        """
-        self._conditional_defaults.append(
-            {
-                "dest": dest,
-                "compute_default": compute_default,
-                "explicit_marker_attr": explicit_marker_attr or f"_{dest}_explicit",
-            }
-        )
 
     def apply(self) -> None:
         """
@@ -112,16 +84,14 @@ class ConditionalDefaultManager:
         1. Replaces the action for each managed argument with ConditionalDefaultAction
         2. Patches the parser's parse_args method to apply conditional defaults
         """
-        # Avoid patching the same parser instance twice
-        parser_id = id(self.parser)
-        if parser_id in _PATCHED_PARSERS:
-            return
-        _PATCHED_PARSERS.add(parser_id)
+        logger.debug(
+            "Enabling conditional defaults with %d config(s)",
+            len(_all_conditional_defaults),
+        )
 
-        # Step 1: Replace actions for managed arguments (both local and global)
-        all_configs = self._conditional_defaults + _all_conditional_defaults
+        # Step 1: Replace actions for managed arguments
         seen_dests: set[str] = set()
-        for config in all_configs:
+        for config in _all_conditional_defaults:
             dest = config["dest"]
             if dest in seen_dests:
                 continue
@@ -141,7 +111,13 @@ class ConditionalDefaultManager:
 
         # Check if we've already patched the base class
         if getattr(_argparse.ArgumentParser, "_spyre_conditional_defaults_patched", False):
+            logger.debug("ArgumentParser.parse_args already patched, skipping")
             return
+
+        logger.debug(
+            "Patching ArgumentParser.parse_args to apply %d conditional default(s)",
+            len(_all_conditional_defaults),
+        )
 
         original_parse_args = _argparse.ArgumentParser.parse_args
 
@@ -153,27 +129,43 @@ class ConditionalDefaultManager:
             result = original_parse_args(self, args, namespace)
             assert result is not None  # type: ignore[redundant-expr]
 
+            if args is None or len(args) == 0:
+                # Don't override anything if there were no args parsed
+                return result
+
             # Apply conditional defaults for any managed arguments
             for config in _all_conditional_defaults:
-                explicit_marker = config["explicit_marker_attr"]
                 dest = config["dest"]
 
                 # Skip if already applied or if user explicitly set the value
                 applied_attr = f"_{dest}_conditional_default_applied"
                 if getattr(result, applied_attr, False):
                     continue
-                if getattr(result, explicit_marker, False):
+                explicit_attr = f"_{dest}_explicit"
+                if getattr(result, explicit_attr, False):
+                    logger.debug(
+                        "Skipping conditional default for '%s': user explicitly provided value",
+                        dest,
+                    )
                     continue
 
                 # Apply the conditional default
                 try:
                     value = config["compute_default"](result)
                     if value is not None:
+                        logger.info(
+                            "Applying conditional default for '%s': %r",
+                            dest,
+                            value,
+                        )
                         setattr(result, dest, value)
                         setattr(result, applied_attr, True)
-                except Exception:
-                    # If condition evaluation fails, skip this default
-                    pass
+                except Exception as e:
+                    logger.debug(
+                        "Failed to compute conditional default for '%s': %s",
+                        dest,
+                        e,
+                    )
 
             return result
 
@@ -188,7 +180,6 @@ _all_conditional_defaults: list[dict[str, Any]] = []
 def register_conditional_default(
     dest: str,
     compute_default: ComputeDefaultFunc,
-    explicit_marker_attr: str | None = None,
 ) -> None:
     """
     Register a conditional default that will be applied to any parser.
@@ -202,12 +193,10 @@ def register_conditional_default(
         compute_default: A callable that takes the parsed namespace and
                          returns the default value to use. Return None to
                          skip applying a default.
-        explicit_marker_attr: Optional custom attribute for tracking explicit values.
     """
     _all_conditional_defaults.append(
         {
             "dest": dest,
             "compute_default": compute_default,
-            "explicit_marker_attr": explicit_marker_attr or f"_{dest}_explicit",
         }
     )
