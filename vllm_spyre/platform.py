@@ -19,6 +19,8 @@ import torch
 from vllm.logger import init_logger
 from vllm.utils.argparse_utils import FlexibleArgumentParser
 
+from vllm_spyre.argparse_utils import ConditionalDefaultManager, register_conditional_default
+
 if TYPE_CHECKING:
     # NB: We can't eagerly import many things from vllm since vllm.config
     # will import this file. These would lead to circular imports
@@ -490,12 +492,42 @@ class SpyrePlatform(Platform):
 
     @classmethod
     def pre_register_and_update(cls, parser: FlexibleArgumentParser | None = None) -> None:
-        if parser is not None:
-            parser.set_defaults(enable_prefix_caching=True)
-            parser.set_defaults(max_num_batched_tokens=cls.DEFAULT_CHUNK_SIZE)
-            parser.set_defaults(
-                enable_chunked_prefill=True
-            )  # set to pass vllm scheduler's max_model_len check
+        if parser is None:
+            return
+
+        parser.set_defaults(enable_prefix_caching=True)
+        parser.set_defaults(max_num_batched_tokens=cls.DEFAULT_CHUNK_SIZE)
+        parser.set_defaults(
+            enable_chunked_prefill=True
+        )  # set to pass vllm scheduler's max_model_len check
+
+        # Register conditional defaults for config_format and tokenizer_mode
+        # based on whether the model name contains "mistral"
+        def _is_mistral_model(namespace: object) -> bool:
+            # Check both 'model' and 'model_tag' since vLLM uses different
+            # attribute names in different contexts
+            model = getattr(namespace, "model_tag", None) or getattr(namespace, "model", "") or ""
+            return "mistral" in model.lower()
+
+        # Register conditional defaults that apply globally
+        register_conditional_default(
+            dest="config_format",
+            condition=_is_mistral_model,
+            true_value="mistral",
+            false_value="auto",
+        )
+        register_conditional_default(
+            dest="tokenizer_mode",
+            condition=_is_mistral_model,
+            true_value="mistral",
+            false_value="auto",
+        )
+
+        # Apply the conditional default manager to this parser
+        # This replaces the actions for managed arguments and patches
+        # the base ArgumentParser.parse_args method
+        manager = ConditionalDefaultManager(parser)
+        manager.apply()
 
     @classmethod
     def _check_threading_config(cls, worker_count: int):
