@@ -18,8 +18,8 @@ def load_graph_to_compare(file_path):
     # Replace id: <number> with id: ###
     content = re.sub(r"id: \d+", "id: ###", content)
 
-    # Replace ptr: <pointer> with ptr: xxxx
-    content = re.sub(r"ptr: 0x[0-9a-fA-F]{12}", "ptr: xxxx", content)
+    # Replace ptr: <pointer> with ptr: xxxx (match any length hex address)
+    content = re.sub(r"ptr: 0x[0-9a-fA-F]+", "ptr: xxxx", content)
 
     # Replace value
     content = re.sub(r"values: ([0-9a-fA-F]{2}\s*)+", "values: $$", content)
