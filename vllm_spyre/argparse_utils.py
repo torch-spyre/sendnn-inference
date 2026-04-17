@@ -196,7 +196,7 @@ class ConditionalDefaultManager:
                         setattr(result, dest, value)
                         setattr(result, applied_attr, True)
                 except Exception as e:
-                    logger.debug(
+                    logger.error(
                         "Failed to compute conditional default for '%s': %s",
                         dest,
                         e,
