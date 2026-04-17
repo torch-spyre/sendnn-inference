@@ -128,11 +128,6 @@ class ConditionalDefaultManager:
         1. Replaces the action for each managed argument with ConditionalDefaultAction
         2. Patches the parser's parse_args method to apply conditional defaults
         """
-        logger.debug(
-            "Enabling conditional defaults with %d config(s)",
-            len(cls._all_conditional_defaults),
-        )
-
         # Step 1: Replace actions for managed arguments
         for dest in cls._all_conditional_defaults:
             for action in parser._actions:
@@ -178,6 +173,10 @@ class ConditionalDefaultManager:
                 # Skip if already applied or if user explicitly set the value
                 applied_attr = f"_{dest}_conditional_default_applied"
                 if getattr(result, applied_attr, False):
+                    logger.debug(
+                        "Conditional default for '%s' was already applied: skipping...",
+                        dest,
+                    )
                     continue
                 explicit_attr = f"_{dest}_explicit"
                 if getattr(result, explicit_attr, False):
