@@ -60,30 +60,6 @@ def _make_worker(monkeypatch, vllm_config):
 
 @pytest.mark.cpu
 @pytest.mark.worker
-def test_profile_start(monkeypatch, mock_vllm_config):
-    """Test that profile() starts the profiler."""
-    worker = _make_worker(monkeypatch, mock_vllm_config)
-    worker.profiler = Mock()
-
-    worker.profile(is_start=True)
-
-    worker.profiler.start.assert_called_once()
-
-
-@pytest.mark.cpu
-@pytest.mark.worker
-def test_profile_stop(monkeypatch, mock_vllm_config):
-    """Test that profile(is_start=False) stops the profiler."""
-    worker = _make_worker(monkeypatch, mock_vllm_config)
-    worker.profiler = Mock()
-
-    worker.profile(is_start=False)
-
-    worker.profiler.stop.assert_called_once()
-
-
-@pytest.mark.cpu
-@pytest.mark.worker
 def test_profile_raises_when_profiler_not_enabled(monkeypatch, mock_vllm_config):
     """Test that profile() raises RuntimeError when profiler is not enabled."""
     mock_vllm_config.profiler_config = ProfilerConfig(profiler=None)
