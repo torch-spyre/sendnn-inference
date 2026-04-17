@@ -9,10 +9,14 @@ Example usage:
 
     @classmethod
     def pre_register_and_update(cls, parser):
+        def _compute_config_format(namespace: argparse.Namespace) -> str:
+            model = getattr(namespace, 'model', '') or ''
+            return 'mistral' if 'mistral' in model.lower() else 'auto'
+
         # Register conditional defaults that apply globally
         ConditionalDefaultManager.register(
             dest='config_format',
-            compute_default=lambda args: 'mistral' if 'mistral' in args.model.lower() else 'auto',
+            compute_default=_compute_config_format,
         )
 
         # Apply the patches to this parser
@@ -76,7 +80,7 @@ class ConditionalDefaultManager:
     via the class variable _all_conditional_defaults.
     """
 
-    _all_conditional_defaults: ClassVar[list[dict[str, Any]]] = []
+    _all_conditional_defaults: ClassVar[dict[str, ComputeDefaultFunc]] = {}
 
     @classmethod
     def clear(cls) -> None:
@@ -101,13 +105,19 @@ class ConditionalDefaultManager:
             compute_default: A callable that takes the parsed namespace and
                              returns the default value to use. Return None to
                              skip applying a default.
+
+        Raises:
+            ValueError: If a conditional default for this dest is already registered.
         """
-        cls._all_conditional_defaults.append(
-            {
-                "dest": dest,
-                "compute_default": compute_default,
-            }
-        )
+        if (
+            dest in cls._all_conditional_defaults
+            and cls._all_conditional_defaults[dest] != compute_default
+        ):
+            raise ValueError(
+                f"Conditional default for '{dest}' is already registered. "
+                f"Each destination can only be registered once."
+            )
+        cls._all_conditional_defaults[dest] = compute_default
 
     @classmethod
     def apply(cls, parser: FlexibleArgumentParser) -> None:
@@ -124,12 +134,7 @@ class ConditionalDefaultManager:
         )
 
         # Step 1: Replace actions for managed arguments
-        seen_dests: set[str] = set()
-        for config in cls._all_conditional_defaults:
-            dest = config["dest"]
-            if dest in seen_dests:
-                continue
-            seen_dests.add(dest)
+        for dest in cls._all_conditional_defaults:
             for action in parser._actions:
                 if hasattr(action, "dest") and action.dest == dest:
                     action.__class__ = ConditionalDefaultAction
@@ -169,9 +174,7 @@ class ConditionalDefaultManager:
                 return result
 
             # Apply conditional defaults for any managed arguments
-            for config in cls._all_conditional_defaults:
-                dest = config["dest"]
-
+            for dest, compute_default in cls._all_conditional_defaults.items():
                 # Skip if already applied or if user explicitly set the value
                 applied_attr = f"_{dest}_conditional_default_applied"
                 if getattr(result, applied_attr, False):
@@ -186,7 +189,7 @@ class ConditionalDefaultManager:
 
                 # Apply the conditional default
                 try:
-                    value = config["compute_default"](result)
+                    value = compute_default(result)
                     if value is not None:
                         logger.info(
                             "Applying conditional default for '%s': %r",

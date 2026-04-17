@@ -18,6 +18,7 @@ import os
 from typing import TYPE_CHECKING, cast, Literal
 
 import torch
+import huggingface_hub
 from vllm.logger import init_logger
 from vllm.utils.argparse_utils import FlexibleArgumentParser
 
@@ -503,35 +504,6 @@ class SpyrePlatform(Platform):
             enable_chunked_prefill=True
         )  # set to pass vllm scheduler's max_model_len check
 
-        def _compute_config_format(namespace: argparse.Namespace) -> str:
-            """Check if a model is in mistral format by looking for params.json.
-
-            This uses any_pattern_in_repo_files which correctly handles both local paths
-            and HuggingFace cache, including offline mode support.
-            """
-            from vllm.transformers_utils.repo_utils import any_pattern_in_repo_files
-
-            # Check both 'model' and 'model_tag' since vLLM uses different
-            # attribute names in different contexts
-            model = getattr(namespace, "model_tag", None) or getattr(namespace, "model", "") or ""
-
-            if not model:
-                return "auto"
-
-            # Get optional HF arguments
-            revision = getattr(namespace, "revision", None)
-            token = getattr(namespace, "hf_token", None)
-
-            # Look for params.json which indicates a mistral-format model
-            if any_pattern_in_repo_files(
-                model,
-                allow_patterns=["params.json"],
-                revision=revision,
-                token=token,
-            ):
-                return "mistral"
-            return "auto"
-
         # Register conditional defaults that apply globally
         ConditionalDefaultManager.register(
             dest="config_format",
@@ -788,3 +760,37 @@ class SpyrePlatform(Platform):
             cls._max_batch_tkv_limit = int(os.getenv("VLLM_DT_MAX_BATCH_TKV_LIMIT", "-1"))  #  ty: ignore
         except ValueError as e:
             raise ValueError("VLLM_DT_MAX_BATCH_TKV_LIMIT must be an integer") from e
+
+
+def _compute_config_format(namespace: argparse.Namespace) -> str:
+    """Check if a model is in mistral format by looking for params.json.
+
+    This uses any_pattern_in_repo_files which correctly handles both local paths
+    and HuggingFace cache, including offline mode support.
+    """
+    from vllm.transformers_utils.repo_utils import any_pattern_in_repo_files, get_model_path
+
+    # Check both 'model' and 'model_tag' since vLLM uses different
+    # attribute names in different contexts
+    model = getattr(namespace, "model_tag", None) or getattr(namespace, "model", "") or ""
+
+    if not model:
+        return "auto"
+
+    # Get optional HF arguments
+    revision = getattr(namespace, "revision", None)
+    token = getattr(namespace, "hf_token", None)
+
+    # Resolve local path in offline mode (if not already a local path)
+    if huggingface_hub.constants.HF_HUB_OFFLINE:
+        model = get_model_path(model, revision)
+
+    # Look for params.json which indicates a mistral-format model
+    if any_pattern_in_repo_files(
+        model,
+        allow_patterns=["params.json"],
+        revision=revision,
+        token=token,
+    ):
+        return "mistral"
+    return "auto"
