@@ -36,3 +36,38 @@ def test_profiler(
 
     trace_files = list(tmp_path.glob("*.pt.trace.json*"))
     assert len(trace_files) > 0
+
+
+@pytest.mark.cpu
+def test_profiler_prefix(
+    model: ModelInfo,
+    max_model_len: int,
+    max_num_seqs: int,
+    max_num_batched_tokens: int,
+    tmp_path,
+):
+    """Test that profile_prefix is reflected in the trace file names."""
+    prompts = get_chicken_soup_prompts(2)
+    prefix = "my_prefix"
+
+    envs_spyre.override("VLLM_SPYRE_DYNAMO_BACKEND", "eager")
+
+    spyre_model = LLM(
+        model=model.name,
+        revision=model.revision,
+        max_model_len=max_model_len,
+        max_num_seqs=max_num_seqs,
+        max_num_batched_tokens=max_num_batched_tokens,
+        profiler_config=ProfilerConfig(
+            profiler="torch",
+            torch_profiler_dir=str(tmp_path),
+        ),
+    )
+
+    spyre_model.start_profile(profile_prefix=prefix)
+    spyre_model.generate(prompts=prompts)
+    spyre_model.stop_profile()
+
+    trace_files = list(tmp_path.glob("*.pt.trace.json*"))
+    assert len(trace_files) > 0
+    assert all(f.name.startswith(prefix) for f in trace_files)

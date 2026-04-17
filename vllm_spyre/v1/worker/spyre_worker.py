@@ -274,36 +274,24 @@ class SpyreWorker(WorkerBase):
         #   --profiler-config.torch_profiler_dir=/path/to/save/trace)
         # OR
         #   --profiler-config '{"profiler": "torch", "torch_profiler_dir": "/path/to/save/trace"}'
-        profiler_config = vllm_config.profiler_config
-        if profiler_config.profiler == "torch":
-            worker_name = f"{vllm_config.instance_id}-rank-{self.rank}"
-            self.profiler: TorchProfilerWrapper | None = TorchProfilerWrapper(
-                profiler_config,
-                worker_name=worker_name,
-                local_rank=self.local_rank,
-                activities=["CPU"],
+        self.profiler_config = vllm_config.profiler_config
+        self.profiler: TorchProfilerWrapper | None = None
+        if self.profiler_config.profiler == "torch" and SpyrePlatform.is_backend_sendnn_enabled():
+            logger.info_once(
+                "Traces will contain AIU events if PyTorch with AIU profiling support is installed."
             )
+            os.environ["ProfilerActivity"] = "PrivateUse1"  # noqa: SIM112
 
-            if SpyrePlatform.is_backend_sendnn_enabled():
-                logger.info_once(
-                    "Traces will contain AIU events if PyTorch with"
-                    " AIU profiling support is installed."
+            # Get the current value of DT_OPT and autopilot
+            dt_opt = os.environ.get("DT_OPT", "")
+            options = dict(opt.split("=") for opt in dt_opt.split(",") if "=" in opt)
+            autopilot_opt = options.get("autopilot", "1")  # autopilot defaults to 1 if not set
+            if autopilot_opt == "1":
+                logger.warning_once(
+                    "autopilot on detected with profiling enabled. Add "
+                    "autopilot=0 to DT_OPT to see individual AIU-kernel "
+                    "execution in the trace."
                 )
-                os.environ["ProfilerActivity"] = "PrivateUse1"  # noqa: SIM112
-
-                # Get the current value of DT_OPT and autopilot
-                dt_opt = os.environ.get("DT_OPT", "")
-                options = dict(opt.split("=") for opt in dt_opt.split(",") if "=" in opt)
-                autopilot_opt = options.get("autopilot", "1")  # autopilot defaults to 1 if not set
-                if autopilot_opt == "1":
-                    logger.warning_once(
-                        "autopilot on detected with profiling enabled. Add "
-                        "autopilot=0 to DT_OPT to see individual AIU-kernel "
-                        "execution in the trace."
-                    )
-
-        else:
-            self.profiler = None
 
     def init_distributed_environment(self) -> None:
         """Initialize the distributed environment."""
@@ -731,7 +719,7 @@ class SpyreWorker(WorkerBase):
         self.execute_model(scheduler_output)  # Prefill
 
     def profile(self, is_start: bool = True, profile_prefix: str | None = None):
-        if self.profiler is None:
+        if self.profiler_config.profiler is None:
             raise RuntimeError(
                 "Profiling is not enabled. Please set --profiler-config to enable "
                 "profiling. Example: "
@@ -739,6 +727,17 @@ class SpyreWorker(WorkerBase):
                 "=YOUR_DIR_PATH_TO_DUMP_TRACE'"
             )
         if is_start:
+            if self.profiler is None:
+                worker_name = f"{self.vllm_config.instance_id}-rank-{self.rank}"
+                if profile_prefix:
+                    worker_name = f"{profile_prefix}_{worker_name}"
+                self.profiler = TorchProfilerWrapper(
+                    self.profiler_config,
+                    worker_name=worker_name,
+                    local_rank=self.local_rank,
+                    activities=["CPU"],
+                )
+            assert self.profiler is not None
             self.profiler.start()
         else:
             if self.profiler is None:
