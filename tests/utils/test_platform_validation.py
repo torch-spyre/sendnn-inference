@@ -272,57 +272,85 @@ class TestPreRegisterAndUpdate:
         yield
         ConditionalDefaultManager.clear()
 
-    def create_test_parser(self):
-        """Create a parser with the arguments used by pre_register_and_update."""
+    @pytest.fixture
+    def arg_parsers(self):
+        """Create main parser and serve subparser like vLLM's CLI structure.
+
+        Returns a tuple of (main_parser, serve_subparser). The subparser is
+        passed to pre_register_and_update, but parse_args should be called
+        on the main parser.
+        """
         from vllm.utils.argparse_utils import FlexibleArgumentParser
 
-        parser = FlexibleArgumentParser()
-        parser.add_argument("--config-format", dest="config_format", default="auto")
-        parser.add_argument("--tokenizer-mode", dest="tokenizer_mode", default="auto")
-        parser.add_argument("model_tag", nargs="?", default=None)
-        return parser
+        # Create main parser like vLLM's CLI
+        main_parser = FlexibleArgumentParser()
+        subparsers = main_parser.add_subparsers(dest="subcommand")
 
-    def test_config_format_defaults_to_mistral_when_model_tag_contains_mistral(self):
-        """Test that config_format defaults to 'mistral' when model_tag contains 'mistral'."""
-        # Parse with a mistral model
-        parser = self.create_test_parser()
-        SpyrePlatform.pre_register_and_update(parser)
-        args = parser.parse_args(["mistralai/Mistral-7B-Instruct-v0.1"])
+        # Create serve subparser with the actual arguments
+        serve_parser = subparsers.add_parser("serve", help="Serve model")
+        serve_parser.add_argument("--config-format", dest="config_format", default="auto")
+        serve_parser.add_argument("--tokenizer-mode", dest="tokenizer_mode", default="auto")
+        serve_parser.add_argument("--revision", dest="revision", default=None)
+        serve_parser.add_argument("--hf-token", dest="hf_token", default=None)
+        serve_parser.add_argument("model_tag", nargs="?", default=None)
 
-        assert args.config_format == "mistral"
-        assert args.tokenizer_mode == "mistral"
+        return main_parser, serve_parser
 
-    def test_config_format_defaults_to_mistral_when_params_json_exists(self, tmp_path):
+    def test_config_format_defaults_to_mistral_when_params_json_exists(self, tmp_path, arg_parsers):
         """Test that config_format defaults to 'mistral' when model_tag points to dir with
         params.json."""
+        main_parser, serve_parser = arg_parsers
+
         # Create a temporary directory with params.json (NB: path does not have mistral in the name)
         model_dir = tmp_path / "some_model"
         model_dir.mkdir()
         params_file = model_dir / "params.json"
         params_file.write_text('{"dim": 4096, "n_layers": 32}')
 
-        # Parse with the local directory as model
-        parser = self.create_test_parser()
-        SpyrePlatform.pre_register_and_update(parser)
-        args = parser.parse_args([str(model_dir)])
+        # Pass only the subparser to pre_register_and_update (like vLLM does)
+        SpyrePlatform.pre_register_and_update(serve_parser)
+        # But call parse_args on the main parser (like vLLM does)
+        args = main_parser.parse_args(["serve", str(model_dir)])
 
         assert args.config_format == "mistral"
         assert args.tokenizer_mode == "mistral"
 
-    def test_config_format_defaults_to_auto_for_non_mistral_models(self):
-        """Test that config_format defaults to 'auto' for non-mistral models."""
-        parser = self.create_test_parser()
-        SpyrePlatform.pre_register_and_update(parser)
-        args = parser.parse_args(["facebook/opt-125m"])
+    def test_config_format_defaults_to_auto_for_models_without_params_json(
+        self, tmp_path, arg_parsers
+    ):
+        """Test that config_format defaults to 'auto' for models without params.json."""
+        main_parser, serve_parser = arg_parsers
+
+        # Create a temporary directory without params.json
+        model_dir = tmp_path / "some_other_model"
+        model_dir.mkdir()
+
+        # Put some other files in it
+        (model_dir / "config.json").write_text('{"_name_or_path": "gpt2"}')
+        (model_dir / "pytorch_model.bin").touch()
+
+        # Pass only the subparser to pre_register_and_update (like vLLM does)
+        SpyrePlatform.pre_register_and_update(serve_parser)
+        # But call parse_args on the main parser (like vLLM does)
+        args = main_parser.parse_args(["serve", str(model_dir)])
 
         assert args.config_format == "auto"
         assert args.tokenizer_mode == "auto"
 
-    def test_explicit_config_format_not_overridden(self):
+    def test_explicit_config_format_not_overridden(self, tmp_path, arg_parsers):
         """Test that user-provided config_format is not overridden."""
-        parser = self.create_test_parser()
-        SpyrePlatform.pre_register_and_update(parser)
-        args = parser.parse_args(["--config-format", "hf", "mistralai/Mistral-7B-Instruct-v0.1"])
+        main_parser, serve_parser = arg_parsers
+
+        # Create a temporary directory with params.json
+        model_dir = tmp_path / "mistral_model"
+        model_dir.mkdir()
+        params_file = model_dir / "params.json"
+        params_file.write_text('{"dim": 4096, "n_layers": 32}')
+
+        # Pass only the subparser to pre_register_and_update (like vLLM does)
+        SpyrePlatform.pre_register_and_update(serve_parser)
+        # But call parse_args on the main parser (like vLLM does)
+        args = main_parser.parse_args(["serve", "--config-format", "hf", str(model_dir)])
 
         # User explicitly set config_format to "hf", it should not be overridden
         assert args.config_format == "hf"

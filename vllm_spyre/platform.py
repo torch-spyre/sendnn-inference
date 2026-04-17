@@ -1,4 +1,3 @@
-from pathlib import Path
 import sys
 
 
@@ -505,22 +504,33 @@ class SpyrePlatform(Platform):
         )  # set to pass vllm scheduler's max_model_len check
 
         def _compute_config_format(namespace: argparse.Namespace) -> str:
-            """This is a much more relaxed check than vllm has to decide if a model is in mistral
-            format or not. We simply look for "mistral" in the name or the existence of the
-            mistral-specific params.json file.
+            """Check if a model is in mistral format by looking for params.json.
 
-            This is required because in offline mode, vllm needs the consolidated safetensors file
-            to be cached locally in order to determine if a model is a mistral model. This is often
-            not the case as we load mistral models from the chunked safetensors files.
+            This uses any_pattern_in_repo_files which correctly handles both local paths
+            and HuggingFace cache, including offline mode support.
             """
+            from vllm.transformers_utils.repo_utils import any_pattern_in_repo_files
+
             # Check both 'model' and 'model_tag' since vLLM uses different
             # attribute names in different contexts
             model = getattr(namespace, "model_tag", None) or getattr(namespace, "model", "") or ""
-            maybe_local_path = Path(model)
-            local_mistral_configs = (
-                maybe_local_path.exists() and (maybe_local_path / "params.json").is_file()
-            )
-            return "mistral" if "mistral" in model.lower() or local_mistral_configs else "auto"
+
+            if not model:
+                return "auto"
+
+            # Get optional HF arguments
+            revision = getattr(namespace, "revision", None)
+            token = getattr(namespace, "hf_token", None)
+
+            # Look for params.json which indicates a mistral-format model
+            if any_pattern_in_repo_files(
+                model,
+                allow_patterns=["params.json"],
+                revision=revision,
+                token=token,
+            ):
+                return "mistral"
+            return "auto"
 
         # Register conditional defaults that apply globally
         ConditionalDefaultManager.register(
