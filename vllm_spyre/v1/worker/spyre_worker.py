@@ -727,17 +727,16 @@ class SpyreWorker(WorkerBase):
                 "=YOUR_DIR_PATH_TO_DUMP_TRACE'"
             )
         if is_start:
-            if self.profiler is None:
-                worker_name = f"{self.vllm_config.instance_id}-rank-{self.rank}"
-                if profile_prefix:
-                    worker_name = f"{profile_prefix}_{worker_name}"
-                self.profiler = TorchProfilerWrapper(
-                    self.profiler_config,
-                    worker_name=worker_name,
-                    local_rank=self.local_rank,
-                    activities=["CPU"],
-                )
-            assert self.profiler is not None
+            # Recreate the wrapper each time
+            worker_name = f"{self.vllm_config.instance_id}-rank-{self.rank}"
+            if profile_prefix:
+                worker_name = f"{profile_prefix}_{worker_name}"
+            self.profiler = TorchProfilerWrapper(
+                self.profiler_config,
+                worker_name=worker_name,
+                local_rank=self.local_rank,
+                activities=["CPU"],
+            )
             self.profiler.start()
         else:
             if self.profiler is None:

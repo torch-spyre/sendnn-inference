@@ -46,9 +46,8 @@ def test_profiler_prefix(
     max_num_batched_tokens: int,
     tmp_path,
 ):
-    """Test that profile_prefix is reflected in the trace file names."""
+    """Test that profile_prefix is applied to each call."""
     prompts = get_chicken_soup_prompts(2)
-    prefix = "my_prefix"
 
     envs_spyre.override("VLLM_SPYRE_DYNAMO_BACKEND", "eager")
 
@@ -64,10 +63,11 @@ def test_profiler_prefix(
         ),
     )
 
-    spyre_model.start_profile(profile_prefix=prefix)
-    spyre_model.generate(prompts=prompts)
-    spyre_model.stop_profile()
+    for prefix in ("first", "second"):
+        spyre_model.start_profile(profile_prefix=prefix)
+        spyre_model.generate(prompts=prompts)
+        spyre_model.stop_profile()
 
-    trace_files = list(tmp_path.glob("*.pt.trace.json*"))
-    assert len(trace_files) > 0
-    assert all(f.name.startswith(prefix) for f in trace_files)
+    for prefix in ("first", "second"):
+        trace_files = list(tmp_path.glob(f"{prefix}*.pt.trace.json*"))
+        assert len(trace_files) > 0, f"No trace files found for prefix '{prefix}'"
