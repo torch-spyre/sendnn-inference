@@ -38,9 +38,6 @@ from .utils import convert, register_layer
 
 logger = init_logger(__name__)
 
-# Minimum batch size required by Spyre hardware.
-_SPYRE_MIN_BATCH_SIZE = 64
-
 
 @RMSNorm.register_oot(name="RMSNorm")
 class SpyreRMSNorm(RMSNorm):
@@ -100,7 +97,6 @@ class SpyreRMSNorm(RMSNorm):
         Returns:
             Normalized output, or (output, residual) tuple if residual provided
         """
-        # return self._forward_spyre_impl(x, residual)
         if self.variance_size_override is not None:
             raise NotImplementedError("TODO: variance_size_override not yet implemented")
 
@@ -163,51 +159,6 @@ class SpyreRMSNorm(RMSNorm):
             return x
         else:
             return x, residual
-
-    # def _forward_spyre_impl(
-    #     self,
-    #     x: torch.Tensor,
-    #     residual: torch.Tensor | None = None,
-    # ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
-    #     """Spyre device execution with padding and kernel dispatch.
-
-    #     Handles Spyre-specific constraints:
-    #         1. Minimum batch size: Pads to 64 if needed
-    #         2. Kernel execution: Calls compiled maybe_compiled_forward_spyre
-
-    #     Limitations:
-    #         - variance_size_override not implemented (raises NotImplementedError)
-
-    #     Args:
-    #         x: Input tensor [batch_size, hidden_size]
-    #         residual: Optional residual tensor
-
-    #     Returns:
-    #         Normalized output [batch_size, hidden_size] in input dtype
-    #     """
-    #     if self.variance_size_override is not None:
-    #         raise NotImplementedError("TODO: variance_size_override not yet implemented")
-
-    #     out_dtype = x.dtype
-    #     out_device = x.device
-
-    #     # Execute compiled kernel on Spyre device
-    #     outs = self.maybe_compiled_forward_spyre(
-    #         convert(x, self._target_device, self._target_dtype),
-    #         self.variance_epsilon,
-    #         self.hidden_size,
-    #         convert(self.weight.data, self._target_device, self._target_dtype)
-    #         if self.has_weight
-    #         else None,
-    #         convert(residual, self._target_device, self._target_dtype)
-    #         if residual is not None
-    #         else None,
-    #     )
-
-    #     # Convert back to original device/dtype
-    #     if isinstance(outs, tuple):
-    #         return tuple(convert(o, device=out_device, dtype=out_dtype) for o in outs)
-    #     return convert(outs, device=out_device, dtype=out_dtype)
 
 
 def register():
