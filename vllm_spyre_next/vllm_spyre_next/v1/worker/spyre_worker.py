@@ -15,8 +15,7 @@ logger = init_logger(__name__)
 class TorchSpyreWorker(CPUWorker):
     """A worker class that executes the model on IBM's Spyre device.
 
-    Inherits from CPUWorker but overrides init_device to:
-    - Skip CPU-specific OMP thread binding
+    Inherits from CPUWorker but extends init_device to:
     - Create a TorchSpyreModelRunner with torch.device("spyre")
     """
 
@@ -51,7 +50,7 @@ class TorchSpyreWorker(CPUWorker):
             torch.device("spyre"),
         )
 
-    def compile_or_warm_up_model(self):
+    def compile_or_warm_up_model(self) -> float:
         # FIXME: Work around for https://github.com/torch-spyre/torch-spyre/issues/1420
         # Ensure registration of Spyre decompositions before FX Graph tracing
         import torch._inductor.decomposition
