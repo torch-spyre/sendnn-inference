@@ -103,6 +103,7 @@ class TorchSpyrePlatform(CpuPlatform):
         # run natively on Spyre, this can be removed to enable compilation.
         vllm_config.model_config.enforce_eager = True
 
+    @classmethod
     def get_attn_backend_cls(cls, selected_backend, *args, **kwargs) -> str:
         if selected_backend == AttentionBackendEnum.CUSTOM:
             return AttentionBackendEnum.CUSTOM.get_path()
@@ -135,7 +136,10 @@ class TorchSpyrePlatform(CpuPlatform):
 
         # ---- scheduler ----
         scheduler_config = vllm_config.scheduler_config
+        # default scheduler
         scheduler_class = "vllm.v1.core.sched.scheduler.Scheduler"
+        # if a torch spyre specific scheduler class is needed it can be loaded with
+        # scheduler_class = "vllm_spyre_next.v1.core.scheduler.TorchSpyreScheduler"
         logger.info("Loading scheduler from: %s", scheduler_class)
         scheduler_config.scheduler_cls = scheduler_class
 
