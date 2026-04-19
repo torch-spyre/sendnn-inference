@@ -108,9 +108,6 @@ class TorchSpyrePlatform(CpuPlatform):
         if selected_backend == AttentionBackendEnum.CUSTOM:
             return AttentionBackendEnum.CUSTOM.get_path()
         else:
-            if selected_backend is None:
-                # return dummy backend for spyre model runner
-                return "vllm_spyre_next.attention_backend.SpyreCPUAttentionBackend"
             return super().get_attn_backend_cls(selected_backend, *args, **kwargs)
 
     @classmethod
