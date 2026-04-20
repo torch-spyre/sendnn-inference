@@ -356,3 +356,58 @@ class TestPreRegisterAndUpdate:
         assert args.config_format == "hf"
         # tokenizer_mode should still be set (since it depends on the same logic)
         assert args.tokenizer_mode == "mistral"
+
+    def test_config_format_from_cached_hf_model_offline_mode(
+        self, tmp_path, arg_parsers, monkeypatch
+    ):
+        """Test that config_format is detected from cached HF model in offline mode.
+
+        This creates a mock HF hub cache structure with a mistral model that has
+        params.json cached, then runs with HF_HUB_OFFLINE=1 to verify the
+        detection works correctly.
+        """
+        main_parser, serve_parser = arg_parsers
+
+        # Create a mock HF hub cache structure
+        # Format: <cache_dir>/models--<org>--<model>/snapshots/<commit_hash>/<files>
+        cache_dir = tmp_path / "hf_cache"
+        cache_dir.mkdir()
+
+        repo_id = "mistralai/Mistral-7B-Instruct-v0.1"
+        repo_folder = cache_dir / "models--mistralai--Mistral-7B-Instruct-v0.1"
+        refs_folder = repo_folder / "refs"
+        snapshots_folder = repo_folder / "snapshots"
+
+        refs_folder.mkdir(parents=True)
+        snapshots_folder.mkdir(parents=True)
+
+        # Create a fake commit hash "main" reference
+        (refs_folder / "main").write_text("abc123def456789")
+
+        # Create snapshot directory with the fake commit hash
+        snapshot_folder = snapshots_folder / "abc123def456789"
+        snapshot_folder.mkdir()
+
+        # Create params.json in the snapshot (this marks it as a mistral model)
+        (snapshot_folder / "params.json").write_text('{\n  "dim": 4096,\n  "n_layers": 32\n}')
+        # Also create other typical model files
+        (snapshot_folder / "config.json").write_text('{"model_type": "mistral"}')
+
+        # Set up the cache environment and offline mode
+        monkeypatch.setenv("HF_HOME", str(tmp_path))
+        monkeypatch.setenv("HF_HUB_CACHE", str(cache_dir))
+        monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+
+        # Re-import huggingface_hub constants to pick up the new env vars
+        import importlib
+        import huggingface_hub.constants
+
+        importlib.reload(huggingface_hub.constants)
+
+        # Pass only the subparser to pre_register_and_update
+        SpyrePlatform.pre_register_and_update(serve_parser)
+        # Call parse_args on the main parser with the repo_id
+        args = main_parser.parse_args(["serve", repo_id])
+
+        assert args.config_format == "mistral"
+        assert args.tokenizer_mode == "mistral"
