@@ -272,6 +272,12 @@ class TestPreRegisterAndUpdate:
         yield
         ConditionalDefaultManager.clear()
 
+        # Re-import huggingface_hub constants to reset any patched env vars
+        import importlib
+        import huggingface_hub.constants
+
+        importlib.reload(huggingface_hub.constants)
+
     @pytest.fixture
     def arg_parsers(self):
         """Create main parser and serve subparser like vLLM's CLI structure.
