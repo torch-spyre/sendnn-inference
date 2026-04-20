@@ -30,7 +30,7 @@ overrides = [
     { name = "setuptools", specifier = ">=82" },
     { name = "torch", specifier = "==2.10.0", index = "https://download.pytorch.org/whl/cpu" },
     { name = "triton", marker = "sys_platform == 'never'" },
-    { name = "vllm", marker = "platform_machine not in 's390x, ppc64le'", git = "https://github.com/vllm-project/vllm?rev=v0.19.0" },
+    { name = "vllm", marker = "platform_machine not in 's390x, ppc64le'", git = "https://github.com/vllm-project/vllm?rev=v0.19.1" },
 ]
 build-constraints = [{ name = "torch", specifier = "==2.10.0", index = "https://download.pytorch.org/whl/cpu" }]
 
@@ -4592,8 +4592,8 @@ wheels = [
 
 [[package]]
 name = "vllm"
-version = "0.19.0"
-source = { git = "https://github.com/vllm-project/vllm?rev=v0.19.0#2a69949bdadf0e8942b7a1619b229cb475beef20" }
+version = "0.19.1"
+source = { git = "https://github.com/vllm-project/vllm?rev=v0.19.1#b1388b1fbf5aaef47937fabe98931211684666a6" }
 dependencies = [
     { name = "aiohttp" },
     { name = "anthropic" },
@@ -4691,7 +4691,7 @@ requires-dist = [
     { name = "ibm-fms", specifier = ">=1.9.0,<2" },
     { name = "torch", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torchvision", index = "https://download.pytorch.org/whl/cpu" },
-    { name = "vllm", git = "https://github.com/vllm-project/vllm?rev=v0.19.0" },
+    { name = "vllm", git = "https://github.com/vllm-project/vllm?rev=v0.19.1" },
 ]
 
 [package.metadata.requires-dev]
