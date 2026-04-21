@@ -266,7 +266,7 @@ class TestPreRegisterAndUpdate:
     @pytest.fixture(autouse=True)
     def clear_conditional_defaults(self):
         """Clear conditional defaults before each test to ensure isolation."""
-        from vllm_spyre.argparse_utils import ConditionalDefaultManager
+        from sendnn_inference.argparse_utils import ConditionalDefaultManager
 
         ConditionalDefaultManager.clear()
         yield

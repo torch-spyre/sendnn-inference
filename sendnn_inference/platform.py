@@ -22,7 +22,7 @@ import huggingface_hub
 from vllm.logger import init_logger
 from vllm.utils.argparse_utils import FlexibleArgumentParser
 
-from vllm_spyre.argparse_utils import ConditionalDefaultManager
+from sendnn_inference.argparse_utils import ConditionalDefaultManager
 
 if TYPE_CHECKING:
     # NB: We can't eagerly import many things from vllm since vllm.config
