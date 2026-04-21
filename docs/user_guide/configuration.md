@@ -2,9 +2,9 @@
 
 For a complete list of configuration options, see [Environment Variables](env_vars.md).
 
-## SendNN Inference 2.0 Migration Guide
+## SenDNN Inference 2.0 Migration Guide
 
-This guide covers breaking changes introduced in SendNN Inference 2.0, including the package rename from `vllm_spyre` to `sendnn_inference` and associated configuration changes.
+This guide covers breaking changes introduced in SenDNN Inference 2.0, including the package rename from `vllm_spyre` to `sendnn_inference` and associated configuration changes.
 
 ### Package Rename
 
@@ -27,7 +27,7 @@ export VLLM_PLUGINS=spyre
 export VLLM_PLUGINS=sendnn_inference
 ```
 
-This change is required for vLLM to discover and load the SendNN Inference platform plugin. Without this update, vLLM will fail to initialize the Spyre backend.
+This change is required for vLLM to discover and load the SenDNN Inference platform plugin. Without this update, vLLM will fail to initialize the Spyre backend.
 
 ### Environment Variable Renaming
 
@@ -54,7 +54,7 @@ For a complete list of environment variables, see [Environment Variables](env_va
 
 ### Runtime Behavior Changes
 
-For users migrating from SendNN Inference 1.x releases, the default configuration for generative models has changed.
+For users migrating from SenDNN Inference 1.x releases, the default configuration for generative models has changed.
 All models now run with chunked prefill, and prefix caching is enabled by default.
 
 The following environment variables can be removed from all configurations:
@@ -79,7 +79,7 @@ If you have the following environment variable set, you likely need to re-evalua
 SENDNN_INFERENCE_WARMUP_NEW_TOKENS
 ```
 
-There are no breaking changes to deployments for pooling models with SendNN Inference 2.x.
+There are no breaking changes to deployments for pooling models with SenDNN Inference 2.x.
 
 ## Backend Selection
 
@@ -94,7 +94,7 @@ Support for the vLLM v0 backend has been removed, only the vLLM v1 backend is su
 
 ## Generative Models
 
-When running decoder models for text generation, SendNN Inference uses dynamic batching with chunked prefill and automatic prefix caching.
+When running decoder models for text generation, SenDNN Inference uses dynamic batching with chunked prefill and automatic prefix caching.
 This looks and feels like running vllm on any other accelerator, with a few minor differences.
 
 ### Chunked Prefill
@@ -103,10 +103,10 @@ Chunked prefill is a technique that improves Inter-Token Latency (ITL) in contin
 
 For configuration and tuning guidance, see the [vLLM official documentation on chunked prefill](https://docs.vllm.ai/en/latest/configuration/optimization/#chunked-prefill).
 
-As in vLLM, the `max_num_batched_tokens` parameter controls how chunks are formed. While vLLM can dynamically schedule mixed batches of prefill and decode with arbitrary chunk sizes, the SendNN Inference implementation is limited to compiling prefill programs for a single fixed chunk size.
-SendNN Inference interleaves decode passes with these fixed-chunk-size prefill passes to emulate chunked prefill. The `max_num_batched_tokens` parameter controls this fixed chunk size for prefill passes in SendNN Inference.
+As in vLLM, the `max_num_batched_tokens` parameter controls how chunks are formed. While vLLM can dynamically schedule mixed batches of prefill and decode with arbitrary chunk sizes, the SenDNN Inference implementation is limited to compiling prefill programs for a single fixed chunk size.
+SenDNN Inference interleaves decode passes with these fixed-chunk-size prefill passes to emulate chunked prefill. The `max_num_batched_tokens` parameter controls this fixed chunk size for prefill passes in SenDNN Inference.
 
-This parameter should be tuned according to your infrastructure, it is recommended to set it from `512` to `4096` tokens and it **must** be multiple of the block size (currently fixed to `64`). For convenience, when using the model `ibm-granite/granite-3.3-8b-instruct` with `tp=4`, SendNN Inference automatically sets `max_num_batched_tokens` to `512`, a value known to produce good hardware utilization in this setup.
+This parameter should be tuned according to your infrastructure, it is recommended to set it from `512` to `4096` tokens and it **must** be multiple of the block size (currently fixed to `64`). For convenience, when using the model `ibm-granite/granite-3.3-8b-instruct` with `tp=4`, SenDNN Inference automatically sets `max_num_batched_tokens` to `512`, a value known to produce good hardware utilization in this setup.
 
 In chunked prefill mode, the `vllm:kv_cache_usage_perc` metric will report the correct KV cache usage on the Spyre cards for all active requests.
 
@@ -122,7 +122,7 @@ When prefix caching is enabled, the `vllm:prefix_cache_queries` and `vllm:prefix
 
 For the embedding, scoring, and reranking tasks, vLLM supports running Pooling Models. More information on Pooling Models can be found in the [vLLM official documentation](https://docs.vllm.ai/en/latest/models/pooling_models/).
 
-SendNN Inference runs all pooling models using static batching, where graphs are pre-compiled for each configured batch shape. This adds extra constraints on the sizes of inputs for each request, and requests that do not fit the precompiled graphs will be rejected.
+SenDNN Inference runs all pooling models using static batching, where graphs are pre-compiled for each configured batch shape. This adds extra constraints on the sizes of inputs for each request, and requests that do not fit the precompiled graphs will be rejected.
 
 !!! caution
     There are no up-front checks that the compiled graphs will fit into the available memory on the Spyre cards. If the graphs are too large for the available memory, vllm will crash during model warmup.

@@ -35,7 +35,7 @@ def force_engine_core_shutdown(engine_core):
         # setup does not inherit stale resources from the previous run.
         cleanup_dist_env_and_memory()
 
-        # SendNN device teardown is not always instantaneous. Give the runtime
+        # Spyre device teardown is not always instantaneous. Give the runtime
         # a short grace period before the next cached config starts.
         if os.environ.get("SENDNN_INFERENCE_DYNAMO_BACKEND") == "sendnn":
             time.sleep(2)
@@ -140,7 +140,7 @@ class SortKey(NamedTuple):
     @staticmethod
     def _get_cache_priority(cache_type: str) -> int:
         # Sort online tests before cached LLM tests so the server-backed path
-        # does not have to follow a same-process SendNN engine teardown.
+        # does not have to follow a same-process SenDNN engine teardown.
         cache_order = {
             "": 0,
             "online": 1,

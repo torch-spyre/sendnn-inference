@@ -1,6 +1,6 @@
 # Model Configuration System
 
-This directory contains the model configuration system for SendNN Inference,
+This directory contains the model configuration system for SenDNN Inference,
 which provides a clean, extensible way to manage model-specific configurations.
 
 ## Table of Contents
@@ -240,7 +240,7 @@ models:
 
 ### 1. Model Matching and Runtime Config Verification
 
-Before SendNN Inference loads the model, the registry:
+Before SenDNN Inference loads the model, the registry:
 
 1. Extracts the HuggingFace config
 2. Compares it against all registered architecture patterns
@@ -433,4 +433,4 @@ For questions or issues:
 1. Check this README
 2. Review existing model configurations in `model_configs.yaml`
 3. Examine the configurator code in `configurators/model_configurator.py`
-4. Consult the SendNN Inference team
+4. Consult the SenDNN Inference team

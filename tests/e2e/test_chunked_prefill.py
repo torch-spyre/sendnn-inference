@@ -90,7 +90,7 @@ def test_chunked_prefill_correctness(
     ### NB: May not be guaranteed to be set
     monkeypatch.setenv("VLLM_ENABLE_V1_MULTIPROCESSING", "0")
 
-    # SendNN chunked-prefill correctness cases cannot safely reuse the same
+    # Spyre chunked-prefill correctness cases cannot safely reuse the same
     # cached LLM across different use_case prompt shapes in one pytest process.
     use_cached_llm = backend != "sendnn"
     cp_model = get_llm(

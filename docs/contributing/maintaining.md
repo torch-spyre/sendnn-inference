@@ -1,4 +1,4 @@
-# Maintaining SendNN Inference
+# Maintaining SenDNN Inference
 
 This page describes a few key maintenance tasks and how to accomplish them.
 

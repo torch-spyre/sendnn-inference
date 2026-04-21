@@ -1,10 +1,10 @@
 # Supported Models
 
-The SendNN Inference plugin relies on model code implemented by the [Foundation Model Stack](https://github.com/foundation-model-stack/foundation-model-stack/tree/main/fms/models).
+The SenDNN Inference plugin relies on model code implemented by the [Foundation Model Stack](https://github.com/foundation-model-stack/foundation-model-stack/tree/main/fms/models).
 
 ## Verified Deployment Configurations
 
-The following models have been verified to run on SendNN Inference with the listed
+The following models have been verified to run on SenDNN Inference with the listed
 configurations. These tables are automatically generated from the model configuration file.
 
 ### Generative Models

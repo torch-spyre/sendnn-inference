@@ -1,4 +1,4 @@
-# Contributing to SendNN Inference
+# Contributing to SenDNN Inference
 
 Thank you for your interest in contributing to the Spyre plugin for vLLM! There are several ways you can contribute:
 
@@ -21,7 +21,7 @@ You can also reach out for support in the `#sig-spyre` channel in the [vLLM Slac
 
 #### Install MkDocs and Plugins
 
-Install MkDocs along with the [plugins](https://github.com/torch-spyre/sendnn-inference/blob/main/mkdocs.yaml) used in the SendNN Inference documentation.
+Install MkDocs along with the [plugins](https://github.com/torch-spyre/sendnn-inference/blob/main/mkdocs.yaml) used in the SenDNN Inference documentation.
 
 ```bash
 uv pip install -r docs/requirements-docs.txt

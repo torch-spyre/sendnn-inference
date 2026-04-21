@@ -30,11 +30,11 @@ source .venv/bin/activate
     **Note**, pulling in the system site packages is not required for CPU-only
     installations.
 
-## Install vLLM with the SendNN Inference Plugin
+## Install vLLM with the SenDNN Inference Plugin
 
-You can either install a released version of the SendNN Inference plugin directly from
+You can either install a released version of the SenDNN Inference plugin directly from
 [PyPI](https://pypi.org/project/sendnn-inference/) or you can install from source by
-cloning the [SendNN Inference](https://github.com/torch-spyre/sendnn-inference) repo from
+cloning the [SenDNN Inference](https://github.com/torch-spyre/sendnn-inference) repo from
 GitHub.
 
 === "Release (PyPI)"
@@ -129,7 +129,7 @@ RuntimeError: Device string must not be empty
 ### No module named `torch`
 
 You may have installed PyTorch into the system-wide Python environment, not into
-the virtual environment used for SendNN Inference:
+the virtual environment used for SenDNN Inference:
 
 ```sh
   File "/home/senuser/multi-aiu-dev/_dev/sentient-ci-cd/_dev/sen_latest/sendnn-inference/.venv/lib64/python3.12/site-packages/vllm/env_override.py", line 4, in <module>

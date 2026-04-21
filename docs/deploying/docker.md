@@ -18,9 +18,9 @@ Community maintained images are also [available on Quay](https://quay.io/reposit
 !!! caution
     These images are provided as a reference and come with no support guarantees.
 
-## Building SendNN Inference's Docker Image from Source
+## Building SenDNN Inference's Docker Image from Source
 
-You can build and run SendNN Inference from source via the provided <gh-file:docker/Dockerfile.amd64>. To build SendNN Inference:
+You can build and run SenDNN Inference from source via the provided <gh-file:docker/Dockerfile.amd64>. To build SenDNN Inference:
 
 ```shell
 DOCKER_BUILDKIT=1 docker build . --target release --tag vllm/sendnn-inference --file docker/Dockerfile.amd64
@@ -29,9 +29,9 @@ DOCKER_BUILDKIT=1 docker build . --target release --tag vllm/sendnn-inference --
 !!! note
     This Dockerfile currently only supports the x86 platform
 
-## Running SendNN Inference in a Docker Container
+## Running SenDNN Inference in a Docker Container
 
-To run your SendNN Inference image on a host with Spyre cards installed:
+To run your SenDNN Inference image on a host with Spyre cards installed:
 
 ```shell
 $ docker run \
@@ -42,7 +42,7 @@ $ docker run \
     vllm/sendnn-inference <model> <args...>
 ```
 
-To run your SendNN Inference image on a host without Spyre cards installed:
+To run your SenDNN Inference image on a host without Spyre cards installed:
 
 ```shell
 $ docker run \
