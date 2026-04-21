@@ -258,3 +258,162 @@ class TestSendnnConfigurationValidation:
 
         # Verify FLEX_DEVICE was set to COMPILE
         assert os.environ.get("FLEX_DEVICE") == "COMPILE"
+
+
+class TestPreRegisterAndUpdate:
+    """Test SpyrePlatform.pre_register_and_update conditional defaults."""
+
+    @pytest.fixture(autouse=True)
+    def clear_conditional_defaults(self):
+        """Clear conditional defaults before each test to ensure isolation."""
+        from vllm_spyre.argparse_utils import ConditionalDefaultManager
+
+        ConditionalDefaultManager.clear()
+        yield
+        ConditionalDefaultManager.clear()
+
+        # Re-import huggingface_hub constants to reset any patched env vars
+        import importlib
+        import huggingface_hub.constants
+
+        importlib.reload(huggingface_hub.constants)
+
+    @pytest.fixture
+    def arg_parsers(self):
+        """Create main parser and serve subparser like vLLM's CLI structure.
+
+        Returns a tuple of (main_parser, serve_subparser). The subparser is
+        passed to pre_register_and_update, but parse_args should be called
+        on the main parser.
+        """
+        from vllm.utils.argparse_utils import FlexibleArgumentParser
+
+        # Create main parser like vLLM's CLI
+        main_parser = FlexibleArgumentParser()
+        subparsers = main_parser.add_subparsers(dest="subcommand")
+
+        # Create serve subparser with the actual arguments
+        serve_parser = subparsers.add_parser("serve", help="Serve model")
+        serve_parser.add_argument("--config-format", dest="config_format", default="auto")
+        serve_parser.add_argument("--tokenizer-mode", dest="tokenizer_mode", default="auto")
+        serve_parser.add_argument("--revision", dest="revision", default=None)
+        serve_parser.add_argument("--hf-token", dest="hf_token", default=None)
+        serve_parser.add_argument("model_tag", nargs="?", default=None)
+
+        return main_parser, serve_parser
+
+    def test_config_format_defaults_to_mistral_when_params_json_exists(self, tmp_path, arg_parsers):
+        """Test that config_format defaults to 'mistral' when model_tag points to dir with
+        params.json."""
+        main_parser, serve_parser = arg_parsers
+
+        # Create a temporary directory with params.json (NB: path does not have mistral in the name)
+        model_dir = tmp_path / "some_model"
+        model_dir.mkdir()
+        params_file = model_dir / "params.json"
+        params_file.write_text('{"dim": 4096, "n_layers": 32}')
+
+        # Pass only the subparser to pre_register_and_update (like vLLM does)
+        SpyrePlatform.pre_register_and_update(serve_parser)
+        # But call parse_args on the main parser (like vLLM does)
+        args = main_parser.parse_args(["serve", str(model_dir)])
+
+        assert args.config_format == "mistral"
+        assert args.tokenizer_mode == "mistral"
+
+    def test_config_format_defaults_to_auto_for_models_without_params_json(
+        self, tmp_path, arg_parsers
+    ):
+        """Test that config_format defaults to 'auto' for models without params.json."""
+        main_parser, serve_parser = arg_parsers
+
+        # Create a temporary directory without params.json
+        model_dir = tmp_path / "some_other_model"
+        model_dir.mkdir()
+
+        # Put some other files in it
+        (model_dir / "config.json").write_text('{"_name_or_path": "gpt2"}')
+        (model_dir / "pytorch_model.bin").touch()
+
+        # Pass only the subparser to pre_register_and_update (like vLLM does)
+        SpyrePlatform.pre_register_and_update(serve_parser)
+        # But call parse_args on the main parser (like vLLM does)
+        args = main_parser.parse_args(["serve", str(model_dir)])
+
+        assert args.config_format == "auto"
+        assert args.tokenizer_mode == "auto"
+
+    def test_explicit_config_format_not_overridden(self, tmp_path, arg_parsers):
+        """Test that user-provided config_format is not overridden."""
+        main_parser, serve_parser = arg_parsers
+
+        # Create a temporary directory with params.json
+        model_dir = tmp_path / "mistral_model"
+        model_dir.mkdir()
+        params_file = model_dir / "params.json"
+        params_file.write_text('{"dim": 4096, "n_layers": 32}')
+
+        # Pass only the subparser to pre_register_and_update (like vLLM does)
+        SpyrePlatform.pre_register_and_update(serve_parser)
+        # But call parse_args on the main parser (like vLLM does)
+        args = main_parser.parse_args(["serve", "--config-format", "hf", str(model_dir)])
+
+        # User explicitly set config_format to "hf", it should not be overridden
+        assert args.config_format == "hf"
+        # tokenizer_mode should still be set (since it depends on the same logic)
+        assert args.tokenizer_mode == "mistral"
+
+    def test_config_format_from_cached_hf_model_offline_mode(
+        self, tmp_path, arg_parsers, monkeypatch
+    ):
+        """Test that config_format is detected from cached HF model in offline mode.
+
+        This creates a mock HF hub cache structure with a mistral model that has
+        params.json cached, then runs with HF_HUB_OFFLINE=1 to verify the
+        detection works correctly.
+        """
+        main_parser, serve_parser = arg_parsers
+
+        # Create a mock HF hub cache structure
+        # Format: <cache_dir>/models--<org>--<model>/snapshots/<commit_hash>/<files>
+        cache_dir = tmp_path / "hf_cache"
+        cache_dir.mkdir()
+
+        repo_id = "mistralai/Mistral-7B-Instruct-v0.1"
+        repo_folder = cache_dir / "models--mistralai--Mistral-7B-Instruct-v0.1"
+        refs_folder = repo_folder / "refs"
+        snapshots_folder = repo_folder / "snapshots"
+
+        refs_folder.mkdir(parents=True)
+        snapshots_folder.mkdir(parents=True)
+
+        # Create a fake commit hash "main" reference
+        (refs_folder / "main").write_text("abc123def456789")
+
+        # Create snapshot directory with the fake commit hash
+        snapshot_folder = snapshots_folder / "abc123def456789"
+        snapshot_folder.mkdir()
+
+        # Create params.json in the snapshot (this marks it as a mistral model)
+        (snapshot_folder / "params.json").write_text('{\n  "dim": 4096,\n  "n_layers": 32\n}')
+        # Also create other typical model files
+        (snapshot_folder / "config.json").write_text('{"model_type": "mistral"}')
+
+        # Set up the cache environment and offline mode
+        monkeypatch.setenv("HF_HOME", str(tmp_path))
+        monkeypatch.setenv("HF_HUB_CACHE", str(cache_dir))
+        monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+
+        # Re-import huggingface_hub constants to pick up the new env vars
+        import importlib
+        import huggingface_hub.constants
+
+        importlib.reload(huggingface_hub.constants)
+
+        # Pass only the subparser to pre_register_and_update
+        SpyrePlatform.pre_register_and_update(serve_parser)
+        # Call parse_args on the main parser with the repo_id
+        args = main_parser.parse_args(["serve", repo_id])
+
+        assert args.config_format == "mistral"
+        assert args.tokenizer_mode == "mistral"

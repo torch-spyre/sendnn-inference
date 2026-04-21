@@ -1,5 +1,6 @@
 import sys
 
+
 # When running this plugin on a Mac, we assume it's for local development
 # purposes. However, due to a compatibility issue with vLLM, which overrides
 # the Triton module with a placeholder, vLLM may fail to load on macOS. To
@@ -10,14 +11,18 @@ if sys.platform.startswith("darwin"):
     if sys.modules.get("triton"):
         del sys.modules["triton"]
 
+import argparse
 import math
 import operator
 import os
 from typing import TYPE_CHECKING, cast, Literal
 
 import torch
+import huggingface_hub
 from vllm.logger import init_logger
 from vllm.utils.argparse_utils import FlexibleArgumentParser
+
+from vllm_spyre.argparse_utils import ConditionalDefaultManager
 
 if TYPE_CHECKING:
     # NB: We can't eagerly import many things from vllm since vllm.config
@@ -490,12 +495,29 @@ class SpyrePlatform(Platform):
 
     @classmethod
     def pre_register_and_update(cls, parser: FlexibleArgumentParser | None = None) -> None:
-        if parser is not None:
-            parser.set_defaults(enable_prefix_caching=True)
-            parser.set_defaults(max_num_batched_tokens=cls.DEFAULT_CHUNK_SIZE)
-            parser.set_defaults(
-                enable_chunked_prefill=True
-            )  # set to pass vllm scheduler's max_model_len check
+        if parser is None:
+            return
+
+        parser.set_defaults(enable_prefix_caching=True)
+        parser.set_defaults(max_num_batched_tokens=cls.DEFAULT_CHUNK_SIZE)
+        parser.set_defaults(
+            enable_chunked_prefill=True
+        )  # set to pass vllm scheduler's max_model_len check
+
+        # Register conditional defaults that apply globally
+        ConditionalDefaultManager.register(
+            dest="config_format",
+            compute_default=_compute_config_format,
+        )
+        ConditionalDefaultManager.register(
+            dest="tokenizer_mode",
+            compute_default=_compute_config_format,
+        )
+
+        # Apply the conditional default patches to this parser
+        # This replaces the actions for managed arguments and patches
+        # the base ArgumentParser.parse_args method
+        ConditionalDefaultManager.apply(parser)
 
     @classmethod
     def _check_threading_config(cls, worker_count: int):
@@ -738,3 +760,37 @@ class SpyrePlatform(Platform):
             cls._max_batch_tkv_limit = int(os.getenv("VLLM_DT_MAX_BATCH_TKV_LIMIT", "-1"))  #  ty: ignore
         except ValueError as e:
             raise ValueError("VLLM_DT_MAX_BATCH_TKV_LIMIT must be an integer") from e
+
+
+def _compute_config_format(namespace: argparse.Namespace) -> str:
+    """Check if a model is in mistral format by looking for params.json.
+
+    This uses any_pattern_in_repo_files which correctly handles both local paths
+    and HuggingFace cache, including offline mode support.
+    """
+    from vllm.transformers_utils.repo_utils import any_pattern_in_repo_files, get_model_path
+
+    # Check both 'model' and 'model_tag' since vLLM uses different
+    # attribute names in different contexts
+    model = getattr(namespace, "model_tag", None) or getattr(namespace, "model", "") or ""
+
+    if not model:
+        return "auto"
+
+    # Get optional HF arguments
+    revision = getattr(namespace, "revision", None)
+    token = getattr(namespace, "hf_token", None)
+
+    # Resolve local path in offline mode (if not already a local path)
+    if huggingface_hub.constants.HF_HUB_OFFLINE:
+        model = get_model_path(model, revision)
+
+    # Look for params.json which indicates a mistral-format model
+    if any_pattern_in_repo_files(
+        model,
+        allow_patterns=["params.json"],
+        revision=revision,
+        token=token,
+    ):
+        return "mistral"
+    return "auto"
