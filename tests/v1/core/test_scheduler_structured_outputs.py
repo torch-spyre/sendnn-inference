@@ -58,7 +58,9 @@ def mocked_scheduler():
 class TestSchedulerStructuredOutputHandling:
     """Test that the scheduler strips structured_output_request from requests."""
 
-    def test_scheduler_strips_structured_output_request(self, mocked_scheduler, caplog_sendnn_inference):
+    def test_scheduler_strips_structured_output_request(
+        self, mocked_scheduler, caplog_sendnn_inference
+    ):
         """Test that the scheduler removes structured_output_request from new requests."""
 
         # Create a request with structured outputs
@@ -92,7 +94,8 @@ class TestSchedulerStructuredOutputHandling:
 
         # Verify warning was logged
         assert any(
-            "Removing structured output" in record.message for record in caplog_sendnn_inference.records
+            "Removing structured output" in record.message
+            for record in caplog_sendnn_inference.records
         )
 
     def test_scheduler_handles_request_without_structured_output(self, mocked_scheduler):

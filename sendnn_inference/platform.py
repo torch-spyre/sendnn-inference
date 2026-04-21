@@ -249,7 +249,9 @@ class SpyrePlatform(Platform):
             # unsetting this config as it was only set to pass vllm scheduler's max_model_len check
             vllm_config.scheduler_config.enable_chunked_prefill = False
 
-            scheduler_config.scheduler_cls = "sendnn_inference.v1.core.scheduler.PoolingSpyreScheduler"
+            scheduler_config.scheduler_cls = (
+                "sendnn_inference.v1.core.scheduler.PoolingSpyreScheduler"
+            )
 
         # Apply model-specific configurations using the registry
         # Only when running on Spyre device (sendnn backend)
@@ -621,8 +623,8 @@ class SpyrePlatform(Platform):
                 os.environ[env] = str(cpus_per_worker)
 
             logger.info(
-                "%s for %d workers. Since SENDNN_INFERENCE_UPDATE_THREAD_CONFIG is enabled, setting "
-                "threading configurations to %d",
+                "%s for %d workers. Since SENDNN_INFERENCE_UPDATE_THREAD_CONFIG is enabled, "
+                "setting threading configurations to %d",
                 detection_message,
                 worker_count,
                 cpus_per_worker,

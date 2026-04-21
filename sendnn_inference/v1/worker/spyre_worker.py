@@ -469,7 +469,9 @@ class SpyreWorker(WorkerBase):
         model_runner.pre_warmup()
 
         with _maybe_warmup_context(
-            envs_spyre.SENDNN_INFERENCE_MAX_LOAD_PROCESSES, self.parallel_config.world_size, self.rank
+            envs_spyre.SENDNN_INFERENCE_MAX_LOAD_PROCESSES,
+            self.parallel_config.world_size,
+            self.rank,
         ):
             # TODO(wallas): I am not sure if really need warmup with at
             # least batch size 2 for quantized model
@@ -615,7 +617,9 @@ class SpyreWorker(WorkerBase):
         logger.info("[WARMUP] Compiling graphs...")
         # The fixed size warmup needs to happen only in here
         with _maybe_warmup_context(
-            envs_spyre.SENDNN_INFERENCE_MAX_LOAD_PROCESSES, self.parallel_config.world_size, self.rank
+            envs_spyre.SENDNN_INFERENCE_MAX_LOAD_PROCESSES,
+            self.parallel_config.world_size,
+            self.rank,
         ):
             self._warmup_model_forward_pass(scheduler_output, dummy_requests, cached_request_data)
         self.perf_metrics.log(
@@ -783,7 +787,9 @@ class SpyreWorker(WorkerBase):
 # handler from vLLM when it starts a process for the engine code. Therefore,
 # the engine does not have a chance to gracefully shutdown.
 def maybe_override_signals_handler():
-    if not (envs.VLLM_ENABLE_V1_MULTIPROCESSING and envs_spyre.SENDNN_INFERENCE_OVERRIDE_SIGNALS_HANDLER):
+    if not (
+        envs.VLLM_ENABLE_V1_MULTIPROCESSING and envs_spyre.SENDNN_INFERENCE_OVERRIDE_SIGNALS_HANDLER
+    ):
         return
 
     shutdown_requested = False

@@ -42,7 +42,8 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # Defines the prompt lengths the Spyre accelerator should be prepared
     # for, formatted as comma separated list. Only applicable in pooling.
     "SENDNN_INFERENCE_WARMUP_PROMPT_LENS": lambda: [
-        int(p) for p in os.getenv(key="SENDNN_INFERENCE_WARMUP_PROMPT_LENS", default="64").split(",")
+        int(p)
+        for p in os.getenv(key="SENDNN_INFERENCE_WARMUP_PROMPT_LENS", default="64").split(",")
     ],
     # Defines the batch sizes the Spyre accelerator should be prepared
     # for, formatted as comma separated list. Only applicable in pooling.
@@ -55,7 +56,9 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # - "inductor": Compile for execution on CPU (for debug and testing)
     # - "eager": Skip compile entirely (for debug and testing)
     #
-    "SENDNN_INFERENCE_DYNAMO_BACKEND": lambda: os.getenv("SENDNN_INFERENCE_DYNAMO_BACKEND", "sendnn"),
+    "SENDNN_INFERENCE_DYNAMO_BACKEND": lambda: os.getenv(
+        "SENDNN_INFERENCE_DYNAMO_BACKEND", "sendnn"
+    ),
     # Enable performance metric logging. This captures startup information
     # such as warmup times, and loading times.
     # When `--disable-log-stats=False` is used, this will log timing metrics
@@ -88,7 +91,9 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # large models or models with larger context lengths to limit
     # memory usage.
     # Set to 0 to allow any number of processes
-    "SENDNN_INFERENCE_MAX_LOAD_PROCESSES": lambda: int(os.getenv("SENDNN_INFERENCE_MAX_LOAD_PROCESSES", "0")),
+    "SENDNN_INFERENCE_MAX_LOAD_PROCESSES": lambda: int(
+        os.getenv("SENDNN_INFERENCE_MAX_LOAD_PROCESSES", "0")
+    ),
     # If set, redirects all stdout and stderr from worker processes to files
     # within this director. This is useful for debugging card-specific errors
     # in multi-AIU setups, but should never be enabled in production settings.

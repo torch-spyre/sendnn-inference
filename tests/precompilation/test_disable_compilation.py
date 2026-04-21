@@ -10,7 +10,9 @@ from sendnn_inference.compilation_utils import PRE_COMPILE_MODEL_CATALOG_FILENAM
 
 @pytest.mark.precompilation
 @pytest.mark.parametrize("batch_type", ["cb"])
-def test_handle_disable_compilation(model, caplog_sendnn_inference, monkeypatch, tmp_path, batch_type):
+def test_handle_disable_compilation(
+    model, caplog_sendnn_inference, monkeypatch, tmp_path, batch_type
+):
     """
     Test handle_disable_compilation for static and continuous batching.
     Note: since the validation here is only giving warning in case of mismatch,

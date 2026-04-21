@@ -139,7 +139,8 @@ def handle_disable_compilation(vllm_config: VllmConfig, is_decoder: bool):
             config_version = matching_config.get("sendnn_inference_version")
             if config_version is None:
                 logger.warning(
-                    "[PRECOMPILED_WARN] Pre-compiled config missing sendnn_inference_version field. "
+                    "[PRECOMPILED_WARN] Pre-compiled config missing sendnn_inference_version "
+                    "field. "
                 )
             elif config_version != sendnn_inference_version:
                 # Can be converted to ValueError if we want to be strict

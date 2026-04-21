@@ -32,7 +32,9 @@ def _init_logging():
             if "vllm" in config["formatters"]:
                 config["formatters"]["sendnn_inference"] = config["formatters"]["vllm"]
             else:
-                config["formatters"]["sendnn_inference"] = DEFAULT_LOGGING_CONFIG["formatters"]["vllm"]
+                config["formatters"]["sendnn_inference"] = DEFAULT_LOGGING_CONFIG["formatters"][
+                    "vllm"
+                ]
 
         if "sendnn_inference" not in config["handlers"]:
             if "vllm" in config["handlers"]:

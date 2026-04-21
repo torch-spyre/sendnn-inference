@@ -336,7 +336,9 @@ class SpyrePoolingModelRunner(
             SpyrePlatform.maybe_ensure_sendnn_configured(self.model_config)
 
             with utils_spyre.stagger_region(
-                envs_spyre.SENDNN_INFERENCE_MAX_LOAD_PROCESSES, self.parallel_config.world_size, self.rank
+                envs_spyre.SENDNN_INFERENCE_MAX_LOAD_PROCESSES,
+                self.parallel_config.world_size,
+                self.rank,
             ):
                 # Not clear how to make the type checking happy with the torch.compile return
                 self._model = torch.compile(  # ty: ignore[invalid-assignment]

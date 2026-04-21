@@ -16,7 +16,10 @@ from vllm.v1.structured_output import StructuredOutputManager
 
 from sendnn_inference.model_executor.model_loader.spyre import SpyreAttentionMetadata
 from sendnn_inference.platform import SpyrePlatform
-from sendnn_inference.v1.worker.spyre_model_runner import ChunkedPrefillModelRunner, ChunkedPrefillPlan
+from sendnn_inference.v1.worker.spyre_model_runner import (
+    ChunkedPrefillModelRunner,
+    ChunkedPrefillPlan,
+)
 from sendnn_inference.v1.core.scheduler import ChunkedPrefillSpyreScheduler
 
 from spyre_util import REFERENCE_MODELS, patch_environment

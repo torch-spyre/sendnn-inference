@@ -151,7 +151,8 @@ class ModelConfigurator:
         """Validate that applied config value matches default value.
 
         Handles the common pattern of checking if a user-provided value conflicts
-        with the default model configuration value, and enforces SENDNN_INFERENCE_REQUIRE_KNOWN_CONFIG.
+        with the default model configuration value, and enforces
+        SENDNN_INFERENCE_REQUIRE_KNOWN_CONFIG.
 
         Args:
             config_name: Name of the configuration parameter (for error messages)
@@ -191,7 +192,8 @@ class ModelConfigurator:
             ConfigValue tracking default and applied values
 
         Raises:
-            RuntimeError: If SENDNN_INFERENCE_REQUIRE_KNOWN_CONFIG is set and existing value conflicts
+            RuntimeError: If SENDNN_INFERENCE_REQUIRE_KNOWN_CONFIG is set and existing value
+            conflicts
         """
         str_value = str(value)
         existing = os.getenv(key)
@@ -222,7 +224,8 @@ class ModelConfigurator:
             ConfigValue tracking default and applied num_blocks, or None if not configured
 
         Raises:
-            RuntimeError: If SENDNN_INFERENCE_REQUIRE_KNOWN_CONFIG is set and user override conflicts
+            RuntimeError: If SENDNN_INFERENCE_REQUIRE_KNOWN_CONFIG is set and user override
+            conflicts
         """
         num_blocks_override = device_config.num_gpu_blocks_override
         if num_blocks_override is None:

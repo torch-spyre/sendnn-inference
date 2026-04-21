@@ -84,7 +84,9 @@ models:
 
     def test_nonexistent_file_raises_error(self):
         """Test that nonexistent file raises FileNotFoundError."""
-        with patch.dict(os.environ, {"SENDNN_INFERENCE_MODEL_CONFIG_FILE": "/tmp/nonexistent.yaml"}):
+        with patch.dict(
+            os.environ, {"SENDNN_INFERENCE_MODEL_CONFIG_FILE": "/tmp/nonexistent.yaml"}
+        ):
             envs.clear_env_cache()
             registry = ModelConfigRegistry.get_instance()
 

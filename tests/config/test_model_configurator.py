@@ -178,7 +178,8 @@ class TestGPUBlocksOverride:
     def test_raise_error_when_require_known_config_and_user_override_conflicts(
         self, monkeypatch, model_config, vllm_config
     ):
-        """Test RuntimeError when SENDNN_INFERENCE_REQUIRE_KNOWN_CONFIG=1 and user override conflicts."""
+        """Test RuntimeError when SENDNN_INFERENCE_REQUIRE_KNOWN_CONFIG=1 and user override
+        conflicts."""
         monkeypatch.setenv("SENDNN_INFERENCE_REQUIRE_KNOWN_CONFIG", "1")
         envs_spyre.clear_env_cache()
 

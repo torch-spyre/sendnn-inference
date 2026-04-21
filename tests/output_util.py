@@ -19,7 +19,9 @@ from vllm.tokenizers import get_tokenizer
 DISABLE_ASSERTS = False  # used for debugging
 
 ISCLOSE_ABS_TOL = float(os.environ.get("SENDNN_INFERENCE_TEST_ABS_TOL", "0.08"))
-ISCLOSE_ABS_TOL_QUANTIZATION = float(os.environ.get("SENDNN_INFERENCE_TEST_QUANTIZED_ABS_TOL", "0.17"))
+ISCLOSE_ABS_TOL_QUANTIZATION = float(
+    os.environ.get("SENDNN_INFERENCE_TEST_QUANTIZED_ABS_TOL", "0.17")
+)
 
 HF_RESULT_CACHE = HFResultCache()
 

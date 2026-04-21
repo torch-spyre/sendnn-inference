@@ -67,7 +67,9 @@ class TestRegistryErrorHandling:
         assert model_count_first == model_count_second
 
         # Should log debug message about skipping
-        assert any("already initialized" in record.message for record in caplog_sendnn_inference.records)
+        assert any(
+            "already initialized" in record.message for record in caplog_sendnn_inference.records
+        )
 
     def test_find_matching_model_with_no_hf_config(self, test_registry, caplog_sendnn_inference):
         """Test matching when vllm_config has no HF config."""
@@ -105,7 +107,8 @@ class TestRegistryErrorHandling:
 
         # Should log debug message
         assert any(
-            "No model architecture match" in record.message for record in caplog_sendnn_inference.records
+            "No model architecture match" in record.message
+            for record in caplog_sendnn_inference.records
         )
 
     def test_get_configurator_for_runtime_with_unsupported_runtime_config(
