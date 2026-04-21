@@ -260,7 +260,7 @@ jobs:
           MASTER_PORT: 12355
           MASTER_ADDR: localhost
           DISTRIBUTED_STRATEGY_IGNORE_MODULES: WordEmbedding
-          VLLM_SPYRE_TEST_MODEL_LIST: ""
+          SENDNN_INFERENCE_TEST_MODEL_LIST: ""
           HF_HUB_OFFLINE: 1
         run: |
           # Delete the source code so we can ensure we're testing the installed
