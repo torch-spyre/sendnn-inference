@@ -62,5 +62,9 @@ class TorchSpyreWorker(CPUWorker):
                     "FIXME: Adding %s decomposition to work-around torch-spyre crash", op.name()
                 )
                 torch._inductor.decomposition.decompositions[op] = impl
+        import time
+
+        warmup_start_time = time.perf_counter()
         self.model_runner.warming_up_model()
+        self.compilation_config.compilation_time = time.perf_counter() - warmup_start_time
         return self.compilation_config.compilation_time

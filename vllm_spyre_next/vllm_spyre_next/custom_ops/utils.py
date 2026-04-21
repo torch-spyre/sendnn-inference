@@ -76,8 +76,8 @@ def convert(tensor, device=None, dtype=None):
     Returns:
         Converted tensor, or None if input is None.
     """
-    if tensor is None:
-        return None
+    if tensor is None or not isinstance(tensor, torch.Tensor):
+        return tensor
     if tensor.device.type == "spyre":
         # In case the tensor is on spyre, we first need to move it to cpu and then change the dtype.
         if device is not None:

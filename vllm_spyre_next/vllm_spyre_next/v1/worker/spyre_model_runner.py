@@ -28,13 +28,14 @@ from contextlib import contextmanager
 
 import torch
 import torch.nn as nn
+from torch.utils._pytree import tree_map
 
 import numpy as np
 
-from vllm.config import VllmConfig
+from vllm.config import VllmConfig, CompilationMode
 from vllm.logger import init_logger
 from vllm.model_executor.model_loader import get_model
-from vllm.v1.utils import CpuGpuBuffer
+from vllm.model_executor.layers.attention.attention import Attention
 from vllm.v1.worker.cpu_model_runner import _torch_cuda_wrapper
 from vllm.v1.worker.gpu_model_runner import GPUModelRunner
 
@@ -43,8 +44,9 @@ from vllm_spyre_next.custom_ops.utils import convert
 logger = init_logger(__name__)
 
 
-class SpyreCpuGpuBuffer(CpuGpuBuffer):
-    """CpuGpuBuffer with Spyre-safe copies and split dtypes.
+class SpyreCpuGpuBuffer:
+    """Spyre-specific CpuGpuBuffer with Spyre-safe copies and split dtypes.
+    This buffer is closely related to the CpuGpuBuffer in vllm/v1/utils.py.
 
     For float dtypes: .cpu on CPU, .gpu on Spyre (float16).
     For int/bool dtypes: .gpu aliased to .cpu (CPUModelRunner pattern).
@@ -85,22 +87,17 @@ class SpyreCpuGpuBuffer(CpuGpuBuffer):
         dst.copy_(src)
         return dst
 
-    def copy_to_cpu(self, n: int | None = None) -> torch.Tensor:
-        if self.gpu is self.cpu:
-            # Aliased (int/bool) — no copy needed
-            return self.cpu if n is None else self.cpu[:n]
-        src = self.gpu if n is None else self.gpu[:n]
-        dst = self.cpu if n is None else self.cpu[:n]
-        cpu_src = convert(src, device="cpu")
-        dst.copy_(cpu_src)
-        return dst
+    # Currently only the copy_to_gpu function is invoked.
+    # If the copy_to_cpu also becomes required, override it here with
+    # spyre-specific aspects.
+    # def copy_to_cpu(self, n: int | None = None) -> torch.Tensor:
 
 
 class _SpyreModelWrapper:
     """Transparent wrapper that converts model inputs/outputs at the boundary.
 
     Input conversion (CPU → Spyre):
-        input_ids and positions arrive as CPU tensors (int32/int64) because
+        For example, input_ids and positions arrive as CPU tensors (int32/int64) because
         self.device=CPU in the runner and buffer scatter ops run on CPU.
         Convert them to int64 and provide them to the model.
 
@@ -121,24 +118,30 @@ class _SpyreModelWrapper:
 
     def __call__(self, *args, **kwargs):
         # Convert integer tensor inputs to Spyre int64
-        for key in ("input_ids", "positions"):
-            val = kwargs.get(key)
-            if val is not None:
-                kwargs[key] = convert(val, dtype=torch.int64, device=self._spyre_device)
+        def _convert_int(t):
+            if (
+                t is not None
+                and isinstance(t, torch.Tensor)
+                and t.dtype in (torch.int32, torch.int64)
+            ):
+                return convert(t, dtype=torch.int64, device=self._spyre_device)
+            return t
 
-        result = self._model(*args, **kwargs)
-        if isinstance(result, torch.Tensor):
-            if result.device.type == "spyre":
-                return convert(result, device="cpu")
-            return result
-        if isinstance(result, tuple):
-            return tuple(
-                convert(t, device="cpu")
-                if isinstance(t, torch.Tensor) and t.device.type == "spyre"
-                else t
-                for t in result
-            )
-        return result
+        args_converted = []
+        for arg in args:
+            args_converted.append(_convert_int(arg))
+
+        kwargs_converted = {}
+        for key in kwargs:
+            val = kwargs.get(key)
+            kwargs_converted[key] = _convert_int(val)
+
+        result = self._model(*args_converted, **kwargs_converted)
+
+        def _to_cpu(x):
+            return convert(x, device="cpu")
+
+        return tree_map(_to_cpu, result)
 
     def __getattr__(self, name):
         return getattr(self._model, name)
@@ -206,8 +209,6 @@ class TorchSpyreModelRunner(GPUModelRunner):
         # not possible. Patch _apply to no-op before model.to("spyre") so
         # the CPU attention backend can access scale buffers without device
         # mismatch.
-        from vllm.model_executor.layers.attention.attention import Attention
-
         for module in self.model.modules():
             if isinstance(module, Attention):
                 module._apply = lambda fn, recurse=True, _m=module: _m
@@ -245,8 +246,6 @@ class TorchSpyreModelRunner(GPUModelRunner):
         not supported — the platform forces CompilationMode.NONE in
         apply_config_platform_defaults().
         """
-        from vllm.config import CompilationMode
-
         mode = self.compilation_config.mode
         if mode != CompilationMode.NONE:
             raise ValueError(
