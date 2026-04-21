@@ -9,7 +9,7 @@ from vllm.multimodal.inputs import (
     PlaceholderRange,
 )
 
-from vllm_spyre.multimodal.mm_mappings import MMUtilsBase, MMWarmupInputs
+from sendnn_inference.multimodal.mm_mappings import MMUtilsBase, MMWarmupInputs
 
 
 class Mistral3MMUtils(MMUtilsBase):

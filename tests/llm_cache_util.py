@@ -37,7 +37,7 @@ def force_engine_core_shutdown(engine_core):
 
         # SendNN device teardown is not always instantaneous. Give the runtime
         # a short grace period before the next cached config starts.
-        if os.environ.get("VLLM_SPYRE_DYNAMO_BACKEND") == "sendnn":
+        if os.environ.get("SENDNN_INFERENCE_DYNAMO_BACKEND") == "sendnn":
             time.sleep(2)
 
 

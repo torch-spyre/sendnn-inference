@@ -8,7 +8,7 @@ import importlib.metadata
 from vllm.logger import init_logger
 
 # Local
-import vllm_spyre.envs as envs_spyre
+import sendnn_inference.envs as envs_spyre
 
 if TYPE_CHECKING:
     from vllm.config import ModelConfig, VllmConfig
@@ -27,7 +27,7 @@ def handle_disable_compilation(vllm_config: VllmConfig, is_decoder: bool):
     """
     The `DISABLE_COMPILATION` environment variable disallows torch_sendnn from
     compiling new graphs forcing it to load from the cache. Enabling
-    `VLLM_SPYRE_REQUIRE_PRECOMPILED_DECODERS` will force DISABLE_COMPILATION
+    `SENDNN_INFERENCE_REQUIRE_PRECOMPILED_DECODERS` will force DISABLE_COMPILATION
     for decoder models and require pre-compiled models.
 
     In order to do this, we must load up some config from the torch_sendnn
@@ -35,9 +35,9 @@ def handle_disable_compilation(vllm_config: VllmConfig, is_decoder: bool):
     otherwise the cached artifacts cannot be used.
     """
 
-    req_precompiled_decoder_env_var = "VLLM_SPYRE_REQUIRE_PRECOMPILED_DECODERS"
+    req_precompiled_decoder_env_var = "SENDNN_INFERENCE_REQUIRE_PRECOMPILED_DECODERS"
 
-    if not envs_spyre.VLLM_SPYRE_REQUIRE_PRECOMPILED_DECODERS:
+    if not envs_spyre.SENDNN_INFERENCE_REQUIRE_PRECOMPILED_DECODERS:
         return
 
     if not is_decoder:
@@ -132,28 +132,28 @@ def handle_disable_compilation(vllm_config: VllmConfig, is_decoder: bool):
             matching_config = compilation_config
 
     if matching_config:
-        # Check vllm_spyre version
+        # Check sendnn_inference version
         try:
-            vllm_spyre_version = importlib.metadata.version("vllm_spyre")
+            sendnn_inference_version = importlib.metadata.version("sendnn_inference")
 
-            config_version = matching_config.get("vllm_spyre_version")
+            config_version = matching_config.get("sendnn_inference_version")
             if config_version is None:
                 logger.warning(
-                    "[PRECOMPILED_WARN] Pre-compiled config missing vllm_spyre_version field. "
+                    "[PRECOMPILED_WARN] Pre-compiled config missing sendnn_inference_version field. "
                 )
-            elif config_version != vllm_spyre_version:
+            elif config_version != sendnn_inference_version:
                 # Can be converted to ValueError if we want to be strict
                 # with checking
                 logger.warning(
                     "[PRECOMPILED_WARN] "
-                    "Model was compiled on vllm-spyre "
-                    "%s but the current vllm_spyre version is %s",
+                    "Model was compiled on sendnn-inference "
+                    "%s but the current sendnn_inference version is %s",
                     config_version,
-                    vllm_spyre_version,
+                    sendnn_inference_version,
                 )
         except ImportError:
             logger.warning(
-                "[PRECOMPILED_WARN] Cannot validate vllm_spyre version against "
+                "[PRECOMPILED_WARN] Cannot validate sendnn_inference version against "
                 "pre-compiled model config"
             )
 
@@ -202,16 +202,16 @@ def match_from_model_config_file(compilation_config: dict, vllm_config: VllmConf
     if vllm_config.parallel_config.tensor_parallel_size != tp_size:
         return False
 
-    if "VLLM_SPYRE_WARMUP_PROMPT_LENS" in vllm_configs:
+    if "SENDNN_INFERENCE_WARMUP_PROMPT_LENS" in vllm_configs:
         get_list = lambda x: [int(i) for i in x.split(",")]
 
-        prompt_lens = get_list(vllm_configs["VLLM_SPYRE_WARMUP_PROMPT_LENS"])
-        batch_sizes = get_list(vllm_configs["VLLM_SPYRE_WARMUP_BATCH_SIZES"])
+        prompt_lens = get_list(vllm_configs["SENDNN_INFERENCE_WARMUP_PROMPT_LENS"])
+        batch_sizes = get_list(vllm_configs["SENDNN_INFERENCE_WARMUP_BATCH_SIZES"])
 
-        if prompt_lens != envs_spyre.VLLM_SPYRE_WARMUP_PROMPT_LENS:
+        if prompt_lens != envs_spyre.SENDNN_INFERENCE_WARMUP_PROMPT_LENS:
             return False
 
-        if batch_sizes != envs_spyre.VLLM_SPYRE_WARMUP_BATCH_SIZES:
+        if batch_sizes != envs_spyre.SENDNN_INFERENCE_WARMUP_BATCH_SIZES:
             return False
     else:
         context_len = vllm_configs["VLLM_DT_MAX_CONTEXT_LEN"]

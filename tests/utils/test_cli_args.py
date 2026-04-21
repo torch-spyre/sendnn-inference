@@ -6,7 +6,7 @@ from vllm import EngineArgs
 from vllm.entrypoints.openai.cli_args import make_arg_parser
 from vllm.utils.argparse_utils import FlexibleArgumentParser
 
-from vllm_spyre.platform import SpyrePlatform
+from sendnn_inference.platform import SpyrePlatform
 from spyre_util import REFERENCE_MODELS, environ_checkpoint
 
 
@@ -14,7 +14,7 @@ from spyre_util import REFERENCE_MODELS, environ_checkpoint
 # and that --max-num-batched-tokens overrides this default.
 def test_chunk_size_default(monkeypatch: pytest.MonkeyPatch) -> None:
     # Use the sendnn backend to activate the model configurator
-    monkeypatch.setenv("VLLM_SPYRE_DYNAMO_BACKEND", "sendnn")
+    monkeypatch.setenv("SENDNN_INFERENCE_DYNAMO_BACKEND", "sendnn")
     # Mock the torch_sendnn configuration check
     monkeypatch.setattr(SpyrePlatform, "maybe_ensure_sendnn_configured", lambda: None)
 
@@ -68,7 +68,7 @@ def test_prefix_caching_is_on_by_default(monkeypatch: pytest.MonkeyPatch) -> Non
     ]
 
     with environ_checkpoint():
-        # Verify that prefix caching is on by default with vllm-spyre
+        # Verify that prefix caching is on by default with sendnn-inference
         engine_args = _build_engine_args(
             [
                 *common_args,
@@ -100,7 +100,7 @@ def _build_engine_args(cli_args: list[str]) -> EngineArgs:
 
 def test_cli_max_num_batched_tokens(monkeypatch):
     # Use the sendnn backend to activate the model configurator
-    monkeypatch.setenv("VLLM_SPYRE_DYNAMO_BACKEND", "sendnn")
+    monkeypatch.setenv("SENDNN_INFERENCE_DYNAMO_BACKEND", "sendnn")
     # Mock the torch_sendnn configuration check
     monkeypatch.setattr(SpyrePlatform, "maybe_ensure_sendnn_configured", lambda: None)
 

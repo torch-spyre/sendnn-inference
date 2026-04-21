@@ -1,6 +1,6 @@
 nav:
   - Home:
-    - vLLM Spyre Plugin: README.md
+    - SenDNN Inference Plugin: README.md
     - Roadmap: roadmaps/q3-2025.md
     - Getting Started:
       - Installation: getting_started/installation.md

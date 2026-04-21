@@ -24,7 +24,7 @@ from spyre_util import (
 from vllm import LLM, SamplingParams
 
 from scheduling_utils import random_prompt
-from vllm_spyre.v1.worker.spyre_model_runner import SamplingForwardInputs
+from sendnn_inference.v1.worker.spyre_model_runner import SamplingForwardInputs
 
 
 def get_model_runner(cp_model: LLM):
@@ -74,7 +74,7 @@ def test_chunked_prefill_correctness(
     use_llm_cache,
 ) -> None:
     """
-    Minimal test to check if vllm-spyre activate code for chunked prefill for
+    Minimal test to check if sendnn-inference activate code for chunked prefill for
     a prompt greater than the chunk size
     """
 

@@ -3,8 +3,8 @@
 import pytest
 from unittest.mock import Mock, seal
 
-from vllm_spyre.config.model_config import ArchitecturePattern
-from vllm_spyre.config.model_matcher import ModelMatcher
+from sendnn_inference.config.model_config import ArchitecturePattern
+from sendnn_inference.config.model_matcher import ModelMatcher
 
 pytestmark = pytest.mark.skip_global_cleanup
 
@@ -148,7 +148,7 @@ class TestModelMatcherEdgeCases:
         ids=["attribute_missing", "attribute_value_differs"],
     )
     def test_no_match_when_attribute_mismatch(
-        self, matcher, hf_config_attrs, reason, caplog_vllm_spyre
+        self, matcher, hf_config_attrs, reason, caplog_sendnn_inference
     ):
         """Test that missing or different attribute causes no match."""
         pattern = ArchitecturePattern(
@@ -167,7 +167,7 @@ class TestModelMatcherEdgeCases:
             assert any(
                 "missing attribute" in record.message.lower()
                 and "num_hidden_layers" in record.message
-                for record in caplog_vllm_spyre.records
+                for record in caplog_sendnn_inference.records
             )
 
     def test_no_match_when_quantization_config_format_differs(self, matcher):

@@ -2,7 +2,7 @@
 
 import pytest
 
-from vllm_spyre.config.model_config import (
+from sendnn_inference.config.model_config import (
     ArchitecturePattern,
     ContinuousBatchingConfig,
     DeviceConfig,

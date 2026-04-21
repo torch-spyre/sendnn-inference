@@ -3,7 +3,7 @@ from vllm import LLM
 from vllm.config import ProfilerConfig
 
 from spyre_util import ModelInfo, get_chicken_soup_prompts
-from vllm_spyre import envs as envs_spyre
+from sendnn_inference import envs as envs_spyre
 
 
 @pytest.mark.cpu
@@ -16,7 +16,7 @@ def test_profiler(
 ):
     prompts = get_chicken_soup_prompts(2)
 
-    envs_spyre.override("VLLM_SPYRE_DYNAMO_BACKEND", "eager")
+    envs_spyre.override("SENDNN_INFERENCE_DYNAMO_BACKEND", "eager")
 
     spyre_model = LLM(
         model=model.name,
@@ -49,7 +49,7 @@ def test_profiler_prefix(
     """Test that profile_prefix is applied to each call."""
     prompts = get_chicken_soup_prompts(2)
 
-    envs_spyre.override("VLLM_SPYRE_DYNAMO_BACKEND", "eager")
+    envs_spyre.override("SENDNN_INFERENCE_DYNAMO_BACKEND", "eager")
 
     spyre_model = LLM(
         model=model.name,

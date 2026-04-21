@@ -1,6 +1,6 @@
 # Model Configuration System
 
-This directory contains the model configuration system for vLLM-Spyre,
+This directory contains the model configuration system for SendNN Inference,
 which provides a clean, extensible way to manage model-specific configurations.
 
 ## Table of Contents
@@ -20,7 +20,7 @@ which provides a clean, extensible way to manage model-specific configurations.
 ## Directory Structure
 
 ```text
-vllm_spyre/config/
+sendnn_inference/config/
 ├── __init__.py
 ├── model_config.py          # Data structures
 ├── model_configs.yaml       # Model definitions
@@ -37,7 +37,7 @@ vllm_spyre/config/
 To use the configuration system:
 
 ```python
-from vllm_spyre.config.model_registry import get_model_registry
+from sendnn_inference.config.model_registry import get_model_registry
 
 # Get the registry (auto-initializes with default or env var path)
 registry = get_model_registry()
@@ -54,7 +54,7 @@ if configurator:
 
 ### Custom Configuration File
 
-By default, the registry loads from `vllm_spyre/config/model_configs.yaml`. You
+By default, the registry loads from `sendnn_inference/config/model_configs.yaml`. You
 can override this in three ways (in priority order):
 
 1. **Explicit path**: Pass `config_path` to `initialize()`
@@ -63,10 +63,10 @@ can override this in three ways (in priority order):
    registry.initialize(config_path=Path("/path/to/custom_config.yaml"))
    ```
 
-2. **Environment variable**: Set `VLLM_SPYRE_MODEL_CONFIG_FILE`
+2. **Environment variable**: Set `SENDNN_INFERENCE_MODEL_CONFIG_FILE`
 
    ```bash
-   export VLLM_SPYRE_MODEL_CONFIG_FILE=/path/to/custom_config.yaml
+   export SENDNN_INFERENCE_MODEL_CONFIG_FILE=/path/to/custom_config.yaml
    ```
 
 3. **Default**: Uses built-in `model_configs.yaml`
@@ -240,7 +240,7 @@ models:
 
 ### 1. Model Matching and Runtime Config Verification
 
-Before vLLM Spyre loads the model, the registry:
+Before SendNN Inference loads the model, the registry:
 
 1. Extracts the HuggingFace config
 2. Compares it against all registered architecture patterns
@@ -251,12 +251,12 @@ Before vLLM Spyre loads the model, the registry:
 
 ```python
 # In platform.py
-from vllm_spyre.config.model_registry import get_model_registry
+from sendnn_inference.config.model_registry import get_model_registry
 
 
 registry = get_model_registry()
 # For static batching, pass warmup shapes for validation
-warmup_shapes = cls._warmup_shapes if not envs_spyre.VLLM_SPYRE_USE_CB else None
+warmup_shapes = cls._warmup_shapes if not envs_spyre.SENDNN_INFERENCE_USE_CB else None
 configurator = registry.get_configurator_for_runtime(vllm_config, warmup_shapes)
 ```
 
@@ -264,7 +264,7 @@ configurator = registry.get_configurator_for_runtime(vllm_config, warmup_shapes)
 
 Once matched, the configurator applies environment variables and other
 configurations as applicable. Overrides of the default values are allowed
-as long as `VLLM_SPYRE_REQUIRE_KNOWN_CONFIG=0` (the default).
+as long as `SENDNN_INFERENCE_REQUIRE_KNOWN_CONFIG=0` (the default).
 
 The configurator returns a summary of the applied configurations that can easily
 be printed.
@@ -288,7 +288,7 @@ All device configuration features are optional:
 ### ModelConfigRegistry
 
 ```python
-from vllm_spyre.config.model_registry import get_model_registry
+from sendnn_inference.config.model_registry import get_model_registry
 
 registry = get_model_registry()
 
@@ -433,4 +433,4 @@ For questions or issues:
 1. Check this README
 2. Review existing model configurations in `model_configs.yaml`
 3. Examine the configurator code in `configurators/model_configurator.py`
-4. Consult the vLLM-Spyre team
+4. Consult the SendNN Inference team

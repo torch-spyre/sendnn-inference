@@ -75,7 +75,7 @@ prompts = [template.format(instr) for instr in instructions]
 prompts = prompts * (args.num_prompts // len(prompts) + 1)
 prompts = prompts[0 : args.num_prompts]
 
-# This batch size must match VLLM_SPYRE_WARMUP_BATCH_SIZES
+# This batch size must match SENDNN_INFERENCE_WARMUP_BATCH_SIZES
 batch_size = args.batch_size
 print("submitting prompts of batch size", batch_size)
 

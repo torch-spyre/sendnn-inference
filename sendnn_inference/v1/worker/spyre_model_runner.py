@@ -24,21 +24,21 @@ from vllm.v1.outputs import EMPTY_MODEL_RUNNER_OUTPUT, ModelRunnerOutput, Sample
 from vllm.v1.pool.metadata import PoolingMetadata
 from vllm.v1.request import Request
 
-import vllm_spyre.envs as envs_spyre
-import vllm_spyre.utils as utils_spyre
-from vllm_spyre.model_executor.model_loader.spyre import (
+import sendnn_inference.envs as envs_spyre
+import sendnn_inference.utils as utils_spyre
+from sendnn_inference.model_executor.model_loader.spyre import (
     BACKEND_LIST,
     SpyreAttentionMetadata,
     SpyreCausalLM,
 )
-from vllm_spyre.perf_metrics import create_perf_metric_logger
-from vllm_spyre.platform import SpyrePlatform
-from vllm_spyre.utils import exact_div
-from vllm_spyre.v1.sample.spyre_logits_processor import build_logitsprocs_for_cb
+from sendnn_inference.perf_metrics import create_perf_metric_logger
+from sendnn_inference.platform import SpyrePlatform
+from sendnn_inference.utils import exact_div
+from sendnn_inference.v1.sample.spyre_logits_processor import build_logitsprocs_for_cb
 
 # yapf conflicts with ruff for this block
 # yapf: disable
-from vllm_spyre.v1.worker.spyre_input_batch import (
+from sendnn_inference.v1.worker.spyre_input_batch import (
     BaseInputBatch,
     PoolingInputBatch,
     PoolingRequestState,
@@ -328,7 +328,7 @@ class SpyrePoolingModelRunner(
 
         self.model.eval()
         torch.set_grad_enabled(False)
-        if envs_spyre.VLLM_SPYRE_DYNAMO_BACKEND in BACKEND_LIST:
+        if envs_spyre.SENDNN_INFERENCE_DYNAMO_BACKEND in BACKEND_LIST:
             # Lazy import to avoid load torch_sendnn runtime before it is really
             # necessary. This solve issues of running forked tests that share
             # some resources from parent to children which can have problems
@@ -336,14 +336,14 @@ class SpyrePoolingModelRunner(
             SpyrePlatform.maybe_ensure_sendnn_configured(self.model_config)
 
             with utils_spyre.stagger_region(
-                envs_spyre.VLLM_SPYRE_MAX_LOAD_PROCESSES, self.parallel_config.world_size, self.rank
+                envs_spyre.SENDNN_INFERENCE_MAX_LOAD_PROCESSES, self.parallel_config.world_size, self.rank
             ):
                 # Not clear how to make the type checking happy with the torch.compile return
                 self._model = torch.compile(  # ty: ignore[invalid-assignment]
                     self.model,
                     mode="default",
                     dynamic=False,
-                    backend=envs_spyre.VLLM_SPYRE_DYNAMO_BACKEND,
+                    backend=envs_spyre.SENDNN_INFERENCE_DYNAMO_BACKEND,
                 )
 
         if task == "classify":

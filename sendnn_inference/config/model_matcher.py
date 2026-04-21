@@ -4,7 +4,7 @@ from typing import Any
 
 from vllm.logger import init_logger
 
-from vllm_spyre.config.model_config import ArchitecturePattern
+from sendnn_inference.config.model_config import ArchitecturePattern
 
 logger = init_logger(__name__)
 

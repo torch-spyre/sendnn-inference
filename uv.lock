@@ -3905,6 +3905,52 @@ wheels = [
 ]
 
 [[package]]
+name = "sendnn-inference"
+source = { editable = "." }
+dependencies = [
+    { name = "fms-model-optimizer", extra = ["fp8"] },
+    { name = "ibm-fms" },
+    { name = "torch", version = "2.10.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "platform_machine != 'aarch64' and sys_platform == 'darwin'" },
+    { name = "torch", version = "2.10.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "platform_machine == 'aarch64' or sys_platform != 'darwin'" },
+    { name = "torchvision", version = "0.26.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "platform_machine != 'aarch64' and sys_platform == 'darwin'" },
+    { name = "torchvision", version = "0.26.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "platform_machine == 'aarch64' or sys_platform != 'darwin'" },
+    { name = "vllm", marker = "platform_machine not in 's390x, ppc64le'" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "aiu-fms-testing-utils" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-forked" },
+    { name = "pytest-mock" },
+    { name = "pytest-timeout" },
+    { name = "requests" },
+    { name = "sentence-transformers" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fms-model-optimizer", extras = ["fp8"], specifier = ">=0.8.2,<0.9" },
+    { name = "ibm-fms", specifier = ">=1.9.0,<2" },
+    { name = "torch", index = "https://download.pytorch.org/whl/cpu" },
+    { name = "torchvision", index = "https://download.pytorch.org/whl/cpu" },
+    { name = "vllm", git = "https://github.com/vllm-project/vllm?rev=v0.19.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "aiu-fms-testing-utils", specifier = ">=0.5.0" },
+    { name = "pytest", specifier = "==8.3.4" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+    { name = "pytest-forked", specifier = ">=1.6.0" },
+    { name = "pytest-mock", specifier = ">=3.15.0" },
+    { name = "pytest-timeout", specifier = "==2.3.1" },
+    { name = "requests", specifier = "==2.32.3" },
+    { name = "sentence-transformers", specifier = "==3.4.1" },
+]
+
+[[package]]
 name = "sentence-transformers"
 version = "3.4.1"
 source = { registry = "https://pypi.org/simple" }
@@ -4658,52 +4704,6 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "watchfiles" },
     { name = "xgrammar", marker = "platform_machine == 'aarch64' or platform_machine == 'arm64' or platform_machine == 'ppc64le' or platform_machine == 's390x' or platform_machine == 'x86_64'" },
-]
-
-[[package]]
-name = "vllm-spyre"
-source = { editable = "." }
-dependencies = [
-    { name = "fms-model-optimizer", extra = ["fp8"] },
-    { name = "ibm-fms" },
-    { name = "torch", version = "2.10.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "platform_machine != 'aarch64' and sys_platform == 'darwin'" },
-    { name = "torch", version = "2.10.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "platform_machine == 'aarch64' or sys_platform != 'darwin'" },
-    { name = "torchvision", version = "0.26.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "platform_machine != 'aarch64' and sys_platform == 'darwin'" },
-    { name = "torchvision", version = "0.26.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "platform_machine == 'aarch64' or sys_platform != 'darwin'" },
-    { name = "vllm", marker = "platform_machine not in 's390x, ppc64le'" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "aiu-fms-testing-utils" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-forked" },
-    { name = "pytest-mock" },
-    { name = "pytest-timeout" },
-    { name = "requests" },
-    { name = "sentence-transformers" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "fms-model-optimizer", extras = ["fp8"], specifier = ">=0.8.2,<0.9" },
-    { name = "ibm-fms", specifier = ">=1.9.0,<2" },
-    { name = "torch", index = "https://download.pytorch.org/whl/cpu" },
-    { name = "torchvision", index = "https://download.pytorch.org/whl/cpu" },
-    { name = "vllm", git = "https://github.com/vllm-project/vllm?rev=v0.19.0" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "aiu-fms-testing-utils", specifier = ">=0.5.0" },
-    { name = "pytest", specifier = "==8.3.4" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-    { name = "pytest-forked", specifier = ">=1.6.0" },
-    { name = "pytest-mock", specifier = ">=3.15.0" },
-    { name = "pytest-timeout", specifier = "==2.3.1" },
-    { name = "requests", specifier = "==2.32.3" },
-    { name = "sentence-transformers", specifier = "==3.4.1" },
 ]
 
 [[package]]

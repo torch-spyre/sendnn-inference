@@ -6,12 +6,12 @@ from typing import TYPE_CHECKING, Any
 
 from vllm.logger import init_logger
 
-from vllm_spyre import envs as envs_spyre
+from sendnn_inference import envs as envs_spyre
 
 if TYPE_CHECKING:
     from vllm.config import VllmConfig
 
-    from vllm_spyre.config.model_config import DeviceConfig, ModelConfig
+    from sendnn_inference.config.model_config import DeviceConfig, ModelConfig
 
 logger = init_logger(__name__)
 
@@ -151,7 +151,7 @@ class ModelConfigurator:
         """Validate that applied config value matches default value.
 
         Handles the common pattern of checking if a user-provided value conflicts
-        with the default model configuration value, and enforces VLLM_SPYRE_REQUIRE_KNOWN_CONFIG.
+        with the default model configuration value, and enforces SENDNN_INFERENCE_REQUIRE_KNOWN_CONFIG.
 
         Args:
             config_name: Name of the configuration parameter (for error messages)
@@ -159,15 +159,15 @@ class ModelConfigurator:
             error_context: Additional context for error messages (e.g., "it was already set to X")
 
         Raises:
-            RuntimeError: If VLLM_SPYRE_REQUIRE_KNOWN_CONFIG is set and values conflict
+            RuntimeError: If SENDNN_INFERENCE_REQUIRE_KNOWN_CONFIG is set and values conflict
         """
         if config_value.was_overridden():
-            if envs_spyre.VLLM_SPYRE_REQUIRE_KNOWN_CONFIG:
+            if envs_spyre.SENDNN_INFERENCE_REQUIRE_KNOWN_CONFIG:
                 raise RuntimeError(
                     f"Model '{self.model_config.name}' configures "
                     f"{config_name}={config_value.default}, "
                     f"but {error_context}. "
-                    f"VLLM_SPYRE_REQUIRE_KNOWN_CONFIG is enabled."
+                    f"SENDNN_INFERENCE_REQUIRE_KNOWN_CONFIG is enabled."
                 )
             logger.warning(
                 "%s was set to %s, not using model default of %s",
@@ -191,7 +191,7 @@ class ModelConfigurator:
             ConfigValue tracking default and applied values
 
         Raises:
-            RuntimeError: If VLLM_SPYRE_REQUIRE_KNOWN_CONFIG is set and existing value conflicts
+            RuntimeError: If SENDNN_INFERENCE_REQUIRE_KNOWN_CONFIG is set and existing value conflicts
         """
         str_value = str(value)
         existing = os.getenv(key)
@@ -222,7 +222,7 @@ class ModelConfigurator:
             ConfigValue tracking default and applied num_blocks, or None if not configured
 
         Raises:
-            RuntimeError: If VLLM_SPYRE_REQUIRE_KNOWN_CONFIG is set and user override conflicts
+            RuntimeError: If SENDNN_INFERENCE_REQUIRE_KNOWN_CONFIG is set and user override conflicts
         """
         num_blocks_override = device_config.num_gpu_blocks_override
         if num_blocks_override is None:

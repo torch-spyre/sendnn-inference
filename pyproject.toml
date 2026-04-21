@@ -6,7 +6,7 @@ requires = [
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "vllm-spyre"
+name = "sendnn-inference"
 description = "vLLM plugin for Spyre hardware support"
 readme = "README.md"
 license = {text = "Apache 2"}
@@ -25,18 +25,18 @@ requires-python = ">=3.11"
 dynamic = ["version"]
 
 [project.entry-points."vllm.platform_plugins"]
-spyre = "vllm_spyre:register"
+sendnn_inference = "sendnn_inference:register"
 
 [tool.setuptools.packages.find]
 where = ["."]  # list of folders that contain the packages (["."] by default)
-include = ["vllm_spyre*"]  # package names should match these glob patterns (["*"] by default)
+include = ["sendnn_inference*"]  # package names should match these glob patterns (["*"] by default)
 exclude = []  # exclude packages matching these glob patterns (empty by default)
 namespaces = false  # to disable scanning PEP 420 namespaces (true by default)
 
 [tool.setuptools_scm]
 # Version files are optional, this just marginally speeds up version inspection
 # at runtime
-version_file = "vllm_spyre/_version.py"
+version_file = "sendnn_inference/_version.py"
 # Version strings are formatted as `{version}+{local}`, e.g. "0.1.dev1+gb1a7032"
 # Local versioning is incompatible with pypi, so we disable it by default.
 local_scheme = "no-local-version"
@@ -108,18 +108,18 @@ explicit = true
 possibly-missing-attribute = "ignore"
 
 [tool.ty.src]
-exclude = ["vllm_spyre/__init__.py"]
+exclude = ["sendnn_inference/__init__.py"]
 
 [tool.ruff]
 # Use widescreen monitors 😎😎😎
 line-length = 100
 exclude = [
-    "vllm_spyre/model_executor/model_loader/spyre_setup.py"
+    "sendnn_inference/model_executor/model_loader/spyre_setup.py"
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"vllm_spyre/version.py" = ["F401"]
-"vllm_spyre/_version.py" = ["ALL"]
+"sendnn_inference/version.py" = ["F401"]
+"sendnn_inference/_version.py" = ["ALL"]
 
 [tool.ruff.lint]
 select = [

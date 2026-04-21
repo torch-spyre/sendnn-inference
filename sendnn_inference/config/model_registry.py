@@ -6,15 +6,15 @@ from typing import TYPE_CHECKING
 import yaml
 from vllm.logger import init_logger
 
-from vllm_spyre import envs
-from vllm_spyre.config.model_config import ModelConfig
-from vllm_spyre.config.model_matcher import ModelMatcher
+from sendnn_inference import envs
+from sendnn_inference.config.model_config import ModelConfig
+from sendnn_inference.config.model_matcher import ModelMatcher
 
 if TYPE_CHECKING:
     from vllm.config import ModelConfig as VllmModelConfig, VllmConfig
 
-    from vllm_spyre.config.configurators.model_configurator import ModelConfigurator
-    from vllm_spyre.config.model_config import DeviceConfig, WarmupShape
+    from sendnn_inference.config.configurators.model_configurator import ModelConfigurator
+    from sendnn_inference.config.model_config import DeviceConfig, WarmupShape
 
 logger = init_logger(__name__)
 
@@ -71,13 +71,13 @@ class ModelConfigRegistry:
 
         Priority order:
         1. Explicit config_path parameter
-        2. VLLM_SPYRE_MODEL_CONFIG_FILE environment variable
-        3. Default location (vllm_spyre/config/model_configs.yaml)
+        2. SENDNN_INFERENCE_MODEL_CONFIG_FILE environment variable
+        3. Default location (sendnn_inference/config/model_configs.yaml)
         """
         if config_path is not None:
             return config_path
 
-        env_path = envs.VLLM_SPYRE_MODEL_CONFIG_FILE
+        env_path = envs.SENDNN_INFERENCE_MODEL_CONFIG_FILE
         if env_path is not None:
             return Path(env_path)
 
@@ -357,7 +357,7 @@ class ModelConfigRegistry:
         Returns:
             ModelConfigurator instance
         """
-        from vllm_spyre.config.configurators.model_configurator import ModelConfigurator
+        from sendnn_inference.config.configurators.model_configurator import ModelConfigurator
 
         logger.debug("Creating configurator for model %s", model_config.name)
         return ModelConfigurator(model_config, device_config)

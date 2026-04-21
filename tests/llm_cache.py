@@ -14,7 +14,7 @@ from vllm.v1.executor.abstract import Executor
 from vllm.forward_context import get_forward_context
 
 
-from vllm_spyre.v1.sample.golden_token_injector import GoldenTokenInjector
+from sendnn_inference.v1.sample.golden_token_injector import GoldenTokenInjector
 
 T = TypeVar("T")
 

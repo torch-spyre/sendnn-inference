@@ -6,7 +6,7 @@ from urllib.request import urlretrieve
 
 from transformers import AutoConfig, PretrainedConfig
 
-from vllm_spyre.config.model_registry import get_model_registry
+from sendnn_inference.config.model_registry import get_model_registry
 
 _configs_path = Path(__file__).parent / "fixtures" / "model_configs"
 

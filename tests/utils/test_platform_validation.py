@@ -1,6 +1,6 @@
 """Unit tests for platform validation of structured outputs.
 
-Tests the fix in vllm_spyre/platform.py that strips structured_outputs
+Tests the fix in sendnn_inference/platform.py that strips structured_outputs
 from SamplingParams during request validation.
 """
 
@@ -13,7 +13,7 @@ from vllm import SamplingParams
 from vllm.inputs import tokens_input
 from vllm.pooling_params import PoolingParams
 from vllm.sampling_params import StructuredOutputsParams
-from vllm_spyre.platform import SpyrePlatform
+from sendnn_inference.platform import SpyrePlatform
 
 
 pytestmark = pytest.mark.skip_global_cleanup
@@ -45,7 +45,7 @@ class TestStructuredOutputValidation:
 
         assert params.structured_outputs is None
 
-    def test_logs_warning_when_stripping(self, caplog_vllm_spyre):
+    def test_logs_warning_when_stripping(self, caplog_sendnn_inference):
         """Test that a warning is logged when stripping structured_outputs."""
         params = SamplingParams(
             max_tokens=20, structured_outputs=StructuredOutputsParams(json_object=True)
@@ -53,8 +53,8 @@ class TestStructuredOutputValidation:
 
         SpyrePlatform.validate_request(tokens_input(prompt_token_ids=[0]), params)
 
-        assert len(caplog_vllm_spyre.records) > 0
-        warning_record = caplog_vllm_spyre.records[0]
+        assert len(caplog_sendnn_inference.records) > 0
+        warning_record = caplog_sendnn_inference.records[0]
         assert warning_record.levelname == "WARNING"
         assert "Structured outputs" in warning_record.message
         assert "not supported" in warning_record.message
@@ -137,7 +137,7 @@ class TestSendnnConfigurationValidation:
     ):
         """Test that validation is skipped for non-generative models (e.g., embeddings)."""
         # Set up sendnn backend enabled
-        monkeypatch.setenv("VLLM_SPYRE_DYNAMO_BACKEND", "sendnn")
+        monkeypatch.setenv("SENDNN_INFERENCE_DYNAMO_BACKEND", "sendnn")
         SpyrePlatform._torch_sendnn_configured = False
 
         # Mock torch_sendnn import
@@ -152,7 +152,7 @@ class TestSendnnConfigurationValidation:
     def test_skips_validation_when_cache_disabled(self, mock_model_config, monkeypatch):
         """Test that validation is skipped when TORCH_SENDNN_CACHE_ENABLE is 0."""
         # Set up sendnn backend enabled
-        monkeypatch.setenv("VLLM_SPYRE_DYNAMO_BACKEND", "sendnn")
+        monkeypatch.setenv("SENDNN_INFERENCE_DYNAMO_BACKEND", "sendnn")
         monkeypatch.setenv("TORCH_SENDNN_CACHE_ENABLE", "0")
         SpyrePlatform._torch_sendnn_configured = False
 
@@ -168,7 +168,7 @@ class TestSendnnConfigurationValidation:
     def test_validates_generate_models_with_cache_enabled(self, mock_model_config, monkeypatch):
         """Test that validation runs for generative models with cache enabled."""
         # Set up sendnn backend enabled with cache
-        monkeypatch.setenv("VLLM_SPYRE_DYNAMO_BACKEND", "sendnn")
+        monkeypatch.setenv("SENDNN_INFERENCE_DYNAMO_BACKEND", "sendnn")
         monkeypatch.setenv("TORCH_SENDNN_CACHE_ENABLE", "1")
         monkeypatch.setenv("VLLM_DT_CHUNK_LEN", "512")
         monkeypatch.setenv("VLLM_DT_MAX_CONTEXT_LEN", "4096")
@@ -209,11 +209,11 @@ class TestSendnnConfigurationValidation:
         assert SpyrePlatform._torch_sendnn_configured is True
 
     def test_logs_warning_on_backend_state_read_error(
-        self, mock_model_config, monkeypatch, caplog_vllm_spyre
+        self, mock_model_config, monkeypatch, caplog_sendnn_inference
     ):
         """Test that warning is logged when backend state cannot be read."""
         # Set up sendnn backend enabled with cache
-        monkeypatch.setenv("VLLM_SPYRE_DYNAMO_BACKEND", "sendnn")
+        monkeypatch.setenv("SENDNN_INFERENCE_DYNAMO_BACKEND", "sendnn")
         monkeypatch.setenv("TORCH_SENDNN_CACHE_ENABLE", "1")
         monkeypatch.setenv("VLLM_DT_CHUNK_LEN", "512")
         SpyrePlatform._torch_sendnn_configured = False
@@ -228,7 +228,7 @@ class TestSendnnConfigurationValidation:
             SpyrePlatform.maybe_ensure_sendnn_configured(mock_model_config)
 
         # Check that warning was logged with exception details
-        warning_records = [r for r in caplog_vllm_spyre.records if r.levelname == "WARNING"]
+        warning_records = [r for r in caplog_sendnn_inference.records if r.levelname == "WARNING"]
         assert any(
             "Error reading torch_sendnn backend state for validation" in r.message
             for r in warning_records
@@ -237,7 +237,7 @@ class TestSendnnConfigurationValidation:
     def test_flex_device_set_for_sendnn_compile_only(self, monkeypatch):
         """Test that FLEX_DEVICE is set to COMPILE when backend is sendnn_compile_only."""
         # Set up the backend
-        monkeypatch.setenv("VLLM_SPYRE_DYNAMO_BACKEND", "sendnn_compile_only")
+        monkeypatch.setenv("SENDNN_INFERENCE_DYNAMO_BACKEND", "sendnn_compile_only")
 
         # Remove FLEX_DEVICE if it exists to ensure clean test
         monkeypatch.delenv("FLEX_DEVICE", raising=False)

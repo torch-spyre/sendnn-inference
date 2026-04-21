@@ -28,7 +28,7 @@ from vllm.v1.core.kv_cache_utils import (
 )
 
 
-from vllm_spyre.v1.core.scheduler import (
+from sendnn_inference.v1.core.scheduler import (
     ChunkedPrefillSpyreScheduler,
 )
 
@@ -339,7 +339,7 @@ def validate_scheduler_steps(
         # This default value is set by platform.py
         scheduler.max_batch_tkv_limit = int(os.getenv("VLLM_DT_MAX_BATCH_TKV_LIMIT"))
 
-    scheduler.do_interleaving = bool(int(os.getenv("VLLM_SPYRE_CP_INTERLEAVE_STEPS", "1")))
+    scheduler.do_interleaving = bool(int(os.getenv("SENDNN_INFERENCE_CP_INTERLEAVE_STEPS", "1")))
 
     # In-between steps are added as normal decode steps
     checked_steps = augment_checked_steps(checked_steps)

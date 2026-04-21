@@ -22,12 +22,12 @@ from vllm.utils.argparse_utils import FlexibleArgumentParser
 from vllm.utils.network_utils import get_open_port
 from vllm.v1.engine.core import EngineCore
 from vllm.v1.request import Request
-from vllm_spyre.v1.core.scheduler import (
+from sendnn_inference.v1.core.scheduler import (
     ChunkedPrefillSpyreScheduler,
 )
 
-from vllm_spyre import envs
-from vllm_spyre.platform import SpyrePlatform
+from sendnn_inference import envs
+from sendnn_inference.platform import SpyrePlatform
 
 EmbeddingWarmupShapes = list[tuple[int, int]]
 
@@ -45,7 +45,7 @@ def patch_environment(
         patch_warmup_shapes(warmup_shapes, monkeypatch)
 
     # --------------
-    monkeypatch.setenv("VLLM_SPYRE_DYNAMO_BACKEND", backend)
+    monkeypatch.setenv("SENDNN_INFERENCE_DYNAMO_BACKEND", backend)
 
 
 def patch_warmup_shapes(warmup_shapes: EmbeddingWarmupShapes, monkeypatch):
@@ -53,10 +53,10 @@ def patch_warmup_shapes(warmup_shapes: EmbeddingWarmupShapes, monkeypatch):
     warmup_batch_size = [t[-1] for t in warmup_shapes]
 
     monkeypatch.setenv(
-        "VLLM_SPYRE_WARMUP_PROMPT_LENS", ",".join(str(val) for val in warmup_prompt_length)
+        "SENDNN_INFERENCE_WARMUP_PROMPT_LENS", ",".join(str(val) for val in warmup_prompt_length)
     )
     monkeypatch.setenv(
-        "VLLM_SPYRE_WARMUP_BATCH_SIZES", ",".join(str(val) for val in warmup_batch_size)
+        "SENDNN_INFERENCE_WARMUP_BATCH_SIZES", ",".join(str(val) for val in warmup_batch_size)
     )
 
 
@@ -116,7 +116,7 @@ class RemoteOpenAIServer:
         env = os.environ.copy()
         if env_dict is not None:
             env.update(env_dict)
-        self.backend = env.get("VLLM_SPYRE_DYNAMO_BACKEND", "")
+        self.backend = env.get("SENDNN_INFERENCE_DYNAMO_BACKEND", "")
         self.proc = subprocess.Popen(
             ["vllm", "serve", model_name, *vllm_serve_args],
             env=env,
@@ -205,7 +205,7 @@ class RemoteOpenAIServer:
 # if unset, test model paths are assumed to be either hf hub names or absolute
 # paths
 def get_spyre_model_dir_path() -> Path:
-    model_dir_path = os.environ.get("VLLM_SPYRE_TEST_MODEL_DIR", "")
+    model_dir_path = os.environ.get("SENDNN_INFERENCE_TEST_MODEL_DIR", "")
     return Path(model_dir_path)
 
 
@@ -227,7 +227,7 @@ def get_spyre_backend_list():
 
 # get model names from env, if not set then use default models for each type.
 # Multiple models can be specified with a comma separated list in
-# VLLM_SPYRE_TEST_MODEL_LIST
+# SENDNN_INFERENCE_TEST_MODEL_LIST
 def get_spyre_model_list(
     isEmbeddings=False,
     isScoring=False,
@@ -236,7 +236,7 @@ def get_spyre_model_list(
 ):
     """Returns a list of pytest.params. The values are NamedTuples with a name
     and revision field."""
-    user_test_model_list = os.environ.get("VLLM_SPYRE_TEST_MODEL_LIST")
+    user_test_model_list = os.environ.get("SENDNN_INFERENCE_TEST_MODEL_LIST")
     if not user_test_model_list:
         return _default_test_models(isEmbeddings, isScoring, isMultimodal, full_size_models)
 

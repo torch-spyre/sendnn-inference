@@ -44,7 +44,7 @@ def test_prefix_hit_within_batch(
             * 0: len = 192,  max tokens = 2, step joining = 0
             * 1: len = 192, max tokens = 2, step joining = 0
     """
-    monkeypatch.setenv("VLLM_SPYRE_CP_INTERLEAVE_STEPS", "0")
+    monkeypatch.setenv("SENDNN_INFERENCE_CP_INTERLEAVE_STEPS", "0")
 
     prompt = random_prompt(model=model, seed=0, length=192)
 
@@ -184,7 +184,7 @@ def test_block_deduplication_within_batch(
             * 0: len = 70, max tokens = 2, step joining = 0
             * 1: len = 70, max tokens = 2, step joining = 0
     """
-    monkeypatch.setenv("VLLM_SPYRE_CP_INTERLEAVE_STEPS", "0")
+    monkeypatch.setenv("SENDNN_INFERENCE_CP_INTERLEAVE_STEPS", "0")
 
     prompt = random_prompt(model=model, seed=0, length=70)
 
@@ -315,7 +315,7 @@ def test_prefix_hit_decoded_block_within_batch(
             * 0: len = 126,  max tokens = 68, step joining = 0
             * 1: len = 193, max tokens = 2, step joining = 67
     """
-    monkeypatch.setenv("VLLM_SPYRE_CP_INTERLEAVE_STEPS", "0")
+    monkeypatch.setenv("SENDNN_INFERENCE_CP_INTERLEAVE_STEPS", "0")
 
     prompt = random_prompt(model=model, seed=0, length=126)
 
@@ -481,7 +481,7 @@ def test_prefix_hit_not_in_batch(
             * 0: len = 192,  max tokens = 2, step joining = 0
             * 1: len = 192, max tokens = 2, step joining = 3
     """
-    monkeypatch.setenv("VLLM_SPYRE_CP_INTERLEAVE_STEPS", "0")
+    monkeypatch.setenv("SENDNN_INFERENCE_CP_INTERLEAVE_STEPS", "0")
 
     prompt = random_prompt(model=model, seed=0, length=192)
 
@@ -626,7 +626,7 @@ def test_limit_blocks_no_prefix_hit(
             * 1: len = 192, max tokens = 2, step joining = 3
             * 2: len = 192, max tokens = 2, step joining = 6
     """
-    monkeypatch.setenv("VLLM_SPYRE_CP_INTERLEAVE_STEPS", "0")
+    monkeypatch.setenv("SENDNN_INFERENCE_CP_INTERLEAVE_STEPS", "0")
 
     prompt1 = random_prompt(model=model, seed=0, length=192)
     prompt2 = random_prompt(model=model, seed=1, length=192)
@@ -811,7 +811,7 @@ def test_double_prefix_hit_within_batch(
             * 2: len = 192, max tokens = 2, step joining = 0
             * 3: len = 192, max tokens = 2, step joining = 0
     """
-    monkeypatch.setenv("VLLM_SPYRE_CP_INTERLEAVE_STEPS", "0")
+    monkeypatch.setenv("SENDNN_INFERENCE_CP_INTERLEAVE_STEPS", "0")
 
     prompt1 = random_prompt(model=model, seed=0, length=192)
     prompt2 = random_prompt(model=model, seed=1, length=192)
@@ -1001,7 +1001,7 @@ def test_limit_blocks_prefix_hit(
             * 1: len = 192, max tokens = 2, step joining = 3
             * 2: len = 192, max tokens = 2, step joining = 6
     """
-    monkeypatch.setenv("VLLM_SPYRE_CP_INTERLEAVE_STEPS", "0")
+    monkeypatch.setenv("SENDNN_INFERENCE_CP_INTERLEAVE_STEPS", "0")
 
     prompt1 = random_prompt(model=model, seed=0, length=192)
     prompt2 = random_prompt(model=model, seed=1, length=192)
@@ -1175,7 +1175,7 @@ def test_multi_chunk_full_match(
             * 0: len = 384, max tokens = 2, step joining = 0
             * 1: len = 384, max tokens = 2, step joining = 0
     """
-    monkeypatch.setenv("VLLM_SPYRE_CP_INTERLEAVE_STEPS", "0")
+    monkeypatch.setenv("SENDNN_INFERENCE_CP_INTERLEAVE_STEPS", "0")
 
     prompt = random_prompt(model=model, seed=0, length=384)
 
@@ -1327,7 +1327,7 @@ def test_multi_chunk_partial_match_misaligned(
             * 0: len = 384,  max tokens = 2, step joining = 0
             * 1: len = 384, max tokens = 2, step joining = 0
     """
-    monkeypatch.setenv("VLLM_SPYRE_CP_INTERLEAVE_STEPS", "0")
+    monkeypatch.setenv("SENDNN_INFERENCE_CP_INTERLEAVE_STEPS", "0")
 
     # twice the same seed for a sequence of length 384
     # the first sequence shares the same prefix of length 384 tokens
@@ -1485,7 +1485,7 @@ def test_multi_chunk_partial_match_aligned(
             * 0: len = 384, max tokens = 2, step joining = 0
             * 1: len = 384, max tokens = 2, step joining = 0
     """
-    monkeypatch.setenv("VLLM_SPYRE_CP_INTERLEAVE_STEPS", "0")
+    monkeypatch.setenv("SENDNN_INFERENCE_CP_INTERLEAVE_STEPS", "0")
 
     # two sequences spanning exactly three chunks each. The
     # second sequence shares a two chunk prefix with the first
@@ -1619,7 +1619,7 @@ def test_first_chunk_partial_match(
     """There was a bug where a partial match in the first chunk could cause a
     crash. This test covers that case.
     """
-    monkeypatch.setenv("VLLM_SPYRE_CP_INTERLEAVE_STEPS", "0")
+    monkeypatch.setenv("SENDNN_INFERENCE_CP_INTERLEAVE_STEPS", "0")
 
     # The bug occurred because the sum of the left padding plus the usable prefix cache was not
     # divisible by the chunk size while the prefix cache length was at least one block.

@@ -7,7 +7,7 @@ import yaml
 
 
 ROOT_DIR = Path(__file__).parent.parent.parent.parent
-MODEL_CONFIG_PATH = ROOT_DIR / "vllm_spyre/config/model_configs.yaml"
+MODEL_CONFIG_PATH = ROOT_DIR / "sendnn_inference/config/model_configs.yaml"
 SUPPORTED_MODELS_PATH = ROOT_DIR / "docs/user_guide/supported_models.md"
 
 # Markers to identify where to insert the generated tables
@@ -65,11 +65,11 @@ def generate_model_table(models_data, config_type):
                                 batch_sizes.append(str(shape["batch_size"]))
 
                         if prompt_lens:
-                            config_data["VLLM_SPYRE_WARMUP_PROMPT_LENS"] = prompt_lens
-                            all_keys.add("VLLM_SPYRE_WARMUP_PROMPT_LENS")
+                            config_data["SENDNN_INFERENCE_WARMUP_PROMPT_LENS"] = prompt_lens
+                            all_keys.add("SENDNN_INFERENCE_WARMUP_PROMPT_LENS")
                         if batch_sizes:
-                            config_data["VLLM_SPYRE_WARMUP_BATCH_SIZES"] = batch_sizes
-                            all_keys.add("VLLM_SPYRE_WARMUP_BATCH_SIZES")
+                            config_data["SENDNN_INFERENCE_WARMUP_BATCH_SIZES"] = batch_sizes
+                            all_keys.add("SENDNN_INFERENCE_WARMUP_BATCH_SIZES")
                     else:
                         all_keys.add(key)
                         config_data[key] = value
@@ -88,10 +88,10 @@ def generate_model_table(models_data, config_type):
         if key == "tp_size":
             return "Tensor Parallel Size"
         # Special cases for warmup environment variables
-        if key == "VLLM_SPYRE_WARMUP_PROMPT_LENS":
-            return "VLLM_SPYRE_WARMUP_PROMPT_LENS"
-        if key == "VLLM_SPYRE_WARMUP_BATCH_SIZES":
-            return "VLLM_SPYRE_WARMUP_BATCH_SIZES"
+        if key == "SENDNN_INFERENCE_WARMUP_PROMPT_LENS":
+            return "SENDNN_INFERENCE_WARMUP_PROMPT_LENS"
+        if key == "SENDNN_INFERENCE_WARMUP_BATCH_SIZES":
+            return "SENDNN_INFERENCE_WARMUP_BATCH_SIZES"
         # Default: convert snake_case to Title Case
         words = key.replace("_", " ").split()
         return " ".join(word.capitalize() for word in words)

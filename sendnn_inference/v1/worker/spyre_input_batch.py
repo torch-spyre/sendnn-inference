@@ -15,7 +15,7 @@ from vllm.v1.pool.metadata import PoolingMetadata
 from vllm.v1.sample.logits_processor import BatchUpdateBuilder, LogitsProcessors, MoveDirectionality
 from vllm.v1.sample.metadata import SamplingMetadata
 
-from vllm_spyre.v1.sample.spyre_logits_processor import LogitProcessorWrapper
+from sendnn_inference.v1.sample.spyre_logits_processor import LogitProcessorWrapper
 
 
 class RequestState(Protocol):

@@ -19,10 +19,10 @@ from vllm.v1.outputs import SamplerOutput
 from vllm.v1.sample.metadata import SamplingMetadata
 from vllm.v1.sample.sampler import Sampler
 
-import vllm_spyre.envs as envs_spyre
-import vllm_spyre.multimodal as spyre_mm
-import vllm_spyre.utils as utils_spyre
-from vllm_spyre.platform import SpyrePlatform
+import sendnn_inference.envs as envs_spyre
+import sendnn_inference.multimodal as spyre_mm
+import sendnn_inference.utils as utils_spyre
+from sendnn_inference.platform import SpyrePlatform
 
 try:
     import backends.dynamo_tracer  # ty: ignore[unresolved-import] # noqa
@@ -183,7 +183,7 @@ class SpyreCausalLM(nn.Module):
         model_kwargs = spyre_mm.get_mm_specific_load_overrides(self.config)
 
         with utils_spyre.stagger_region(
-            envs_spyre.VLLM_SPYRE_MAX_LOAD_PROCESSES,
+            envs_spyre.SENDNN_INFERENCE_MAX_LOAD_PROCESSES,
             kwargs["world_size"],
             kwargs["rank"],
         ):
@@ -232,7 +232,7 @@ class SpyreCausalLM(nn.Module):
                 max_decode_length,
             )
 
-        if envs_spyre.VLLM_SPYRE_DYNAMO_BACKEND in BACKEND_LIST:
+        if envs_spyre.SENDNN_INFERENCE_DYNAMO_BACKEND in BACKEND_LIST:
             # When running on Spyre cards for either non-quantized (bf16) models
             # or quantized (fp8) models, we cast any bf16 params down
             self._cast_bf16_to_f16()
@@ -246,7 +246,7 @@ class SpyreCausalLM(nn.Module):
 
             self.fms_model = torch.compile(
                 self.fms_model,
-                backend=envs_spyre.VLLM_SPYRE_DYNAMO_BACKEND,
+                backend=envs_spyre.SENDNN_INFERENCE_DYNAMO_BACKEND,
                 options=options,
             )
         else:
@@ -529,7 +529,7 @@ class SpyreCausalLM(nn.Module):
         if self.model_config.quantization:
             return torch.float8_e4m3fn
         else:
-            if envs_spyre.VLLM_SPYRE_DYNAMO_BACKEND in BACKEND_LIST:
+            if envs_spyre.SENDNN_INFERENCE_DYNAMO_BACKEND in BACKEND_LIST:
                 return torch.float16
             else:
                 return torch.float32

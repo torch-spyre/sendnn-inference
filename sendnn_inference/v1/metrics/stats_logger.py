@@ -16,7 +16,7 @@ from vllm.v1.metrics.stats import (
     SchedulerStats,
 )
 
-from vllm_spyre import envs as envs_spyre
+from sendnn_inference import envs as envs_spyre
 
 logger = init_logger(__name__)
 
@@ -62,19 +62,19 @@ class PerfRecord:
 
 class FileStatLogger(StatLoggerBase):
     def __init__(self, vllm_config: VllmConfig, engine_index=0):
-        self.enabled = envs_spyre.VLLM_SPYRE_PERF_METRIC_LOGGING_ENABLED
+        self.enabled = envs_spyre.SENDNN_INFERENCE_PERF_METRIC_LOGGING_ENABLED
 
-        perf_dir = Path(envs_spyre.VLLM_SPYRE_PERF_METRIC_LOGGING_DIR)
+        perf_dir = Path(envs_spyre.SENDNN_INFERENCE_PERF_METRIC_LOGGING_DIR)
         if not perf_dir.exists():
             perf_dir.mkdir(parents=True)
 
         self.perf_file = (
-            Path(envs_spyre.VLLM_SPYRE_PERF_METRIC_LOGGING_DIR) / "request_metrics.jsonl"
+            Path(envs_spyre.SENDNN_INFERENCE_PERF_METRIC_LOGGING_DIR) / "request_metrics.jsonl"
         )
 
         if self.enabled and engine_index == 0:
             logger.info(
-                "Initializing vllm-spyre perf debug logger. Writing perf info to: %s",
+                "Initializing sendnn-inference perf debug logger. Writing perf info to: %s",
                 str(self.perf_file),
             )
 
@@ -207,7 +207,7 @@ def patch_async_llm_stat_loggers():
 
     @wraps(original_init)
     def new_init(self, *args, **kwargs):
-        logger.debug("Injecting vllm-spyre perf logger factory")
+        logger.debug("Injecting sendnn-inference perf logger factory")
         if "custom_stat_loggers" not in kwargs or kwargs["custom_stat_loggers"] is None:
             kwargs["custom_stat_loggers"] = []
 

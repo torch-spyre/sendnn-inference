@@ -3,12 +3,12 @@
 import os
 import time
 
-import vllm_spyre.envs as envs
+import sendnn_inference.envs as envs
 
 
 def create_perf_metric_logger(rank: int):
     """Create a performance metric logging object."""
-    if envs.VLLM_SPYRE_PERF_METRIC_LOGGING_ENABLED == 1:
+    if envs.SENDNN_INFERENCE_PERF_METRIC_LOGGING_ENABLED == 1:
         return SpyrePerfMetricFileLogger(rank)
     return SpyrePerfMetricLoggerBase(rank)
 
@@ -35,15 +35,15 @@ class SpyrePerfMetricFileLogger(SpyrePerfMetricLoggerBase):
         super().__init__(rank)
         self.time_fmt = "%m-%d %H:%M:%S"
         self.log_path = os.path.join(
-            envs.VLLM_SPYRE_PERF_METRIC_LOGGING_DIR, f"perf_log_rank_{str(rank)}.txt"
+            envs.SENDNN_INFERENCE_PERF_METRIC_LOGGING_DIR, f"perf_log_rank_{str(rank)}.txt"
         )
-        os.makedirs(envs.VLLM_SPYRE_PERF_METRIC_LOGGING_DIR, exist_ok=True)
+        os.makedirs(envs.SENDNN_INFERENCE_PERF_METRIC_LOGGING_DIR, exist_ok=True)
         # Cleanup previous metrics files
         if os.path.exists(self.log_path):
             os.remove(self.log_path)
         # Output configuration variables to ease understanding of logs
-        self.log("VLLM_SPYRE_WARMUP_BATCH_SIZES", envs.VLLM_SPYRE_WARMUP_BATCH_SIZES)
-        self.log("VLLM_SPYRE_WARMUP_PROMPT_LENS", envs.VLLM_SPYRE_WARMUP_PROMPT_LENS)
+        self.log("SENDNN_INFERENCE_WARMUP_BATCH_SIZES", envs.SENDNN_INFERENCE_WARMUP_BATCH_SIZES)
+        self.log("SENDNN_INFERENCE_WARMUP_PROMPT_LENS", envs.SENDNN_INFERENCE_WARMUP_PROMPT_LENS)
         self.log("AIU_WORLD_SIZE", os.getenv("AIU_WORLD_SIZE", 0))
         self.log("DT_OPT", os.getenv("DT_OPT", ""))
 

@@ -89,7 +89,7 @@ The vLLM Documentation on [Deploying with Kubernetes](https://docs.vllm.ai/en/la
                 claimName: graph-cache
             containers:
             - name: vllm
-              image: quay.io/ibm-aiu/vllm-spyre:latest.amd64
+              image: quay.io/ibm-aiu/sendnn-inference:latest.amd64
               args: [
                 "ibm-granite/granite-3.3-8b-instruct"
               ]

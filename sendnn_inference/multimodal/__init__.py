@@ -1,6 +1,6 @@
 import transformers
 
-from vllm_spyre.multimodal.mm_mappings import LlavaNextMMUtils, Mistral3MMUtils, MMUtilsBase
+from sendnn_inference.multimodal.mm_mappings import LlavaNextMMUtils, Mistral3MMUtils, MMUtilsBase
 
 # Maps transformers classes to the corresponding utils
 MM_HF_CFG_REGISTRY = {

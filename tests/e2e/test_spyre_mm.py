@@ -17,7 +17,7 @@ from vllm import SamplingParams
 # Ensure the llava next mm mapping is imported, since
 # the FMS serialization utilities are patched at import time,
 # and the patching is currently NOT idempotent.
-import vllm_spyre.multimodal.mm_mappings.llava_next  # noqa: F401
+import sendnn_inference.multimodal.mm_mappings.llava_next  # noqa: F401
 
 # We should not use a very large value here, because
 # we do not have tiny multimodal models at the moment.

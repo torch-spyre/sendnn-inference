@@ -602,7 +602,7 @@ def test_cp_prefill_no_interleave(
             * 1: len = 512, max tokens = 4, step joining = 0
     """
 
-    monkeypatch.setenv("VLLM_SPYRE_CP_INTERLEAVE_STEPS", "0")
+    monkeypatch.setenv("SENDNN_INFERENCE_CP_INTERLEAVE_STEPS", "0")
 
     seqs_max_tokens = [8, 4]
     prompts_lengths = [10, 512]
@@ -986,7 +986,7 @@ def test_prefill_tkv_too_big2(
             * 2: len = 16, max tokens = 50, step joining = 0
     """
 
-    monkeypatch.setenv("VLLM_SPYRE_CP_INTERLEAVE_STEPS", "0")
+    monkeypatch.setenv("SENDNN_INFERENCE_CP_INTERLEAVE_STEPS", "0")
 
     seqs_max_tokens = [5, 3, 50]
     prompts_lengths = [20, 80, 16]

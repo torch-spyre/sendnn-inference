@@ -1,6 +1,6 @@
 """Unit tests for scheduler handling of structured outputs.
 
-Tests the fix in vllm_spyre/v1/core/scheduler.py that strips
+Tests the fix in sendnn_inference/v1/core/scheduler.py that strips
 structured_output_request from Request objects in the chunked prefill scheduler.
 
 These unit tests mock the scheduler dependencies and call the actual schedule() method.
@@ -12,7 +12,7 @@ from vllm import SamplingParams
 from vllm.sampling_params import StructuredOutputsParams
 from vllm.v1.core.sched.request_queue import FCFSRequestQueue
 from vllm.v1.request import Request, RequestStatus
-from vllm_spyre.v1.core.scheduler import ChunkedPrefillSpyreScheduler
+from sendnn_inference.v1.core.scheduler import ChunkedPrefillSpyreScheduler
 
 pytestmark = pytest.mark.skip_global_cleanup
 
@@ -58,7 +58,7 @@ def mocked_scheduler():
 class TestSchedulerStructuredOutputHandling:
     """Test that the scheduler strips structured_output_request from requests."""
 
-    def test_scheduler_strips_structured_output_request(self, mocked_scheduler, caplog_vllm_spyre):
+    def test_scheduler_strips_structured_output_request(self, mocked_scheduler, caplog_sendnn_inference):
         """Test that the scheduler removes structured_output_request from new requests."""
 
         # Create a request with structured outputs
@@ -92,7 +92,7 @@ class TestSchedulerStructuredOutputHandling:
 
         # Verify warning was logged
         assert any(
-            "Removing structured output" in record.message for record in caplog_vllm_spyre.records
+            "Removing structured output" in record.message for record in caplog_sendnn_inference.records
         )
 
     def test_scheduler_handles_request_without_structured_output(self, mocked_scheduler):
@@ -126,7 +126,7 @@ class TestSchedulerStructuredOutputHandling:
         # Status may have changed due to base scheduler, but that's OK
 
     def test_scheduler_handles_multiple_requests_with_structured_outputs(
-        self, mocked_scheduler, caplog_vllm_spyre
+        self, mocked_scheduler, caplog_sendnn_inference
     ):
         """Test that multiple requests with structured outputs are all stripped."""
 
@@ -166,7 +166,7 @@ class TestSchedulerStructuredOutputHandling:
         # Verify warnings were logged for each request
         warning_count = sum(
             1
-            for record in caplog_vllm_spyre.records
+            for record in caplog_sendnn_inference.records
             if "Removing structured output" in record.message
         )
         assert warning_count == 3
@@ -204,7 +204,7 @@ class TestSchedulerStructuredOutputHandling:
         assert request.structured_output_request is not None
 
     def test_scheduler_preserves_other_request_attributes(
-        self, mocked_scheduler, caplog_vllm_spyre
+        self, mocked_scheduler, caplog_sendnn_inference
     ):
         """Test that other request attributes are not affected when stripping."""
 

@@ -29,12 +29,12 @@ from vllm.v1.kv_cache_interface import KVCacheConfig, KVCacheSpec
 from vllm.v1.outputs import ModelRunnerOutput
 from vllm.v1.worker.worker_base import WorkerBase
 
-import vllm_spyre.envs as envs_spyre
-import vllm_spyre.perf_metrics as perf_metrics
-import vllm_spyre.utils as utils_spyre
-from vllm_spyre.model_executor.model_loader import spyre_setup
-from vllm_spyre.platform import SpyrePlatform
-from vllm_spyre.v1.worker.spyre_model_runner import (
+import sendnn_inference.envs as envs_spyre
+import sendnn_inference.perf_metrics as perf_metrics
+import sendnn_inference.utils as utils_spyre
+from sendnn_inference.model_executor.model_loader import spyre_setup
+from sendnn_inference.platform import SpyrePlatform
+from sendnn_inference.v1.worker.spyre_model_runner import (
     ChunkedPrefillModelRunner,
     SpyrePoolingModelRunner,
     SupportedTask,
@@ -202,7 +202,7 @@ class SpyreWorker(WorkerBase):
 
         🌶️🌶️🌶️ The result from this method _only_ applies to the KV Cache
         management in vLLM's core scheduler. This does _not_ apply to the KV
-        cache management handled directly by the vllm-spyre worker and model
+        cache management handled directly by the sendnn-inference worker and model
         runner. We return a minimal value here to make the vllm scheduler happy.
         """
         # The fake kv_cache config specified by the model runner sets 4 bytes
@@ -218,7 +218,7 @@ class SpyreWorker(WorkerBase):
         # at least one more block to allow for proper scheduling. We double
         # the cache size here to ensure that the vllm scheduler always has
         # blocks available. This causes the log message from vLLM about it's
-        # KV cache capacity to be double the log message from vllm-spyre.
+        # KV cache capacity to be double the log message from sendnn-inference.
         # This can probably be fixed in a nicer way.
         return 2 * accurate_fake_kv_cache_size
 
@@ -312,8 +312,8 @@ class SpyreWorker(WorkerBase):
         This is 🌶️🌶️🌶️ for debugging purposes only, after it is invoked there
         won't be any more logs on stdout or stderr from this worker process.
         """
-        if envs_spyre.VLLM_SPYRE_WORKER_LOG_REDIRECT_DIR:
-            log_dir = Path(envs_spyre.VLLM_SPYRE_WORKER_LOG_REDIRECT_DIR)
+        if envs_spyre.SENDNN_INFERENCE_WORKER_LOG_REDIRECT_DIR:
+            log_dir = Path(envs_spyre.SENDNN_INFERENCE_WORKER_LOG_REDIRECT_DIR)
             log_dir.mkdir(parents=True, exist_ok=True)
             log_path = log_dir / f"rank-{self.rank}.log"
 
@@ -347,7 +347,7 @@ class SpyreWorker(WorkerBase):
                 rank=self.rank,
                 distributed_init_method=init_method,
                 backend=backend,
-                timeout=timedelta(minutes=envs_spyre.VLLM_SPYRE_GLOO_TIMEOUT_MINUTES),
+                timeout=timedelta(minutes=envs_spyre.SENDNN_INFERENCE_GLOO_TIMEOUT_MINUTES),
             )
 
             if self.parallel_config.world_size > 1:
@@ -469,7 +469,7 @@ class SpyreWorker(WorkerBase):
         model_runner.pre_warmup()
 
         with _maybe_warmup_context(
-            envs_spyre.VLLM_SPYRE_MAX_LOAD_PROCESSES, self.parallel_config.world_size, self.rank
+            envs_spyre.SENDNN_INFERENCE_MAX_LOAD_PROCESSES, self.parallel_config.world_size, self.rank
         ):
             # TODO(wallas): I am not sure if really need warmup with at
             # least batch size 2 for quantized model
@@ -615,7 +615,7 @@ class SpyreWorker(WorkerBase):
         logger.info("[WARMUP] Compiling graphs...")
         # The fixed size warmup needs to happen only in here
         with _maybe_warmup_context(
-            envs_spyre.VLLM_SPYRE_MAX_LOAD_PROCESSES, self.parallel_config.world_size, self.rank
+            envs_spyre.SENDNN_INFERENCE_MAX_LOAD_PROCESSES, self.parallel_config.world_size, self.rank
         ):
             self._warmup_model_forward_pass(scheduler_output, dummy_requests, cached_request_data)
         self.perf_metrics.log(
@@ -783,7 +783,7 @@ class SpyreWorker(WorkerBase):
 # handler from vLLM when it starts a process for the engine code. Therefore,
 # the engine does not have a chance to gracefully shutdown.
 def maybe_override_signals_handler():
-    if not (envs.VLLM_ENABLE_V1_MULTIPROCESSING and envs_spyre.VLLM_SPYRE_OVERRIDE_SIGNALS_HANDLER):
+    if not (envs.VLLM_ENABLE_V1_MULTIPROCESSING and envs_spyre.SENDNN_INFERENCE_OVERRIDE_SIGNALS_HANDLER):
         return
 
     shutdown_requested = False

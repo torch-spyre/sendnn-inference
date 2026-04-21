@@ -9,9 +9,9 @@ from vllm.v1.core.sched.scheduler import Scheduler
 from vllm.v1.metrics.stats import SchedulerStats
 from vllm.v1.request import Request, RequestStatus
 
-import vllm_spyre.envs as envs_spyre
-from vllm_spyre.platform import SpyrePlatform
-from vllm_spyre.v1.worker.spyre_model_runner import SpyreModelRunnerOutput
+import sendnn_inference.envs as envs_spyre
+from sendnn_inference.platform import SpyrePlatform
+from sendnn_inference.v1.worker.spyre_model_runner import SpyreModelRunnerOutput
 
 if TYPE_CHECKING:
     from vllm.v1.core.sched.output import SchedulerOutput
@@ -185,7 +185,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         # Prefills interleaving: if the feature flag is set, prefill operations
         # are interleaved with a decode step. This allows to minimize currently
         # decoding requests
-        self.do_interleaving: bool = envs_spyre.VLLM_SPYRE_CP_INTERLEAVE_STEPS
+        self.do_interleaving: bool = envs_spyre.SENDNN_INFERENCE_CP_INTERLEAVE_STEPS
         self.previous_step_was_prefill: bool = False
 
         self.tkv = 0
@@ -497,7 +497,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         since they were validated when they were added (by inductive reasoning).
 
         Note: drawing explaining the algorithm in more detail uploaded here:
-        https://github.com/vllm-project/vllm-spyre/pull/363#issuecomment-3173605517
+        https://github.com/torch-spyre/sendnn-inference/pull/363#issuecomment-3173605517
         """
 
         # Compute the effective token length of the new request
@@ -587,7 +587,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
 
     def make_stats(self, *args, **kwargs) -> SchedulerStats | None:
         """Update the scheduler stats from the base scheduler.
-        In vllm-spyre the last chunk is always recomputed, even though
+        In sendnn-inference the last chunk is always recomputed, even though
         the space is not duplicated.
         """
         base_stats = super().make_stats(*args, **kwargs)

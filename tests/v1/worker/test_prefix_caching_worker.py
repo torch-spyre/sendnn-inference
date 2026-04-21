@@ -80,7 +80,7 @@ def test_multi_chunk_partial_match_misaligned(
             * 0: len = 384,  max tokens = 2, step joining = 0
             * 1: len = 384, max tokens = 2, step joining = 0
     """
-    monkeypatch.setenv("VLLM_SPYRE_CP_INTERLEAVE_STEPS", "0")
+    monkeypatch.setenv("SENDNN_INFERENCE_CP_INTERLEAVE_STEPS", "0")
 
     pc_model_runner = InstrumentedModelRunner.build(
         monkeypatch=monkeypatch,
@@ -238,7 +238,7 @@ def test_first_chunk_recomputation(
             * 0: len = 128,  max tokens = 2, step joining = 0
             * 1: len = 128, max tokens = 2, step joining = 0
     """
-    monkeypatch.setenv("VLLM_SPYRE_CP_INTERLEAVE_STEPS", "0")
+    monkeypatch.setenv("SENDNN_INFERENCE_CP_INTERLEAVE_STEPS", "0")
 
     pc_model_runner = InstrumentedModelRunner.build(
         monkeypatch=monkeypatch,
@@ -356,7 +356,7 @@ def test_middle_chunk_recomputation_with_padding(
             * 0: len = 512,  max tokens = 2, step joining = 0
             * 1: len = 640, max tokens = 2, step joining = 0
     """
-    monkeypatch.setenv("VLLM_SPYRE_CP_INTERLEAVE_STEPS", "0")
+    monkeypatch.setenv("SENDNN_INFERENCE_CP_INTERLEAVE_STEPS", "0")
 
     pc_model_runner = InstrumentedModelRunner.build(
         monkeypatch=monkeypatch,

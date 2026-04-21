@@ -35,8 +35,8 @@ else:
     TokensInput = None
 from vllm.platforms import Platform, PlatformEnum
 
-import vllm_spyre.envs as envs_spyre
-from vllm_spyre.compilation_utils import handle_disable_compilation
+import sendnn_inference.envs as envs_spyre
+from sendnn_inference.compilation_utils import handle_disable_compilation
 
 logger = init_logger(__name__)
 
@@ -76,7 +76,7 @@ class SpyrePlatform(Platform):
 
     # Backend for dynamic compilation ops
     # See vllm batched_count_greater_than method
-    simple_compile_backend: str = envs_spyre.VLLM_SPYRE_SIMPLE_COMPILE_BACKEND
+    simple_compile_backend: str = envs_spyre.SENDNN_INFERENCE_SIMPLE_COMPILE_BACKEND
 
     # Needed by vllm/model_executor/layers/pooler.py:562
     current_stream = lambda _: _StreamPlaceholder()
@@ -159,7 +159,7 @@ class SpyrePlatform(Platform):
             )
 
         max_concurrency = num_blocks * block_size / max_model_len
-        backend = "Spyre" if envs_spyre.VLLM_SPYRE_DYNAMO_BACKEND == "sendnn" else "CPU"
+        backend = "Spyre" if envs_spyre.SENDNN_INFERENCE_DYNAMO_BACKEND == "sendnn" else "CPU"
         logger.info("%s KV cache size: %s tokens", backend, num_blocks * block_size)
         logger.info(
             "Maximum concurrency for %s tokens per request: %.2fx",
@@ -172,7 +172,7 @@ class SpyrePlatform(Platform):
     @classmethod
     def check_and_update_config(cls, vllm_config: VllmConfig) -> None:
         # 🌶️🌶️🌶️ Patch in our perf logger before the engine is created
-        from vllm_spyre.v1.metrics import patch_async_llm_stat_loggers
+        from sendnn_inference.v1.metrics import patch_async_llm_stat_loggers
 
         patch_async_llm_stat_loggers()
 
@@ -197,7 +197,7 @@ class SpyrePlatform(Platform):
             raise ValueError("Only the 'generate' and 'pooling' runners are supported")
 
         if parallel_config.worker_cls == "auto":
-            parallel_config.worker_cls = "vllm_spyre.v1.worker.spyre_worker.SpyreWorker"
+            parallel_config.worker_cls = "sendnn_inference.v1.worker.spyre_worker.SpyreWorker"
 
         cls._check_threading_config(parallel_config.world_size)
 
@@ -209,13 +209,13 @@ class SpyrePlatform(Platform):
             os.environ["FLEX_OVERWRITE_NMB_FRAME"] = "false"
             os.environ["COMPILATION_MODE"] = "offline"
 
-        logger.info("Using backend: %s", envs_spyre.VLLM_SPYRE_DYNAMO_BACKEND)
-        if envs_spyre.VLLM_SPYRE_DYNAMO_BACKEND == "sendnn_compile_only":
+        logger.info("Using backend: %s", envs_spyre.SENDNN_INFERENCE_DYNAMO_BACKEND)
+        if envs_spyre.SENDNN_INFERENCE_DYNAMO_BACKEND == "sendnn_compile_only":
             os.environ["FLEX_DEVICE"] = "COMPILE"
 
         if is_decoder:
             scheduler_config.scheduler_cls = (
-                "vllm_spyre.v1.core.scheduler.ChunkedPrefillSpyreScheduler"
+                "sendnn_inference.v1.core.scheduler.ChunkedPrefillSpyreScheduler"
             )
 
             if (
@@ -244,12 +244,12 @@ class SpyrePlatform(Platform):
             # unsetting this config as it was only set to pass vllm scheduler's max_model_len check
             vllm_config.scheduler_config.enable_chunked_prefill = False
 
-            scheduler_config.scheduler_cls = "vllm_spyre.v1.core.scheduler.PoolingSpyreScheduler"
+            scheduler_config.scheduler_cls = "sendnn_inference.v1.core.scheduler.PoolingSpyreScheduler"
 
         # Apply model-specific configurations using the registry
         # Only when running on Spyre device (sendnn backend)
         if cls.is_backend_sendnn_enabled():
-            from vllm_spyre.config.model_registry import get_model_registry
+            from sendnn_inference.config.model_registry import get_model_registry
 
             registry = get_model_registry()
 
@@ -266,9 +266,9 @@ class SpyrePlatform(Platform):
                 logger.info(config_summary.format_log_message())
             else:
                 error_msg = f"No model-specific configuration found for '{model_config.model}'"
-                if envs_spyre.VLLM_SPYRE_REQUIRE_KNOWN_CONFIG:
+                if envs_spyre.SENDNN_INFERENCE_REQUIRE_KNOWN_CONFIG:
                     raise RuntimeError(
-                        f"{error_msg}. VLLM_SPYRE_REQUIRE_KNOWN_CONFIG is set, "
+                        f"{error_msg}. SENDNN_INFERENCE_REQUIRE_KNOWN_CONFIG is set, "
                         "which requires a known configuration to be found."
                     )
                 logger.debug(error_msg)
@@ -277,7 +277,7 @@ class SpyrePlatform(Platform):
             logger.debug(
                 "Model registry validation skipped for backend '%s'. "
                 "Registry validation is only performed for 'sendnn'.",
-                envs_spyre.VLLM_SPYRE_DYNAMO_BACKEND,
+                envs_spyre.SENDNN_INFERENCE_DYNAMO_BACKEND,
             )
 
         # TODO: try to support async scheduling
@@ -386,21 +386,21 @@ class SpyrePlatform(Platform):
         if cls._warmup_shapes is not None:
             return cls._warmup_shapes
         # load warmup shapes and sort by "speed"
-        wup_prompt_lens = envs_spyre.VLLM_SPYRE_WARMUP_PROMPT_LENS or []
+        wup_prompt_lens = envs_spyre.SENDNN_INFERENCE_WARMUP_PROMPT_LENS or []
         if not all(pl % 64 == 0 for pl in wup_prompt_lens):
             raise RuntimeError(
-                "All values in VLLM_SPYRE_WARMUP_PROMPT_LENS must be multiples of 64."
+                "All values in SENDNN_INFERENCE_WARMUP_PROMPT_LENS must be multiples of 64."
             )
 
-        wup_batch_sizes = envs_spyre.VLLM_SPYRE_WARMUP_BATCH_SIZES or []
+        wup_batch_sizes = envs_spyre.SENDNN_INFERENCE_WARMUP_BATCH_SIZES or []
         if len(wup_prompt_lens) != len(wup_batch_sizes):
             raise RuntimeError(
-                "The lists in VLLM_SPYRE_WARMUP_PROMPT_LENS and "
-                "VLLM_SPYRE_WARMUP_BATCH_SIZES must have equal length"
+                "The lists in SENDNN_INFERENCE_WARMUP_PROMPT_LENS and "
+                "SENDNN_INFERENCE_WARMUP_BATCH_SIZES must have equal length"
             )
 
-        logger.info("VLLM_SPYRE_WARMUP_PROMPT_LENS = %s", wup_prompt_lens)
-        logger.info("VLLM_SPYRE_WARMUP_BATCH_SIZES = %s", wup_batch_sizes)
+        logger.info("SENDNN_INFERENCE_WARMUP_PROMPT_LENS = %s", wup_prompt_lens)
+        logger.info("SENDNN_INFERENCE_WARMUP_BATCH_SIZES = %s", wup_batch_sizes)
 
         cls._warmup_shapes = tuple(
             sorted(
@@ -529,9 +529,9 @@ class SpyrePlatform(Platform):
         cpu_count: float | None = None
         detection_message = ""
 
-        if (num_cpu := envs_spyre.VLLM_SPYRE_NUM_CPUS) > 0:
+        if (num_cpu := envs_spyre.SENDNN_INFERENCE_NUM_CPUS) > 0:
             cpu_count = num_cpu
-            detection_message = f"VLLM_SPYRE_NUM_CPUS is set to {cpu_count}"
+            detection_message = f"SENDNN_INFERENCE_NUM_CPUS is set to {cpu_count}"
         else:
             try:
                 # try to query cgroup CPU limits
@@ -587,11 +587,11 @@ class SpyrePlatform(Platform):
             "Unable to detect available CPUs to validate threading configuration."
         )
 
-        if envs_spyre.VLLM_SPYRE_UPDATE_THREAD_CONFIG:
+        if envs_spyre.SENDNN_INFERENCE_UPDATE_THREAD_CONFIG:
             if cpus_per_worker is None:
                 raise RuntimeError(
-                    f"{failed_detection_message} Set VLLM_SPYRE_NUM_CPUS or "
-                    "use VLLM_SPYRE_UPDATE_THREAD_CONFIG=0 and configure "
+                    f"{failed_detection_message} Set SENDNN_INFERENCE_NUM_CPUS or "
+                    "use SENDNN_INFERENCE_UPDATE_THREAD_CONFIG=0 and configure "
                     "manually."
                 )
 
@@ -599,7 +599,7 @@ class SpyrePlatform(Platform):
                 os.environ[env] = str(cpus_per_worker)
 
             logger.info(
-                "%s for %d workers. Since VLLM_SPYRE_UPDATE_THREAD_CONFIG is enabled, setting "
+                "%s for %d workers. Since SENDNN_INFERENCE_UPDATE_THREAD_CONFIG is enabled, setting "
                 "threading configurations to %d",
                 detection_message,
                 worker_count,
@@ -607,7 +607,7 @@ class SpyrePlatform(Platform):
             )
             return
 
-        # In the case that VLLM_SPYRE_UPDATE_THREAD_CONFIG is not enabled,
+        # In the case that SENDNN_INFERENCE_UPDATE_THREAD_CONFIG is not enabled,
         # check configs and maybe log a warning
         if cpus_per_worker is None:
             logger.info("%s %s", failed_detection_message, thread_warning)
@@ -625,7 +625,7 @@ class SpyrePlatform(Platform):
         ):
             logger.warning(
                 "%s %s for %d workers. Recommend setting each threading configuration to %d. Set "
-                "VLLM_SPYRE_UPDATE_THREAD_CONFIG=1 to do this automatically.",
+                "SENDNN_INFERENCE_UPDATE_THREAD_CONFIG=1 to do this automatically.",
                 thread_warning,
                 detection_message,
                 worker_count,
@@ -650,7 +650,7 @@ class SpyrePlatform(Platform):
 
     @classmethod
     def is_backend_sendnn_enabled(cls) -> bool:
-        return envs_spyre.VLLM_SPYRE_DYNAMO_BACKEND in ("sendnn", "sendnn_compile_only")
+        return envs_spyre.SENDNN_INFERENCE_DYNAMO_BACKEND in ("sendnn", "sendnn_compile_only")
 
     @classmethod
     def maybe_ensure_sendnn_configured(cls, model_config: ModelConfig) -> None:

@@ -10,7 +10,7 @@ from vllm.multimodal.inputs import (
     PlaceholderRange,
 )
 
-from vllm_spyre.multimodal.mm_mappings import MMUtilsBase, MMWarmupInputs
+from sendnn_inference.multimodal.mm_mappings import MMUtilsBase, MMWarmupInputs
 
 # Extend the adapter as part of the head dim fix; this is needed to
 # load 2b models correctly, but we do it here since this class is

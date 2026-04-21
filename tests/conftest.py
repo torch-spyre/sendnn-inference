@@ -12,8 +12,8 @@ from vllm.connections import global_http_connection
 from vllm.distributed import cleanup_dist_env_and_memory
 from vllm.utils.network_utils import get_open_port
 
-from vllm_spyre import envs
-from vllm_spyre.platform import SpyrePlatform
+from sendnn_inference import envs
+from sendnn_inference.platform import SpyrePlatform
 
 # Running with "fork" can lead to hangs/crashes
 # Specifically, our use of transformers to compare results causes an OMP thread
@@ -286,7 +286,7 @@ def remote_openai_server(request):
             skip_unsupported_tp_size(int(tp_size), backend)
             server_args.extend(["--tensor-parallel-size", str(tp_size)])
 
-    env_dict = {"VLLM_SPYRE_DYNAMO_BACKEND": backend}
+    env_dict = {"SENDNN_INFERENCE_DYNAMO_BACKEND": backend}
 
     if "max_model_len" in params:
         # decoder model, probably
@@ -315,8 +315,8 @@ def remote_openai_server(request):
         warmup_batch_size = [t[1] for t in warmup_shapes]
         env_dict.update(
             {
-                "VLLM_SPYRE_WARMUP_PROMPT_LENS": ",".join(map(str, warmup_prompt_length)),
-                "VLLM_SPYRE_WARMUP_BATCH_SIZES": ",".join(map(str, warmup_batch_size)),
+                "SENDNN_INFERENCE_WARMUP_PROMPT_LENS": ",".join(map(str, warmup_prompt_length)),
+                "SENDNN_INFERENCE_WARMUP_BATCH_SIZES": ",".join(map(str, warmup_batch_size)),
             }
         )
 
@@ -350,17 +350,17 @@ def temporary_enable_log_propagate():
     """Context manager to temporarily enable log propagation."""
     import logging
 
-    logger = logging.getLogger("vllm_spyre")
+    logger = logging.getLogger("sendnn_inference")
     logger.propagate = True
     yield
     logger.propagate = False
 
 
 @pytest.fixture()
-def caplog_vllm_spyre(temporary_enable_log_propagate, caplog):
-    # To capture vllm-spyre log, we should enable propagate=True temporarily
+def caplog_sendnn_inference(temporary_enable_log_propagate, caplog):
+    # To capture sendnn-inference log, we should enable propagate=True temporarily
     # because caplog depends on logs propagated to the root logger.
     caplog.set_level(logging.DEBUG)
-    logging.getLogger("vllm_spyre").setLevel(logging.DEBUG)
+    logging.getLogger("sendnn_inference").setLevel(logging.DEBUG)
 
     yield caplog

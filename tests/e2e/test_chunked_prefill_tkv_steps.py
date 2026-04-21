@@ -20,9 +20,9 @@ from vllm.v1.engine.core import EngineCore
 from vllm.v1.outputs import ModelRunnerOutput
 from vllm.v1.request import Request, SamplingParams
 
-from vllm_spyre.platform import SpyrePlatform
-from vllm_spyre.v1.worker.spyre_model_runner import ChunkedPrefillModelRunner
-from vllm_spyre.v1.worker.spyre_worker import _get_extra_args
+from sendnn_inference.platform import SpyrePlatform
+from sendnn_inference.v1.worker.spyre_model_runner import ChunkedPrefillModelRunner
+from sendnn_inference.v1.worker.spyre_worker import _get_extra_args
 
 
 ########## Assuming that we have:

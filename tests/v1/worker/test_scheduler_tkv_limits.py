@@ -9,7 +9,7 @@ import pytest
 from scheduling_utils import create_request_for_scheduler_test, random_prompt
 from v1.worker.mock_model import InstrumentedModelRunner
 from spyre_util import REFERENCE_MODELS
-from vllm_spyre.platform import SpyrePlatform
+from sendnn_inference.platform import SpyrePlatform
 
 
 @pytest.mark.cpu
