@@ -7,7 +7,6 @@ on:
 jobs:
   build:
     # Only run for vllm-spyre releases (v* tags).
-    # spyre-next-v* tags are handled by build_and_publish_next.yaml.
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
 
