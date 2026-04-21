@@ -2,7 +2,57 @@
 
 For a complete list of configuration options, see [Environment Variables](env_vars.md).
 
-## SendNN Inference 1.x Migration Guide
+## SendNN Inference 2.0 Migration Guide
+
+This guide covers breaking changes introduced in SendNN Inference 2.0, including the package rename from `vllm_spyre` to `sendnn_inference` and associated configuration changes.
+
+### Package Rename
+
+The Python package has been renamed from `vllm_spyre` to `sendnn_inference`. This affects:
+
+- **Installs from source** Update your remote to [https://github.com/torch-spyre/sendnn-inference](https://github.com/torch-spyre/sendnn-inference)
+- **Installs from PyPI**: Install with `pip install sendnn-inference` (was `vllm-spyre`)
+
+### VLLM_PLUGINS Configuration
+
+**Breaking Change**: The vLLM plugin entry point has changed from `spyre` to `sendnn_inference`.
+
+Update your environment configuration:
+
+```shell
+# Old (vllm-spyre 1.x)
+export VLLM_PLUGINS=spyre
+
+# New (sendnn-inference 2.0)
+export VLLM_PLUGINS=sendnn_inference
+```
+
+This change is required for vLLM to discover and load the SendNN Inference platform plugin. Without this update, vLLM will fail to initialize the Spyre backend.
+
+### Environment Variable Renaming
+
+**Breaking Change**: All `VLLM_SPYRE_*` environment variables have been renamed to `SENDNN_INFERENCE_*`.
+
+**Example migration**:
+
+```shell
+# Old (vllm-spyre 1.x)
+export VLLM_SPYRE_DYNAMO_BACKEND=sendnn
+export VLLM_SPYRE_WARMUP_PROMPT_LENS=64,128
+export VLLM_SPYRE_WARMUP_BATCH_SIZES=1,4
+
+# New (sendnn-inference 2.0)
+export SENDNN_INFERENCE_DYNAMO_BACKEND=sendnn
+export SENDNN_INFERENCE_WARMUP_PROMPT_LENS=64,128
+export SENDNN_INFERENCE_WARMUP_BATCH_SIZES=1,4
+```
+
+!!! note
+    The old `VLLM_SPYRE_*` variable names are no longer recognized. All configuration must use the new `SENDNN_INFERENCE_*` prefix.
+
+For a complete list of environment variables, see [Environment Variables](env_vars.md).
+
+### Runtime Behavior Changes
 
 For users migrating from SendNN Inference 1.x releases, the default configuration for generative models has changed.
 All models now run with chunked prefill, and prefix caching is enabled by default.
