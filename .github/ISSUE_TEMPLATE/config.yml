@@ -2,12 +2,12 @@ blank_issues_enabled: false
 contact_links:
   - name: 📖 Documentation
     url: https://docs.vllm.ai/projects/spyre/
-    about: Read the vLLM Spyre documentation
+    about: Read the SenDNN-Inference documentation
   - name: 💬 Discussions
     url: https://inviter.co/vllm-slack
     about: Ask questions and discuss in the `#sig-spyre` channel.
   - name: 🤝 Contributing Guide
     url: https://docs.vllm.ai/projects/spyre/en/latest/contributing
-    about: Learn how to contribute to vLLM Spyre
+    about: Learn how to contribute to SenDNN-Inference
 
 # Made with Bob

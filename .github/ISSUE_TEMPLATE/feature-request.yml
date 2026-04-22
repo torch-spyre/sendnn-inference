@@ -22,7 +22,7 @@ body:
   attributes:
     label: Motivation and context
     description: |
-      Why is this feature important? How would it benefit vLLM Spyre users?
+      Why is this feature important? How would it benefit SenDNN Inference users?
       
       Is this related to a specific problem or limitation?
   validations:

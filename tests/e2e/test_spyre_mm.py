@@ -116,6 +116,6 @@ def test_alignment_with_fms(model, mode, monkeypatch):
 
     fms_texts = generate_fms_results(processor, model.name, prompts)
     # Compare the newly decoded texts with FMS
-    # and vllm spyre running with the eager backend.
+    # and sendnn_inference running with the eager backend.
     for fms_text, vllm_result in zip(fms_texts, vllm_results):
         assert vllm_result["text"] == fms_text

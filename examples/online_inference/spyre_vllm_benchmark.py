@@ -33,7 +33,7 @@ class InferenceResults(NamedTuple):
 
 # Functions
 def parse_args():
-    parser = argparse.ArgumentParser(description="VLLM Spyre inference benchmarking script.")
+    parser = argparse.ArgumentParser(description="SenDNN Inference inference benchmarking script.")
     parser.add_argument(
         "--prompt-dir", required=True, type=str, help="Path to directory containing .txt files"
     )

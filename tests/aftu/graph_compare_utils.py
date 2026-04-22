@@ -1,4 +1,4 @@
-"""Utilities for comparing computation graphs between vLLM-Spyre and AFTU.
+"""Utilities for comparing computation graphs between SenDNN-Inference and AFTU.
 
 This module provides functions to:
 - Load and normalize graph files for comparison

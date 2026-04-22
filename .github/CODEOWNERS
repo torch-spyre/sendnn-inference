@@ -6,7 +6,7 @@
 # unless a later match takes precedence
 * @joerunde @prashantgupta24
 
-# This lists cover the "core" components of vLLM-Spyre that require careful review
+# This lists cover the "core" components of SenDNN-Inference that require careful review
 /sendnn_inference @yannicks1 @tdoublep @nikolaospapandreou @sducouedic
 
 # TODO: separate code into different packages:
