@@ -5,7 +5,7 @@ from llm_cache import get_cached_llm
 from spyre_util import ModelInfo
 from vllm import LLM, SamplingParams
 
-pytestmark = [pytest.mark.chunked_prefill]
+pytestmark = [pytest.mark.prefix_caching]
 
 
 def test_spyre_temperature(
