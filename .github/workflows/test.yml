@@ -116,9 +116,9 @@ jobs:
         run: |
           rm -rf /usr/share/swift
           rm -rf /user/local/share/chromium
-          rm -rf /usr/local/lib/android
-          rm -rf "${AGENT_TOOLSDIRECTORY}/CodeQL"
-          rm -rf /usr/local/share/powershell
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf "${AGENT_TOOLSDIRECTORY}/CodeQL"
+          sudo rm -rf /usr/local/share/powershell
 
       - name: "Checkout"
         uses: actions/checkout@v4
