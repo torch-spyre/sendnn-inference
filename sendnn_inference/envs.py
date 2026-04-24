@@ -1,7 +1,11 @@
 import os
+import platform
 from typing import TYPE_CHECKING, Any, Callable
 
+import torch
 from vllm.logger import init_logger
+
+from sendnn_inference.utils import parse_cpu_mm_dtype
 
 if TYPE_CHECKING:
     SENDNN_INFERENCE_DYNAMO_BACKEND: str = "sendnn"
@@ -20,11 +24,13 @@ if TYPE_CHECKING:
     SENDNN_INFERENCE_NUM_CPUS: int = 0
     SENDNN_INFERENCE_REQUIRE_KNOWN_CONFIG: bool = False
     SENDNN_INFERENCE_MODEL_CONFIG_FILE: str | None = None
-    SENDNN_INFERENCE_CPU_MM_DTYPE: str = "float16"
+    SENDNN_INFERENCE_CPU_MM_DTYPE: torch.dtype = torch.float16
 
 logger = init_logger(__name__)
 
 _cache: dict[str, Any] = {}
+
+_CPU_MM_DTYPE_PLATFORM_DEFAULTS = {"s390x": "float32", "ppc64le": "bfloat16"}
 
 
 def override(name: str, value: str) -> None:
@@ -138,10 +144,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # Path to custom model_configs.yaml file. If not set, uses the default
     # location at sendnn_inference/config/model_configs.yaml
     "SENDNN_INFERENCE_MODEL_CONFIG_FILE": lambda: os.getenv("SENDNN_INFERENCE_MODEL_CONFIG_FILE"),
-    # Dtype for multimodal vision_tower and multi_modal_projector params
-    # that run on CPU. Valid values: "float32", "float16", "bfloat16".
-    # Default: "float16".
-    "SENDNN_INFERENCE_CPU_MM_DTYPE": lambda: os.getenv("SENDNN_INFERENCE_CPU_MM_DTYPE", "float16"),
+    # Dtype for multimodal vision_tower / multi_modal_projector params (CPU).
+    # One of "float32" | "float16" | "bfloat16"; default per platform.
+    "SENDNN_INFERENCE_CPU_MM_DTYPE": lambda: parse_cpu_mm_dtype(
+        os.getenv(
+            "SENDNN_INFERENCE_CPU_MM_DTYPE",
+            _CPU_MM_DTYPE_PLATFORM_DEFAULTS.get(platform.machine(), "float16"),
+        )
+    ),
 }
 # --8<-- [end:env-vars-definition]
 

@@ -45,3 +45,14 @@ def exact_div(a: int, b: int) -> int:
     if r != 0:
         raise ValueError(f"{a} is not exactly divisible by {b}")
     return q
+
+
+_CPU_MM_DTYPES = ("float32", "float16", "bfloat16")
+
+
+def parse_cpu_mm_dtype(value: str) -> torch.dtype:
+    if value not in _CPU_MM_DTYPES:
+        raise ValueError(
+            f"SENDNN_INFERENCE_CPU_MM_DTYPE must be one of {list(_CPU_MM_DTYPES)}, got {value!r}"
+        )
+    return getattr(torch, value)
