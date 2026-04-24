@@ -116,7 +116,7 @@ jobs:
         run: |
           rm -rf /usr/share/swift
           rm -rf /user/local/share/chromium
-          rm -rf /usr/local/share/powershell
+          sudo rm -rf /usr/local/share/powershell
 
       - name: "Checkout"
         uses: actions/checkout@v4
