@@ -79,6 +79,8 @@ jobs:
               name: "backward compat"
               markers: "compat or (cpu and basic and not quantized)"
               flags: "--timeout=300"
+              hf_model_2: ""
+              hf_model_2_rev: ""
             os: "ubuntu-latest"
             python_version: "3.12"
         #   # Intermediate versions of vllm to check basic support for as well
