@@ -181,13 +181,6 @@ class SpyrePlatform(Platform):
 
         patch_async_llm_stat_loggers()
 
-        # 🌶️🌶️🌶️ Patch vllm.tokenizers.registry to suppress KeyError from get_config
-        # The tokenizer registry calls get_config() which can raise KeyError when
-        # an unknown model_type is encountered in LazyConfigDict. The original code
-        # only suppresses ValueError and OSError, but KeyError should also be
-        # suppressed since it's expected for models not in the registry.
-        cls._patch_tokenizer_registry_get_config()
-
         # In case vllm passes a default vllm_config to us.
         # This happens when get_current_vllm_config is called
         # without setting the vllm config through
@@ -827,3 +820,12 @@ def _compute_config_format(namespace: argparse.Namespace) -> str:
     ):
         return "mistral"
     return "auto"
+
+
+# 🌶️🌶️🌶️ Patch vllm.tokenizers.registry to suppress KeyError from get_config
+# The tokenizer registry calls get_config() which can raise KeyError when
+# an unknown model_type is encountered in LazyConfigDict. The original code
+# only suppresses ValueError and OSError, but KeyError should also be
+# suppressed since it's expected for models not in the registry.
+# This must be done at import time to be applied to spawned worker processes.
+SpyrePlatform._patch_tokenizer_registry_get_config()

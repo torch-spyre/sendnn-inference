@@ -79,8 +79,8 @@ jobs:
               name: "backward compat"
               markers: "compat or (cpu and basic and not quantized)"
               flags: "--timeout=300"
-              hf_model_2: ""
-              hf_model_2_rev: ""
+              hf_model_2: "sentence-transformers/all-roberta-large-v1"
+              hf_model_2_rev: "cf74d8acd4f198de950bf004b262e6accfed5d2c"
             os: "ubuntu-latest"
             python_version: "3.12"
         #   # Intermediate versions of vllm to check basic support for as well
@@ -206,7 +206,7 @@ jobs:
 
       - name: "Restore HF models cache for additional model"
         id: cache_restore_2
-        if: ( steps.changed-src-files.outputs.any_changed == 'true' && matrix.test_suite.hf_model_2 != '')
+        if: ( steps.changed-src-files.outputs.any_changed == 'true' && matrix.test_suite.hf_model_2 )
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.model_2_path }}
@@ -249,7 +249,7 @@ jobs:
           key: ${{ runner.os }}-hf-model-${{ env.model_key }}
 
       - name: "Save HF models cache for additional model"
-        if: ( steps.changed-src-files.outputs.any_changed == 'true' && matrix.test_suite.hf_model_2 != '' && github.event_name != 'pull_request' && steps.cache_restore_2.outputs.cache-hit != 'true' )
+        if: ( steps.changed-src-files.outputs.any_changed == 'true' && matrix.test_suite.hf_model_2 && github.event_name != 'pull_request' && steps.cache_restore_2.outputs.cache-hit != 'true' )
         uses: actions/cache/save@v4
         with:
           path: ${{ env.model_2_path }}
