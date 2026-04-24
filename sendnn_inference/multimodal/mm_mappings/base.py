@@ -1,6 +1,6 @@
 import functools
 from abc import ABC, abstractmethod
-from typing import NamedTuple
+from typing import ClassVar, NamedTuple
 
 import torch
 from fms.utils.config import ModelConfig
@@ -27,6 +27,13 @@ class MMUtilsBase(ABC):
     refer to the FMS model config & hf_config to refer to the transformers
     config (i.e., avoid ambiguous terms like model_config for readability).
     """
+
+    # FMS parameter prefixes whose dtype is controlled by
+    # SENDNN_INFERENCE_CPU_MM_DTYPE. Override in subclasses if a model renames them.
+    mm_parameter_prefixes: ClassVar[tuple[str, ...]] = (
+        "vision_tower.",
+        "multi_modal_projector.",
+    )
 
     def __init__(self, model_path: str, fms_config: ModelConfig, hf_config: PretrainedConfig):
         self._validate_configs(fms_config, hf_config)

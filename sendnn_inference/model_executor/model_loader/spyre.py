@@ -232,10 +232,17 @@ class SpyreCausalLM(nn.Module):
                 max_decode_length,
             )
 
+        # Initialize mm utils before the cast (reads mm_parameter_prefixes)
+        # and before torch.compile wraps fms_model (reads fms_model.config).
+        self.mm_model_utils = spyre_mm.maybe_get_mm_utils(
+            model_path=model_path,
+            fms_config=self.fms_model.config,
+            hf_config=self.config,
+        )
+        self.is_multimodal = self.mm_model_utils is not None
+
         if envs_spyre.SENDNN_INFERENCE_DYNAMO_BACKEND in BACKEND_LIST:
-            # When running on Spyre cards for either non-quantized (bf16) models
-            # or quantized (fp8) models, we cast any bf16 params down
-            self._cast_bf16_to_f16()
+            self._cast_params_for_spyre()
             options = {"sendnn.dynamic": True} if sendnn_dynamic else {}
 
             # Lazy import to avoid load torch_sendnn runtime before it is really
@@ -257,20 +264,23 @@ class SpyreCausalLM(nn.Module):
                 assert self.dtype == torch.float32
                 self._cast_to_f32()
 
-        # If it's multimodal, create an instance of the
-        # corresponding mm utils helper; this is arch specific.
-        self.mm_model_utils = spyre_mm.maybe_get_mm_utils(
-            model_path=model_path,
-            fms_config=self.fms_model.config,
-            hf_config=self.config,
-        )
-        self.is_multimodal = self.mm_model_utils is not None
         logger.debug("Model weights loaded successfully.")
 
-    def _cast_bf16_to_f16(self):
-        """Cast all bf16 params in the model to f16."""
+    def _cast_params_for_spyre(self):
+        """Cast mm params to SENDNN_INFERENCE_CPU_MM_DTYPE; remaining bf16 params to fp16."""
+        cpu_mm_dtype = envs_spyre.SENDNN_INFERENCE_CPU_MM_DTYPE
+        mm_prefixes = self.mm_model_utils.mm_parameter_prefixes if self.mm_model_utils else ()
+
         for name, param in self.fms_model.named_parameters():
-            if param.dtype == torch.bfloat16:
+            if name.startswith(mm_prefixes):
+                if param.dtype != cpu_mm_dtype:
+                    logger.debug(
+                        "Casting vision encoder param %s to %s for CPU execution.",
+                        name,
+                        cpu_mm_dtype,
+                    )
+                    param.data = param.data.to(dtype=cpu_mm_dtype)
+            elif param.dtype == torch.bfloat16:
                 logger.debug(
                     "You are casting param %s to fp16, which"
                     " will cause loss of accuracy. This is required for"
