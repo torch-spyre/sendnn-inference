@@ -17,7 +17,7 @@ VLLM_VERSION = os.getenv("TEST_VLLM_VERSION", "default")
 def test_tokenizer_registry_get_config_patch():
     """
     When this test starts failing because get_config exists in the lowest supported vllm version,
-    the compatibility patch in platform.py can be removed.
+    the check to conditionally _not_ apply _patch_tokenizer_registry_get_config can be removed.
     """
     import vllm.tokenizers.registry as tokenizer_registry
 
