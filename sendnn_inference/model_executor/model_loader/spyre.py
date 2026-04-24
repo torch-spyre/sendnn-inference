@@ -32,6 +32,12 @@ except ImportError:
 
 BACKEND_LIST = ["sendnn", "sendnn_compile_only", "inductor"]
 
+# FMS parameter-name prefixes for the vision encoder and projector, which
+# run on CPU. Their dtype is controlled by SENDNN_INFERENCE_CPU_MM_DTYPE via
+# _cast_to_mm_type. Trailing '.' bounds the prefix to the module itself so
+# sibling names with a shared stem never match.
+CPU_MM_PREFIXES = ("vision_tower.", "multi_modal_projector.")
+
 logger = init_logger(__name__)
 
 
@@ -233,8 +239,10 @@ class SpyreCausalLM(nn.Module):
             )
 
         if envs_spyre.SENDNN_INFERENCE_DYNAMO_BACKEND in BACKEND_LIST:
-            # When running on Spyre cards for either non-quantized (bf16) models
-            # or quantized (fp8) models, we cast any bf16 params down
+            # On Spyre, bf16 params are type cast to fp16. Vision encoder + projector
+            # run on CPU and take their own dtype from SENDNN_INFERENCE_CPU_MM_DTYPE —
+            # apply that first, then type cast remaining bf16 params to fp16.
+            self._cast_to_mm_type()
             self._cast_bf16_to_f16()
             options = {"sendnn.dynamic": True} if sendnn_dynamic else {}
 
@@ -267,18 +275,48 @@ class SpyreCausalLM(nn.Module):
         self.is_multimodal = self.mm_model_utils is not None
         logger.debug("Model weights loaded successfully.")
 
-    def _cast_bf16_to_f16(self):
-        """Cast all bf16 params in the model to f16."""
+    def _cast_to_mm_type(self):
+        """Cast the vision encoder and multi_modal_projector params to the
+        dtype configured by SENDNN_INFERENCE_CPU_MM_DTYPE. These params run on
+        CPU for vision inputs; Spyre hosts only the text decoder.
+        """
+        cpu_mm_dtype_map = {
+            "float32": torch.float32,
+            "float16": torch.float16,
+            "bfloat16": torch.bfloat16,
+        }
+        cpu_mm_dtype_str = envs_spyre.SENDNN_INFERENCE_CPU_MM_DTYPE
+        if cpu_mm_dtype_str not in cpu_mm_dtype_map:
+            raise ValueError(
+                "SENDNN_INFERENCE_CPU_MM_DTYPE must be one of "
+                f"{list(cpu_mm_dtype_map)}, got {cpu_mm_dtype_str!r}"
+            )
+        cpu_mm_dtype = cpu_mm_dtype_map[cpu_mm_dtype_str]
+
         for name, param in self.fms_model.named_parameters():
-            if param.dtype == torch.bfloat16:
+            if name.startswith(CPU_MM_PREFIXES) and param.dtype != cpu_mm_dtype:
+                param.data = param.data.to(dtype=cpu_mm_dtype)
                 logger.debug(
-                    "You are casting param %s to fp16, which"
-                    " will cause loss of accuracy. This is required for"
-                    " spyre cards that don't support bf16. You can ignore"
-                    " this warning if this is intended.",
+                    "Casting vision encoder param %s to %s for CPU execution.",
                     name,
+                    cpu_mm_dtype_str,
                 )
-                param.data = param.data.to(dtype=torch.float16)
+
+    def _cast_bf16_to_f16(self):
+        """Cast bf16 params in the model to f16. Vision encoder + projector
+        params are skipped — their dtype is managed by _cast_to_mm_type.
+        """
+        for name, param in self.fms_model.named_parameters():
+            if param.dtype != torch.bfloat16 or name.startswith(CPU_MM_PREFIXES):
+                continue
+            logger.debug(
+                "You are casting param %s to fp16, which"
+                " will cause loss of accuracy. This is required for"
+                " spyre cards that don't support bf16. You can ignore"
+                " this warning if this is intended.",
+                name,
+            )
+            param.data = param.data.to(dtype=torch.float16)
 
     def _cast_to_f32(self):
         """Cast model parameters to f32."""

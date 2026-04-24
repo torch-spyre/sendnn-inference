@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     SENDNN_INFERENCE_NUM_CPUS: int = 0
     SENDNN_INFERENCE_REQUIRE_KNOWN_CONFIG: bool = False
     SENDNN_INFERENCE_MODEL_CONFIG_FILE: str | None = None
+    SENDNN_INFERENCE_CPU_MM_DTYPE: str = "float16"
 
 logger = init_logger(__name__)
 
@@ -137,6 +138,10 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # Path to custom model_configs.yaml file. If not set, uses the default
     # location at sendnn_inference/config/model_configs.yaml
     "SENDNN_INFERENCE_MODEL_CONFIG_FILE": lambda: os.getenv("SENDNN_INFERENCE_MODEL_CONFIG_FILE"),
+    # Dtype for multimodal vision_tower and multi_modal_projector params
+    # that run on CPU. Valid values: "float32", "float16", "bfloat16".
+    # Default: "float16".
+    "SENDNN_INFERENCE_CPU_MM_DTYPE": lambda: os.getenv("SENDNN_INFERENCE_CPU_MM_DTYPE", "float16"),
 }
 # --8<-- [end:env-vars-definition]
 
