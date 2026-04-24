@@ -691,7 +691,7 @@ class SpyrePlatform(Platform):
                 return None
 
         # Patch the imported reference in the registry module
-        tokenizer_registry.get_config = safe_get_config
+        tokenizer_registry.get_config = safe_get_config  # type:ignore[invalid-assignment]
 
         logger.debug("Patched get_config in vllm.tokenizers.registry to suppress KeyError")
 
