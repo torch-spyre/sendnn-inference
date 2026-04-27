@@ -8,6 +8,7 @@ These unit tests mock the scheduler dependencies and call the actual schedule() 
 """
 
 import pytest
+from collections import deque
 from unittest.mock import Mock, patch
 from vllm import SamplingParams
 from vllm.sampling_params import StructuredOutputsParams
@@ -47,6 +48,10 @@ def mocked_scheduler():
     scheduler.block_size = 64
     scheduler.n_free_blocks = 100
     scheduler.max_batch_tkv_limit = "8192"
+    # Run-ahead snapshot attributes (see ChunkedPrefillSpyreMixin.__init__)
+    scheduler._prefill_scheduled_num_computed_queue = deque()
+    scheduler._scheduled_ongoing_prefill_ids = frozenset()
+    scheduler._schedule_awaiting_commit = False
 
     # Mock the base scheduler's schedule method and can_schedule_prefill,
     # but ChunkedPrefillSpyreScheduler.schedule uses the code implementation

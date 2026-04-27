@@ -248,6 +248,8 @@ class TestSendnnConfigurationValidation:
         mock_vllm_config.scheduler_config.max_num_batched_tokens = 64
         mock_vllm_config.model_config.max_model_len = 128
         mock_vllm_config.scheduler_config.max_num_seqs = 2
+        mock_vllm_config.scheduler_config.scheduler_cls = None
+        mock_vllm_config.scheduler_config.async_scheduling = False
 
         # Call check_and_update_config which should set FLEX_DEVICE
         SpyrePlatform.check_and_update_config(
