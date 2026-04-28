@@ -22,6 +22,7 @@ nav:
       - Architecture: contributing/architecture.md
       - MultiModal:
         - Adding New Models: contributing/multimodal/adding_new_models.md
+      - Scheduling & Padding: contributing/scheduler.md
 
   - Getting Started:
     - Installation: getting_started/installation.md
@@ -38,3 +39,4 @@ nav:
     - Contributing: contributing/README.md
     - Maintaining: contributing/maintaining.md
     - Architecture: contributing/architecture.md
+    - Scheduling & Padding: contributing/scheduler.md
