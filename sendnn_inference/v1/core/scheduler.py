@@ -21,6 +21,8 @@ else:
 logger = init_logger(__name__)
 
 def round_up_to_block_size(n: int) -> int:
+    # Helper function to round up to the nearest block size
+    # Uses bitwise alignment for better performance
     block_size = SpyrePlatform.get_block_size()
     return (n + block_size - 1) & ~(block_size - 1)
 
@@ -534,6 +536,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         """
 
         # Compute the effective token length of the new request
+        # Rounded up to the nearest block size
         new_req_max_tkv = round_up_to_block_size(new_req_tkv + request.max_tokens - 1)
 
         # Compute token lengths for all running requests (decode batch)
