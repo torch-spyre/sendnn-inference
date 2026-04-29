@@ -388,6 +388,10 @@ class SpyrePlatform(Platform):
         return torch.no_grad()
 
     @classmethod
+    def manual_seed_all(cls, seed: int) -> None:
+        pass
+
+    @classmethod
     def get_warmup_shapes(cls, scheduler_config) -> tuple[dict[str, int], ...]:
         assert scheduler_config.runner_type == "pooling"
         if cls._warmup_shapes is not None:
@@ -672,16 +676,8 @@ class SpyrePlatform(Platform):
 
         This creates a local reference, so we must patch the registry module's
         reference directly, not just the source module.
-
-        This patch is only applied if get_config exists in the tokenizer registry
-        module (it was added in vllm 0.19.1).
         """
         import vllm.tokenizers.registry as tokenizer_registry
-
-        # Only patch if get_config exists in this vLLM version
-        if not hasattr(tokenizer_registry, "get_config"):
-            logger.debug("Skipping get_config patch: not present in this vLLM version")
-            return
 
         original_get_config = tokenizer_registry.get_config
 
@@ -691,10 +687,7 @@ class SpyrePlatform(Platform):
             except KeyError:
                 return None
 
-        # Patch the imported reference in the registry module
         tokenizer_registry.get_config = safe_get_config  # type:ignore[invalid-assignment]
-
-        logger.debug("Patched get_config in vllm.tokenizers.registry to suppress KeyError")
 
     @classmethod
     def is_backend_sendnn_enabled(cls) -> bool:

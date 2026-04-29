@@ -27,7 +27,7 @@ from vllm.utils.torch_utils import set_random_seed
 from vllm.v1.core.sched.output import CachedRequestData, NewRequestData, SchedulerOutput
 from vllm.v1.kv_cache_interface import KVCacheConfig, KVCacheSpec
 from vllm.v1.outputs import ModelRunnerOutput
-from vllm.v1.worker.worker_base import WorkerBase
+from vllm.v1.worker.worker_base import CompilationTimes, WorkerBase
 
 import sendnn_inference.envs as envs_spyre
 import sendnn_inference.perf_metrics as perf_metrics
@@ -137,15 +137,16 @@ class SpyreWorker(WorkerBase):
         """
         return self.model_runner.get_kv_cache_spec()
 
-    def compile_or_warm_up_model(self) -> float:
+    def compile_or_warm_up_model(self) -> CompilationTimes:
         """Prepare model for execution through compilation/warmup.
 
         Returns:
-            The accumulated compilation time in seconds.
+            CompilationTimes with accumulated compilation time in seconds.
         """
 
         if self.is_decoder:
-            return self._warmup_spyre_dynamic_size(self.restricted_tokens)
+            t = self._warmup_spyre_dynamic_size(self.restricted_tokens)
+            return CompilationTimes(language_model=t, encoder=0.0)
         if self.model_runner.is_multimodal:
             raise NotImplementedError("[WARMUP] multimodal models are not supported yet.")
         num_shape_combinations = len(self.spyre_warmup_shapes)
@@ -179,7 +180,7 @@ class SpyreWorker(WorkerBase):
             num_shape_combinations,
             all_warmup_total_t,
         )
-        return all_warmup_total_t
+        return CompilationTimes(language_model=all_warmup_total_t, encoder=0.0)
 
     def check_health(self) -> None:
         """Basic health check (override for device-specific checks)."""

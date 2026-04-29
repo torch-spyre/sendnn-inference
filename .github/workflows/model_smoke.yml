@@ -1,0 +1,135 @@
+name: Model Smoke
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/model_smoke.yml"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "tests/**/*.py"
+      - "sendnn_inference/**/*.py"
+      - "sendnn_inference/config/model_configs.yaml"
+      - "tools/download_model.py"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/model_smoke.yml"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "tests/**/*.py"
+      - "sendnn_inference/**/*.py"
+      - "sendnn_inference/config/model_configs.yaml"
+      - "tools/download_model.py"
+  workflow_dispatch:
+
+env:
+  VLLM_CPU_DISABLE_AVX512: "true"
+  VLLM_TARGET_DEVICE: "empty"
+  VLLM_PLUGINS: "sendnn_inference"
+  HF_HUB_CACHE: "${{ github.workspace }}/.cache/huggingface/hub"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    timeout-minutes: 120
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: "decoder"
+            smoke_test: "test_decoder_model_load_smoke"
+            hf_model: "ibm-ai-platform/micro-g3.3-8b-instruct-1b"
+            hf_model_rev: "6e9c6465a9d7e5e9fa35004a29f0c90befa7d23f"
+          - name: "embedding"
+            smoke_test: "test_embedding_model_load_smoke"
+            hf_model: "sentence-transformers/all-roberta-large-v1"
+            hf_model_rev: "cf74d8acd4f198de950bf004b262e6accfed5d2c"
+          - name: "scoring"
+            smoke_test: "test_scoring_model_load_smoke"
+            hf_model: "cross-encoder/stsb-roberta-large"
+            hf_model_rev: "2b12c2c0088918e76151fd5937b7bba986ef1f98"
+          - name: "mistral"
+            smoke_test: "test_decoder_model_load_smoke"
+            hf_model: "mistralai/Mistral-Small-3.2-24B-Instruct-2506"
+            hf_model_rev: "95a6d26c4bfb886c58daf9d3f7332c857cb27b43"
+
+    name: "${{ matrix.name }}"
+
+    steps:
+      - name: "Lightweight disk cleanup"
+        run: |
+          rm -rf /usr/share/swift
+          rm -rf /user/local/share/chromium
+          sudo rm -rf /usr/local/share/powershell
+
+      - name: "Checkout"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: "Install uv"
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+          python-version: "3.12"
+          enable-cache: true
+          ignore-nothing-to-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+
+      - name: "Install vLLM with Spyre plugin"
+        run: |
+          uv venv .venv --system-site-packages --clear
+          source .venv/bin/activate
+
+          uv sync --frozen
+          uv pip install -v .
+
+      - name: "Standardize HF model names for caching"
+        run: |
+          model="${{ matrix.hf_model }}"
+          revision="${{ matrix.hf_model_rev }}"
+          safe_name="${model//\//--}"
+          echo "model_key=${safe_name}_${revision}"              >> "$GITHUB_ENV"
+          echo "model_path=${HF_HUB_CACHE}/models--${safe_name}" >> "$GITHUB_ENV"
+
+      - name: "Restore HF models cache"
+        id: cache_restore
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.model_path }}
+          key: ${{ runner.os }}-hf-model-${{ env.model_key }}
+
+      - name: "Download HF model"
+        if: steps.cache_restore.outputs.cache-hit != 'true'
+        run: |
+          python3 tools/download_model.py -m "${{ matrix.hf_model }}" -r "${{ matrix.hf_model_rev }}"
+
+      - name: "Save HF models cache"
+        if: github.event_name != 'pull_request' && steps.cache_restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.model_path }}
+          key: ${{ runner.os }}-hf-model-${{ env.model_key }}
+
+      - name: "Run smoke test"
+        env:
+          SENDNN_INFERENCE_DYNAMO_BACKEND: "eager"
+          SENDNN_INFERENCE_SMOKE_MODEL: ${{ matrix.hf_model }}
+          SENDNN_INFERENCE_SMOKE_MODEL_REV: ${{ matrix.hf_model_rev }}
+        run: |
+          # Delete the source code so we can ensure we're testing the installed
+          # wheel
+          rm -fr sendnn_inference
+          # We activate .venv manually and run pytest directly instead of using
+          # `uv run`, to avoid having `uv run` re-sync any dependencies or
+          # re-install the sendnn-inference package from source
+          source .venv/bin/activate
+          python -m pytest tests/e2e/test_model_smoke.py -v -s -m "smoke" -k "${{ matrix.smoke_test }}"
+
+# Made with Bob

@@ -15,7 +15,7 @@ dependencies = [
     "ibm-fms>=1.9.0,<2",
     # NB: use strict < with the next patch version to not exclude versions with
     # build metadata suffixes
-    "vllm>=0.19.0,<0.19.2",
+    "vllm>=0.20.0,<0.20.1",
     
     # Specific torch version overrides handled by uv
     "torch",
@@ -53,7 +53,7 @@ git_describe_command = "git describe --dirty --tags --long --match 'v*'"
 # So we set to 'never' to prevent installing it or eventually any other
 # by accident
 override-dependencies = [
-    "torch==2.10.0",
+    "torch==2.11.0",
     "triton; sys_platform == 'never'",
     "intel-extension-for-pytorch; sys_platform == 'never'",
 
@@ -83,17 +83,17 @@ override-dependencies = [
     # llguidance>=1.7.3 fixes s390x endianness issues.
     # This conflicts with vLLM's version range (llguidance >= 1.3.0, < 1.4.0).
     # TODO: Remove this override once vLLM's requirement range includes or moves past 1.7.3.
-    # See: https://github.com/vllm-project/vllm/blob/v0.19.1/requirements/common.txt#L22
+    # See: https://github.com/vllm-project/vllm/blob/v0.20.0/requirements/common.txt#L22
     "llguidance>=1.7.3"
 ]
 # This adds constraints to all dependent build environments, which will ensure everything is built
 # with the same version of torch. This CANNOT conflict with a package's existing build dependencies
-build-constraint-dependencies = ["torch==2.10.0"]
+build-constraint-dependencies = ["torch==2.11.0"]
 # This ensures that we build with the empty backend for vLLM
 extra-build-variables = { vllm = { VLLM_TARGET_DEVICE = "empty" } }
 
 [tool.uv.sources]
-vllm = { git = "https://github.com/vllm-project/vllm", rev = "v0.19.1" }
+vllm = { git = "https://github.com/vllm-project/vllm", rev = "v0.20.0" }
 torch = [
   { index = "pytorch-cpu" },
 ]
@@ -202,6 +202,8 @@ markers = [
     "chunked_prefill: Tests with chunked prefill enabled",
     "prefix_caching: Tests for prefix caching",
     "multi: Tests that require >1 cards",
+
+    "smoke: Model load smoke tests (requires SENDNN_INFERENCE_SMOKE_MODEL env vars)",
 
     # Model types
     "decoder: Tests for decoder models",

@@ -74,7 +74,7 @@ jobs:
           # Lower bound support
           - vllm_version:
               name: "vLLM:lowest"
-              repo: "git+https://github.com/vllm-project/vllm --tag v0.19.0"
+              repo: "git+https://github.com/vllm-project/vllm --tag v0.20.0"
             test_suite:
               name: "backward compat"
               markers: "compat or (cpu and basic and not quantized)"
