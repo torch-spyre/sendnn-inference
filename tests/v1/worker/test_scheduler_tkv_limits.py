@@ -89,6 +89,14 @@ def test_scheduler_tkv_limits_ongoing_batch(monkeypatch: pytest.MonkeyPatch):
     Test that the scheduler correctly enforces the TKV limit constraint
     when new requests are added during an ongoing batch.
 
+    This test schedules a 16x8k batch that will fully fill the 128k TKV limit.
+    Then inject a batch of smaller requests partway through processing,
+    which should be able to schedule only because they are guaranteed to
+    finish processing just before the TKV is long enough to overrun the
+    limit with the larger batch size. This flexes the logic for injecting
+    shorter requests into a running batch, which is not tested by the
+    other test case in this file.
+
     Expected behavior (when bug is fixed):
     - Test should pass without exceeding hardware constraints
 
@@ -114,30 +122,14 @@ def test_scheduler_tkv_limits_ongoing_batch(monkeypatch: pytest.MonkeyPatch):
     SpyrePlatform._max_batch_tkv_limit = 131072
     monkeypatch.setenv("VLLM_DT_MAX_BATCH_TKV_LIMIT", "131072")
 
-    # Define prompt lengths for first set of requests
-    prompt_lengths_1 = [
-        1018,
-        1024,
-        1024,
-        1024,
-        1024,
-        1024,
-        1024,
-        1024,
-        1024,
-        1024,
-        1024,
-        1024,
-        1024,
-        1024,
-        1024,
-        1024,
-    ]
+    # Define prompt lengths and max tokens for requests
+    prompt_lengths = [1018] + [1024] * 15
     max_tokens_1 = 7168
+    max_tokens_2 = 900
 
     # Create and add first set of requests to the scheduler
     requests = []
-    for request_id, prompt_length in enumerate(prompt_lengths_1):
+    for request_id, prompt_length in enumerate(prompt_lengths):
         prompt = random_prompt(model=model, seed=request_id, length=prompt_length)
         request = create_request_for_scheduler_test(
             model=model,
@@ -167,29 +159,8 @@ def test_scheduler_tkv_limits_ongoing_batch(monkeypatch: pytest.MonkeyPatch):
             if generated >= target_generated_tokens:
                 break
 
-    # Define prompt lengths for second set of requests
-    prompt_lengths_2 = [
-        1018,
-        1024,
-        1024,
-        1024,
-        1024,
-        1024,
-        1024,
-        1024,
-        1024,
-        1024,
-        1024,
-        1024,
-        1024,
-        1024,
-        1024,
-        1024,
-    ]
-    max_tokens_2 = 900
-
     # Create and add second set requests to the scheduler
-    for request_id, prompt_length in enumerate(prompt_lengths_2):
+    for request_id, prompt_length in enumerate(prompt_lengths):
         prompt = random_prompt(model=model, seed=request_id + 16, length=prompt_length)
         request = create_request_for_scheduler_test(
             model=model,
