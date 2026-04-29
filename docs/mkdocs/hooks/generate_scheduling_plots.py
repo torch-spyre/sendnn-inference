@@ -28,7 +28,7 @@ def get_max_tkv_indices(values: list[float]) -> set[int]:
 
 def load_plot_data(file_path: str) -> tuple[dict, list[dict]]:
     """Load metadata and per-step scheduling data from a JSONL file."""
-    with open(file_path, "r") as f:
+    with open(file_path, "r", encoding="utf-8") as f:
         metadata = json.loads(f.readline())
         steps = [json.loads(line) for line in f]
     return metadata, steps
@@ -52,6 +52,7 @@ def build_waiting_plot_data(step: dict, num_waiting_displayed: int) -> tuple[lis
 
 def build_prefilling_plot_data(step: dict, block_size: int) -> dict[str, Any]:
     """Build prefilling-queue bar values for the single in-progress prefill request."""
+    is_prefill_step = step.get("step_type", "decode") == "prefill"
     prefilling = step.get("prefilling")
     if prefilling is None:
         return {
@@ -77,7 +78,7 @@ def build_prefilling_plot_data(step: dict, block_size: int) -> dict[str, Any]:
     tokens_remaining = max(tokens_remaining, 0)
     
     # Check if this is the last chunk
-    is_last_chunk = (chunks_done + 1) == chunks_total
+    is_last_chunk = (chunks_done + 1) == chunks_total and is_prefill_step
     
     if is_last_chunk:
         # Calculate right-padding to the next block boundary
@@ -120,6 +121,7 @@ def build_decoding_plot_data(
     padding_x = []
     prompt_x = []
     decoded_x = []
+    decoded_actual = []  # Store actual decoded values for annotations
     reserved_x = []
     completed_x = []
     tkv_values = []
@@ -140,7 +142,8 @@ def build_decoding_plot_data(
         if req_id in completed_ids:
             padding_x.append(0.0)
             prompt_x.append(0.0)
-            decoded_x.append(0.0)
+            decoded_x.append(0.0)  # Hide the bar for completed requests
+            decoded_actual.append(float(decoded))  # Keep actual value for annotation
             reserved_x.append(reserved)
             completed_x.append(req_tkv)
             is_completed.append(True)
@@ -149,6 +152,7 @@ def build_decoding_plot_data(
             padding_x.append(padding)
             prompt_x.append(prompt)
             decoded_x.append(decoded)
+            decoded_actual.append(float(decoded))
             reserved_x.append(reserved)
             completed_x.append(0.0)
             is_completed.append(False)
@@ -156,6 +160,7 @@ def build_decoding_plot_data(
             padding_x.append(padding)
             prompt_x.append(prompt)
             decoded_x.append(decoded)
+            decoded_actual.append(float(decoded))
             reserved_x.append(reserved)
             completed_x.append(0.0)
             is_completed.append(False)
@@ -165,6 +170,7 @@ def build_decoding_plot_data(
         padding_x.append(0.0)
         prompt_x.append(0.0)
         decoded_x.append(0.0)
+        decoded_actual.append(0.0)
         reserved_x.append(0.0)
         completed_x.append(0.0)
         decoding_req_ids.append(" " * (placeholder_idx + 1))
@@ -176,6 +182,7 @@ def build_decoding_plot_data(
         "padding_x": padding_x,
         "prompt_x": prompt_x,
         "decoded_x": decoded_x,
+        "decoded_actual": decoded_actual,  # Add actual decoded values
         "reserved_x": reserved_x,
         "completed_x": completed_x,
         "tkv_values": tkv_values,
@@ -184,7 +191,7 @@ def build_decoding_plot_data(
     }
 
 
-def build_tkv_overlay(batch_size: int, tkv_values: list[float], hide_zero_values: bool) -> tuple[list[dict], list[dict]]:
+def build_tkv_overlay(batch_size: int, tkv_values: list[float]) -> tuple[list[dict], list[dict]]:
     """Build per-request TKV line shapes and annotations."""
     shapes = []
     annotations = [dict(), dict(), dict()]  # First three are for subplot titles
@@ -192,13 +199,36 @@ def build_tkv_overlay(batch_size: int, tkv_values: list[float], hide_zero_values
 
     for idx in range(batch_size):
         tkv_value = tkv_values[idx]
-        if not hide_zero_values and tkv_value <= 0:
+
+        if tkv_value <= 0:
+            shapes.append(
+                dict(
+                    type="line",
+                    xref="x3",
+                    yref="y3",
+                    x0=0,
+                    y0=idx,
+                    x1=0,
+                    y1=idx,
+                    line=dict(color="rgba(0,0,0,0)", width=0),
+                ))
+            annotations.append(
+                dict(
+                    xref="x3",
+                    yref="y3",
+                    x=0,
+                    y=idx,
+                    text="",
+                    showarrow=False,
+                    font=dict(color="rgba(0,0,0,0)", size=12),
+                    bgcolor="rgba(0,0,0,0)",
+                    borderwidth=0,
+                ))
             continue
 
-        is_hidden = hide_zero_values and tkv_value == 0
         is_max_tkv = idx in max_tkv_indices
-        line_color = "rgba(0,0,0,0)" if is_hidden else "Red"
-        text_color = "rgba(0,0,0,0)" if is_hidden else "Red"
+        line_color = "Red"
+        text_color = "Red"
         text_weight = "bold" if is_max_tkv else "normal"
         line_width = 5 if is_max_tkv else 3
 
@@ -222,8 +252,138 @@ def build_tkv_overlay(batch_size: int, tkv_values: list[float], hide_zero_values
                 text=f"tkv={tkv_value}",
                 showarrow=False,
                 font=dict(color=text_color, size=12, weight=text_weight),
+                bgcolor="rgba(0,0,0,0)",  # Fully transparent background
+                borderwidth=0,
             ))
 
+    return shapes, annotations
+
+
+def build_generated_tokens_annotations(
+    batch_size: int,
+    decoded_actual: list[float],
+) -> list[dict]:
+    """Build annotations showing the number of generated tokens at the end of each decoding line.
+    
+    Args:
+        batch_size: Maximum number of sequences
+        decoded_actual: List of actual decoded (generated) token counts for each request
+        
+    Returns:
+        List of annotation dictionaries for generated token counts
+    """
+    annotations = []
+    has_any_generated = False
+    
+    for idx in range(batch_size):
+        generated_tokens = int(decoded_actual[idx])
+        
+        has_any_generated = True
+        
+        # Fixed x position on the right side, aligned with the label
+        annotations.append(
+            dict(
+                xref="paper",
+                yref="y3",
+                x=1.03,
+                y=idx,
+                xanchor="left",
+                yanchor="middle",
+                text=f"<b>{str(generated_tokens)}</b>",
+                showarrow=False,
+                font=dict(color="#00CC96", size=15),
+                bgcolor="rgba(255, 255, 255, 0.8)",
+                bordercolor="rgba(0,0,0,0)",
+                borderwidth=2,
+                borderpad=4,
+            ))
+    
+    # Add a single "Generated Tokens" label annotation if any tokens were generated
+    if has_any_generated:
+        annotations.append(
+            dict(
+                xref="paper",
+                yref="paper",
+                x=1.03,
+                y=0.55,
+                xanchor="left",
+                yanchor="middle",
+                text="<b>Generated Tokens</b>",
+                showarrow=False,
+                font=dict(color="#00CC96", size=14),
+                bgcolor="rgba(255, 255, 255, 0.9)",
+                bordercolor="#00CC96",
+                borderwidth=2,
+                borderpad=4,
+            ))
+    
+    return annotations
+
+
+def build_volume_overlay(batch_size: int, tkv_values: list[float], num_decoding: int) -> tuple[list[dict], list[dict]]:
+    """Build volume overlay rectangle and annotation for decoding requests.
+    
+    Args:
+        batch_size: Maximum number of sequences
+        tkv_values: List of TKV values for each request
+        num_decoding: Number of active decoding requests
+        
+    Returns:
+        Tuple of (shapes, annotations) for the volume overlay
+    """
+    shapes = []
+    annotations = []
+    
+    # Determine if there are active decoding requests
+    if num_decoding == 0:
+        max_tkv = 0
+        volume = 0
+    else:
+        # Calculate max_tkv from positive values
+        positive_tkvs = [value for value in tkv_values if value > 0]
+        if not positive_tkvs:
+            max_tkv = 0
+            volume = 0
+        else:
+            max_tkv = max(positive_tkvs)
+            volume = max_tkv * num_decoding
+    
+    # Always create a rectangle (infinitely small when no decoding)
+    # This ensures the shape exists in all frames for proper animation
+    shapes.append(
+        dict(
+            type="rect",
+            xref="x3",
+            yref="y3",
+            x0=0,
+            y0=-0.5,
+            x1=max_tkv if max_tkv > 0 else 0.001,  # Infinitely small when no decoding
+            y1=(num_decoding - 0.5) if num_decoding > 0 else -0.499,  # Infinitely small when no decoding
+            fillcolor="rgba(255, 165, 0, 0.2)" if volume > 0 else "rgba(255, 165, 0, 0)",  # Transparent when no volume
+            line=dict(color="rgba(255, 140, 0, 0.8)" if volume > 0 else "rgba(255, 140, 0, 0)", width=2 if volume > 0 else 0),
+            layer="below",
+        )
+    )
+    
+    # Always add volume annotation (shows 0 when no decoding)
+    annotations.append(
+        dict(
+            xref="paper",
+            yref="paper",
+            x=1.03,
+            y=-0.1,
+            xanchor="left",
+            yanchor="middle",
+            text=f"<b>Volume = {volume}</b>",
+            showarrow=False,
+            font=dict(color="rgba(255, 140, 0, 1)", size=14),
+            bgcolor="rgba(255, 255, 255, 0.9)",
+            bordercolor="rgba(255, 140, 0, 0.8)",
+            borderwidth=2,
+            borderpad=4,
+        )
+    )
+    
     return shapes, annotations
 
 
@@ -357,7 +517,7 @@ def add_initial_traces(
             y=decoding_data["decoding_req_ids"],
             marker_color="#00CC96",
             orientation="h",
-            name="Decoded Tokens",
+            name="Generated Tokens",
             legendgroup="general",
         ),
         row=3,
@@ -469,12 +629,28 @@ def create_frame(
     shapes, annotations = build_tkv_overlay(
         batch_size=batch_size,
         tkv_values=decoding_data["tkv_values"],
-        hide_zero_values=True,
     )
 
-    # # Add overlay rectangles to show inactive sections
-    # overlay_shapes = build_inactive_overlay_shapes(is_prefill_active)
-    # shapes.extend(overlay_shapes)
+    # Add volume overlay rectangle and annotation
+    num_decoding = len([req for req in decoding_data["decoding_req_ids"] if req.strip()])
+    volume_shapes, volume_annotations = build_volume_overlay(
+        batch_size=batch_size,
+        tkv_values=decoding_data["tkv_values"],
+        num_decoding=num_decoding,
+    )
+    shapes.extend(volume_shapes)
+    annotations.extend(volume_annotations)
+
+    # Add overlay rectangles to show inactive sections
+    overlay_shapes = build_inactive_overlay_shapes(is_prefill_active)
+    shapes.extend(overlay_shapes)
+
+    # Add generated tokens annotations
+    generated_tokens_annotations = build_generated_tokens_annotations(
+        batch_size=batch_size,
+        decoded_actual=decoding_data["decoded_actual"],
+    )
+    annotations.extend(generated_tokens_annotations)
 
     step_label = f"{step_index}"
     
@@ -530,9 +706,8 @@ def build_frames(steps: list[dict], batch_size: int, num_waiting_displayed: int,
             previous_completed_ids=previous_completed_ids,
             completed_value_includes_reserved=True,
         )
-        
-        # Determine if prefill is active: prefill is active if there's a prefilling request
-        is_prefill_active = prefilling_data["req_id"][0] != " "
+        # Determine if prefill is active: prefill is active if the step type is "prefill"
+        is_prefill_active = step_type == "prefill"
         
         frame = create_frame(i, step_type, waiting_data, prefilling_data, decoding_data, batch_size, chunk_size, is_prefill_active)
 
@@ -553,22 +728,31 @@ def build_frames(steps: list[dict], batch_size: int, num_waiting_displayed: int,
     return frames
 
 
-def configure_figure_layout(fig: go.Figure, batch_size: int, max_model_len: int, block_size: int, tkv_values: list[float], frames: list[go.Frame], metadata: dict, initial_is_prefill_active: bool) -> None:
+def configure_figure_layout(fig: go.Figure, batch_size: int, max_model_len: int, block_size: int, tkv_values: list[float], frames: list[go.Frame], metadata: dict, initial_is_prefill_active: bool, initial_num_decoding: int) -> None:
     """Apply axis, TKV overlay, and animation controls to the figure."""
     initial_shapes, initial_annotations = build_tkv_overlay(
         batch_size=batch_size,
         tkv_values=tkv_values,
-        hide_zero_values=False,
     )
     
-    # # Add initial overlay for inactive sections
-    # initial_overlay_shapes = build_inactive_overlay_shapes(initial_is_prefill_active)
-    # initial_shapes.extend(initial_overlay_shapes)
+    # # Add initial volume overlay
+    initial_volume_shapes, initial_volume_annotations = build_volume_overlay(
+        batch_size=batch_size,
+        tkv_values=tkv_values,
+        num_decoding=initial_num_decoding,
+    )
+    initial_shapes.extend(initial_volume_shapes)
+    initial_annotations.extend(initial_volume_annotations)
+    
+    # Add initial overlay for inactive sections
+    initial_overlay_shapes = build_inactive_overlay_shapes(initial_is_prefill_active)
+    initial_shapes.extend(initial_overlay_shapes)
 
     chunk_size = metadata.get("chunk_size", "N/A")
+    max_batch_tkv_limit = metadata.get("max_batch_tkv_limit", "N/A")
     title_text = (
         f"Max Model Len: {max_model_len} | Max Num Seqs: {batch_size} | "
-        f"Block Size: {block_size} | Chunk Size: {chunk_size}"
+        f"Block Size: {block_size} | Chunk Size: {chunk_size} | Max Volume: {max_batch_tkv_limit}"
     )
 
     fig.update_layout(
@@ -707,6 +891,10 @@ def generate_plots(data: Optional[dict] = None, file_path: Optional[str] = None)
         block_size=block_size,
         chunk_size=chunk_size,
     )
+    
+    # Calculate initial number of decoding requests
+    initial_num_decoding = len([req for req in initial_decoding_data["decoding_req_ids"] if req.strip()])
+    
     configure_figure_layout(
         fig=fig,
         batch_size=batch_size,
@@ -716,6 +904,7 @@ def generate_plots(data: Optional[dict] = None, file_path: Optional[str] = None)
         frames=frames,
         metadata=metadata,
         initial_is_prefill_active=initial_is_prefill_active,
+        initial_num_decoding=initial_num_decoding,
     )
 
     if SAVE_OUTPUT:
