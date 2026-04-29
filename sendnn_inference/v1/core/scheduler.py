@@ -20,11 +20,13 @@ else:
 
 logger = init_logger(__name__)
 
+
 def round_up_to_block_size(n: int) -> int:
     # Helper function to round up to the nearest block size
     # Uses bitwise alignment for better performance
     block_size = SpyrePlatform.get_block_size()
     return (n + block_size - 1) & ~(block_size - 1)
+
 
 class SpyreScheduler(Scheduler):
     """Base class inheriting from the V1 scheduler to support static
@@ -545,7 +547,9 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         dec_req_tkv = max(self.tkv, request.num_prompt_tokens)
         for req in running:
             n_generated_output_tokens = req.num_computed_tokens - req.num_prompt_tokens
-            dec_req_max_tkv = round_up_to_block_size(dec_req_tkv + (req.max_tokens - n_generated_output_tokens) - 1)
+            dec_req_max_tkv = round_up_to_block_size(
+                dec_req_tkv + (req.max_tokens - n_generated_output_tokens) - 1
+            )
             decode_req_max_tkvs.append(dec_req_max_tkv)
 
         # Sort decode requests token lengths in ascending order
