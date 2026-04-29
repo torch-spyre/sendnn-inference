@@ -80,3 +80,100 @@ def test_scheduler_tkv_limits(monkeypatch: pytest.MonkeyPatch):
         scheduler.update_from_output(sched_output, output)
         if len(scheduler.running) == 0:
             break
+
+@pytest.mark.cpu
+@pytest.mark.chunked_prefill
+def test_scheduler_tkv_limits_ongoing_batch(monkeypatch: pytest.MonkeyPatch):
+    """
+    Test that the scheduler correctly enforces the TKV limit constraint
+    when new requests are added during an ongoing batch.
+
+    Expected behavior (when bug is fixed):
+    - Test should pass without exceeding hardware constraints
+
+    Current behavior (with bug):
+    - Scheduler accepts invalid batch configurations
+    - Test will fail with assertion errors
+    """
+    # Setup: Use the default test model
+    model = REFERENCE_MODELS[InstrumentedModelRunner.DEFAULT_TEST_MODEL]
+
+    # Build model runner with specific constraints
+    model_runner = InstrumentedModelRunner.build(
+        monkeypatch=monkeypatch,
+        max_num_batched_tokens=512,
+        max_num_seqs=32,
+        max_model_len=32768,
+        available_blocks=32768,
+    )
+
+    # Configure the TKV limit
+    scheduler = model_runner.scheduler
+    scheduler.max_batch_tkv_limit = 131072
+    SpyrePlatform._max_batch_tkv_limit = 131072
+    monkeypatch.setenv("VLLM_DT_MAX_BATCH_TKV_LIMIT", "131072")
+
+    # Define prompt lengths for first set of requests
+    prompt_lengths_1 = [1018, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024]
+    max_tokens_1 = 7168
+
+    # Create and add first set of requests to the scheduler
+    requests = []
+    for request_id, prompt_length in enumerate(prompt_lengths_1):
+        prompt = random_prompt(model=model, seed=request_id, length=prompt_length)
+        request = create_request_for_scheduler_test(
+            model=model,
+            request_id=request_id,
+            add_step=0,
+            max_tokens=max_tokens_1,
+            prompt=prompt,
+            use_golden_token_injection=False,
+            generate_hf_results=False,
+        ).request
+        requests.append(request)
+        scheduler.add_request(request)
+
+    # Failure was observed in testing when first request generated 2920 tokens
+    target_generated_tokens = 2920
+
+    # Run the scheduler loop until first set of requests have generated tokens
+    while True:
+        sched_output = scheduler.schedule()
+        output = model_runner.execute_model(sched_output)
+        scheduler.update_from_output(sched_output, output)
+
+        target_req = requests[0]
+
+        if target_req:
+            generated = target_req.num_computed_tokens - target_req.num_prompt_tokens
+            if generated >= target_generated_tokens:
+                break
+
+    # Define prompt lengths for second set of requests
+    prompt_lengths_2 = [1018, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024]
+    max_tokens_2 = 900
+
+    # Create and add second set requests to the scheduler
+    for request_id, prompt_length in enumerate(prompt_lengths_2):
+        prompt = random_prompt(model=model, seed=request_id + 16, length=prompt_length)
+        request = create_request_for_scheduler_test(
+            model=model,
+            request_id=request_id + 16,
+            add_step=0,
+            max_tokens=max_tokens_2,
+            prompt=prompt,
+            use_golden_token_injection=False,
+            generate_hf_results=False,
+        ).request
+        requests.append(request)
+        scheduler.add_request(request)
+
+    # Run the scheduler loop until all requests complete
+    # With the bug present, the scheduler will incorrectly accept a batch
+    # configuration that exceeds the TKV limit
+    while True:
+        sched_output = scheduler.schedule()
+        output = model_runner.execute_model(sched_output)
+        scheduler.update_from_output(sched_output, output)
+        if len(scheduler.running) == 0:
+            break
