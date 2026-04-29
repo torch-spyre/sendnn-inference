@@ -81,6 +81,7 @@ def test_scheduler_tkv_limits(monkeypatch: pytest.MonkeyPatch):
         if len(scheduler.running) == 0:
             break
 
+
 @pytest.mark.cpu
 @pytest.mark.chunked_prefill
 def test_scheduler_tkv_limits_ongoing_batch(monkeypatch: pytest.MonkeyPatch):
@@ -114,7 +115,24 @@ def test_scheduler_tkv_limits_ongoing_batch(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("VLLM_DT_MAX_BATCH_TKV_LIMIT", "131072")
 
     # Define prompt lengths for first set of requests
-    prompt_lengths_1 = [1018, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024]
+    prompt_lengths_1 = [
+        1018,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+    ]
     max_tokens_1 = 7168
 
     # Create and add first set of requests to the scheduler
@@ -150,7 +168,24 @@ def test_scheduler_tkv_limits_ongoing_batch(monkeypatch: pytest.MonkeyPatch):
                 break
 
     # Define prompt lengths for second set of requests
-    prompt_lengths_2 = [1018, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024]
+    prompt_lengths_2 = [
+        1018,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+    ]
     max_tokens_2 = 900
 
     # Create and add second set requests to the scheduler
