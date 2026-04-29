@@ -193,6 +193,7 @@ class SpyreCausalLM(nn.Module):
                 distributed_strategy=distributed_strategy,
                 group=dist.group.WORLD,
                 fused_weights=False,
+                trust_remote_code=model_config.trust_remote_code,
                 **model_kwargs,
             )
 
