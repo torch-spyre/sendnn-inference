@@ -514,9 +514,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         num_prefills = len(self.waiting) + len(self.ongoing_prefills)
         return num_prefills < max_concurrent_prefills
 
-    def check_batch_tkv_limit_cp(
-        self, request: Request, new_req_tkv: int, running
-    ) -> bool:
+    def check_batch_tkv_limit_cp(self, request: Request, new_req_tkv: int, running) -> bool:
         """
         Check whether adding a new sequence to the decode batch would violate
         Spyre's maximum batch volume constraint for chunked prefill.
