@@ -490,7 +490,6 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         cond3 = lambda: self.check_batch_tkv_limit_cp(
             request=request,
             new_req_tkv=new_req_tkv,
-            n_blocks=n_blocks,
             running=decoding_requests,
         )
 
