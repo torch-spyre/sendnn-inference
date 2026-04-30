@@ -10,7 +10,7 @@ import plotly.io as pio
 from plotly.subplots import make_subplots
 
 ROOT_DIR = Path(__file__).parent.parent.parent.parent
-DATA_PATH = ROOT_DIR / "docs/mkdocs/data/simple_example.json"
+DATA_PATH = ROOT_DIR / "docs/mkdocs/data"
 OUTPUT_DIR = ROOT_DIR / "docs/assets/plots"
 
 SAVE_OUTPUT = True
@@ -370,17 +370,18 @@ def configure_figure_layout(fig: go.Figure, max_model_len: int, block_size: int,
     fig.frames = frames
 
 
-def generate_plots(data: Optional[dict] = None, file_path: Optional[str] = None) -> None:
+def generate_plots(data: Optional[dict] = None, file_path: Optional[str] = None, show_figure: bool = True) -> None:
     """Generate prefill-only scheduling plots from JSONL data.
 
     Args:
         data: Unused parameter (kept for compatibility)
-        file_path: Path to JSONL file. If None, uses DATA_PATH.
+        file_path: Path to JSONL file. If None, raises an error.
+        show_figure: Whether to display the figure interactively. Default True.
     """
     del data
 
     if file_path is None:
-        file_path = str(DATA_PATH)
+        raise ValueError("file_path must be provided")
 
     metadata, steps = load_plot_data(file_path)
     max_model_len = metadata["max_model_len"]
@@ -410,14 +411,28 @@ def generate_plots(data: Optional[dict] = None, file_path: Optional[str] = None)
     fig.update_layout(shapes=initial_shapes)
 
     if SAVE_OUTPUT:
-        pio.write_html(fig, os.path.splitext(file_path)[0] + "_prefill_only.html")
+        # Save to OUTPUT_DIR with the base filename
+        base_name = Path(file_path).stem
+        output_path = OUTPUT_DIR / f"{base_name}_prefill_only.html"
+        pio.write_html(fig, str(output_path))
 
-    fig.show()
+    if show_figure:
+        fig.show()
 
 
-def on_pre_build(_config):
+def on_pre_build(config):
     """MkDocs hook that runs before the build."""
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    
+    # Generate plots for all JSON files in the data directory
+    json_files = list(DATA_PATH.glob("*.json"))
+    
+    for json_file in json_files:
+        try:
+            print(f"Generating prefill-only plot for: {json_file.name}")
+            generate_plots(file_path=str(json_file), show_figure=False)
+        except Exception as e:
+            print(f"Error generating prefill-only plot for {json_file.name}: {e}")
 
 
 def main():
