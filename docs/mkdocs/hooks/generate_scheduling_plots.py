@@ -1011,7 +1011,7 @@ def on_pre_build(config):
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     
     # Generate plots for all JSON files in the data directory
-    json_files = list(DATA_PATH.glob("*.json"))
+    json_files = list(DATA_PATH.glob("scheduling_*.json"))
     
     for json_file in json_files:
         try:

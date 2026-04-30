@@ -421,7 +421,7 @@ def generate_plots(data: Optional[dict] = None, file_path: Optional[str] = None,
     if SAVE_OUTPUT:
         # Save to OUTPUT_DIR with the base filename
         base_name = Path(file_path).stem
-        output_path = OUTPUT_DIR / f"{base_name}_prefill_only.html"
+        output_path = OUTPUT_DIR / f"{base_name}.html"
         # Disable auto-play to prevent animation from starting automatically
         pio.write_html(fig, str(output_path), auto_play=False)
 
@@ -434,7 +434,7 @@ def on_pre_build(config):
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     
     # Generate plots for all JSON files in the data directory
-    json_files = list(DATA_PATH.glob("*.json"))
+    json_files = list(DATA_PATH.glob("prefill_*.json"))
     
     for json_file in json_files:
         try:
