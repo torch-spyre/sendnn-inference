@@ -44,6 +44,7 @@ hooks:
   - docs/mkdocs/hooks/url_schemes.py
   - docs/mkdocs/hooks/generate_model_tables.py
   - docs/mkdocs/hooks/generate_scheduling_plots.py
+  - docs/mkdocs/hooks/generate_prefill_only_plots.py
 
 plugins:
   - meta

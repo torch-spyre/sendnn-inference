@@ -77,7 +77,7 @@ def build_prefilling_plot_data(step: dict, chunk_size) -> dict[str, Any]:
 
     # Check if the current chunk range corresponds to an already-completed chunk
     # This happens when chunks_done > 0 and chunk_start hasn't advanced yet
-    # In this case, there's no "Current Prefilling Tokens"
+    # In this case, there's no "Currently Prefilling"
     expected_chunk_start = chunks_done * chunk_size - left_padding
     is_chunk_already_done = (chunks_done > 0 and chunk_prompt_token_start < expected_chunk_start)
 
@@ -239,7 +239,7 @@ def build_tkv_overlay(batch_size: int, tkv_values: list[float]) -> tuple[list[di
                     y=idx,
                     text="",
                     showarrow=False,
-                    font=dict(color="rgba(0,0,0,0)", size=12),
+                    font=dict(color="rgba(0,0,0,0)", size=9),
                     bgcolor="rgba(0,0,0,0)",
                     borderwidth=0,
                 ))
@@ -249,7 +249,7 @@ def build_tkv_overlay(batch_size: int, tkv_values: list[float]) -> tuple[list[di
         line_color = "Red"
         text_color = "Red"
         text_weight = "bold" if is_max_tkv else "normal"
-        line_width = 5 if is_max_tkv else 3
+        line_width = 3 if is_max_tkv else 1
 
         shapes.append(
             dict(
@@ -270,7 +270,7 @@ def build_tkv_overlay(batch_size: int, tkv_values: list[float]) -> tuple[list[di
                 y=idx + 0.5,
                 text=f"tkv={tkv_value}",
                 showarrow=False,
-                font=dict(color=text_color, size=12, weight=text_weight),
+                font=dict(color=text_color, size=9, weight=text_weight),
                 bgcolor="rgba(0,0,0,0)",  # Fully transparent background
                 borderwidth=0,
             ))
@@ -304,37 +304,33 @@ def build_generated_tokens_annotations(
             dict(
                 xref="paper",
                 yref="y3",
-                x=1.03,
+                x=1.01,
                 y=idx,
                 xanchor="left",
                 yanchor="middle",
                 text=f"<b>{str(generated_tokens)}</b>",
                 showarrow=False,
-                font=dict(color="#00CC96", size=15),
+                font=dict(color="#00CC96", size=12),
                 bgcolor="rgba(255, 255, 255, 0.8)",
                 bordercolor="rgba(0,0,0,0)",
                 borderwidth=2,
                 borderpad=4,
             ))
     
-    # Add a single "Generated Tokens" label annotation if any tokens were generated
-    if has_any_generated:
-        annotations.append(
-            dict(
-                xref="paper",
-                yref="paper",
-                x=1.03,
-                y=0.51,
-                xanchor="left",
-                yanchor="middle",
-                text="<b>Generated Tokens</b>",
-                showarrow=False,
-                font=dict(color="#00CC96", size=14),
-                bgcolor="rgba(255, 255, 255, 0.9)",
-                bordercolor="#00CC96",
-                borderwidth=2,
-                borderpad=4,
-            ))
+    # Add a single "Generated Tokens" label annotation
+    annotations.append(
+        dict(
+            xref="paper",
+            yref="paper",
+            x=0.91,
+            y=-0.08,
+            xanchor="center",
+            yanchor="top",
+            text="<b>Generated Tokens</b>",
+            showarrow=False,
+            font=dict(color="#00CC96", size=12),
+            bgcolor="rgba(255, 255, 255, 0.9)",
+        ))
     
     return annotations
 
@@ -389,17 +385,14 @@ def build_volume_overlay(batch_size: int, tkv_values: list[float], num_decoding:
         dict(
             xref="paper",
             yref="paper",
-            x=1.03,
-            y=-0.1,
-            xanchor="left",
-            yanchor="middle",
+            x=0.35,
+            y=-0.08,
+            xanchor="center",
+            yanchor="top",
             text=f"<b>Volume = {volume}</b>",
             showarrow=False,
-            font=dict(color="rgba(255, 140, 0, 1)", size=14),
+            font=dict(color="rgba(255, 140, 0, 1)", size=12),
             bgcolor="rgba(255, 255, 255, 0.9)",
-            bordercolor="rgba(255, 140, 0, 0.8)",
-            borderwidth=2,
-            borderpad=4,
         )
     )
     
@@ -492,7 +485,7 @@ def build_inactive_overlay_shapes(is_prefill_active: bool, has_prefilling: bool,
 
 def create_figure(batch_size: int, num_waiting_displayed: int, chunk_size: int) -> go.Figure:
     """Create the base subplot layout with waiting, prefilling, and decoding rows."""
-    return make_subplots(
+    fig = make_subplots(
         rows=3,
         cols=1,
         subplot_titles=("Waiting Queue", f"Prefilling (chunk size: {chunk_size})", "Decoding"),
@@ -504,6 +497,11 @@ def create_figure(batch_size: int, num_waiting_displayed: int, chunk_size: int) 
             0.2 * batch_size,
         ],
     )
+    
+    # Set subplot title font size to 12
+    fig.update_annotations(font_size=12)
+    
+    return fig
 
 
 def add_initial_traces(
@@ -551,7 +549,7 @@ def add_initial_traces(
             name="Padding",
             legendgroup="general",
             legendgrouptitle_text="General",
-            legendrank=1005,
+            legendrank=1001,
         ),
         row=3,
         col=1,
@@ -564,7 +562,7 @@ def add_initial_traces(
             orientation="h",
             name="Prompt Tokens",
             legendgroup="general",
-            legendrank=1001,
+            legendrank=1005,
         ),
         row=3,
         col=1,
@@ -577,7 +575,7 @@ def add_initial_traces(
             orientation="h",
             name="Generated Tokens",
             legendgroup="general",
-            legendrank=1002,
+            legendrank=1004,
         ),
         row=3,
         col=1,
@@ -590,7 +588,7 @@ def add_initial_traces(
             orientation="h",
             name="Completed Request",
             legendgroup="general",
-            legendrank=1004,
+            legendrank=1002,
         ),
         row=3,
         col=1,
@@ -619,7 +617,7 @@ def add_initial_traces(
             name="Padding",
             legendgroup="chunked_prefill",
             legendgrouptitle_text="Chunked Prefill",
-            legendrank=2004,
+            legendrank=2001,
         ),
         row=2,
         col=1,
@@ -632,7 +630,7 @@ def add_initial_traces(
             orientation="h",
             name="Completed Prefill",
             legendgroup="chunked_prefill",
-            legendrank=2001,
+            legendrank=2004,
         ),
         row=2,
         col=1,
@@ -643,9 +641,9 @@ def add_initial_traces(
             y=prefilling_data["req_id"],
             marker_color="#FF6600",
             orientation="h",
-            name="Current Prefilling Tokens",
+            name="Currently Prefilling",
             legendgroup="chunked_prefill",
-            legendrank=2002,
+            legendrank=2003,
         ),
         row=2,
         col=1,
@@ -658,7 +656,7 @@ def add_initial_traces(
             orientation="h",
             name="Remaining Prompt",
             legendgroup="chunked_prefill",
-            legendrank=2003,
+            legendrank=2002,
         ),
         row=2,
         col=1,
@@ -734,7 +732,7 @@ def create_frame(
         xanchor="center",
         yanchor="bottom",
         showarrow=False,
-        font=dict(size=16),
+        font=dict(size=12),
     )
 
     return go.Frame(
@@ -826,8 +824,8 @@ def configure_figure_layout(fig: go.Figure, batch_size: int, max_model_len: int,
     initial_shapes.extend(build_prefilling_chunk_overlay(initial_prefilling_data, chunk_size))
     max_batch_tkv_limit = metadata.get("max_batch_tkv_limit", "N/A")
     title_text = (
-        f"Max Model Len: {max_model_len} | Max Num Seqs: {batch_size} | "
-        f"Block Size: {block_size} | Chunk Size: {chunk_size} | Max Volume: {max_batch_tkv_limit}"
+        f"Max Model Len: {max_model_len} | Max Num Seqs: {batch_size} | Block Size: {block_size}<br>"
+        f"Chunk Size: {chunk_size} | Max Volume: {max_batch_tkv_limit}"
     )
 
     fig.update_layout(
@@ -835,11 +833,22 @@ def configure_figure_layout(fig: go.Figure, batch_size: int, max_model_len: int,
             text=title_text,
             x=0.5,
             xanchor="center",
-            font=dict(size=16),
+            font=dict(size=14),
         ),
         barmode="stack",
+        legend=dict(
+            orientation="h",
+            yanchor="top",
+            y=-0.15,
+            xanchor="center",
+            x=0.5,
+            tracegroupgap=30,
+            font=dict(size=10),
+            grouptitlefont=dict(size=11)
+        ),
         shapes=initial_shapes,
         annotations=initial_annotations,
+        # Prevent auto-play on page load
         updatemenus=[
             {
                 "type": "buttons",
@@ -867,18 +876,20 @@ def configure_figure_layout(fig: go.Figure, batch_size: int, max_model_len: int,
                 "showactive": False,
                 "x": 0.1,
                 "xanchor": "right",
-                "y": 0,
-                "yanchor": "top",
+                "y": -0.7,
+                "yanchor": "bottom",
             }
         ],
         sliders=[
             {
-                "yanchor": "top",
+                "yanchor": "bottom",
                 "xanchor": "left",
-                "currentvalue": {"font": {"size": 16}, "prefix": "step: ", "visible": True, "xanchor": "right"},
+                "currentvalue": {"font": {"size": 10}, "prefix": "step: ", "visible": True, "xanchor": "right"},
                 "pad": {"b": 10, "t": 50},
                 "len": 0.9,
                 "x": 0.1,
+                "y": -0.7,
+                "font": {"size": 10},
                 "steps": [
                     {
                         "method": "animate",
@@ -898,7 +909,7 @@ def configure_figure_layout(fig: go.Figure, batch_size: int, max_model_len: int,
         ],
     )
 
-    fig.update_xaxes(range=[0, max_model_len], dtick=block_size, row=1, col=1)
+    fig.update_xaxes(range=[0, max_model_len], dtick=block_size, tickfont=dict(size=10), row=1, col=1)
     
     # Configure prefilling x-axis with bold labels at chunk size borders
     if isinstance(chunk_size, int) and chunk_size > 0:
@@ -914,14 +925,15 @@ def configure_figure_layout(fig: go.Figure, batch_size: int, max_model_len: int,
             tickmode="array",
             tickvals=tick_vals,
             ticktext=tick_text,
+            tickfont=dict(size=10),
             row=2,
             col=1
         )
     else:
         # Fallback if chunk_size is not available
-        fig.update_xaxes(range=[0, max_model_len], dtick=block_size, row=2, col=1)
+        fig.update_xaxes(range=[0, max_model_len], dtick=block_size, tickfont=dict(size=10), row=2, col=1)
     
-    fig.update_xaxes(range=[0, max_model_len], dtick=block_size, row=3, col=1)
+    fig.update_xaxes(range=[0, max_model_len], dtick=block_size, tickfont=dict(size=10), row=3, col=1)
     fig.frames = frames
 
 
@@ -987,7 +999,8 @@ def generate_plots(data: Optional[dict] = None, file_path: Optional[str] = None,
         # Save to OUTPUT_DIR with the base filename
         base_name = Path(file_path).stem
         output_path = OUTPUT_DIR / f"{base_name}.html"
-        pio.write_html(fig, str(output_path))
+        # Disable auto-play to prevent animation from starting automatically
+        pio.write_html(fig, str(output_path), auto_play=False)
 
     if show_figure:
         fig.show()
@@ -1010,7 +1023,7 @@ def on_pre_build(config):
 
 def main():
     """Run the plot generation manually."""
-    generate_plots({})
+    generate_plots(file_path=DATA_PATH / "simple_example.json")
 
 
 if __name__ == "__main__":

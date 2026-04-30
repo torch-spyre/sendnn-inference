@@ -52,7 +52,7 @@ def build_prefilling_plot_data(step: dict, chunk_size) -> dict[str, Any]:
 
     # Check if the prompt range for the current chunk corresponds to an already-completed chunk
     # This happens when chunks_done > 0 and current prompt range hasn't advanced yet
-    # In this case, there's no "Current Prefilling Tokens"
+    # In this case, there's no "Currently Prefilling"
     expected_chunk_start = chunks_done * chunk_size - left_padding
     is_chunk_already_done = (chunks_done > 0 and chunk_prompt_token_start < expected_chunk_start)
     
@@ -145,9 +145,6 @@ def create_figure() -> go.Figure:
         column_widths=[1.0],
         row_heights=[1.0],
     )
-    # Set a fixed height for the figure with enough space for labels
-    # Add margins to prevent slider from being cropped and ensure label visibility
-    fig.update_layout(height=310, margin=dict(t=80, b=120))
     return fig
 
 
@@ -164,7 +161,7 @@ def add_initial_traces(
             marker_color="#A9A9A9",
             orientation="h",
             name="Padding",
-            legendrank=1004,
+            legendrank=1001,
         ),
         row=1,
         col=1,
@@ -176,7 +173,7 @@ def add_initial_traces(
             marker_color="#FF0092",
             orientation="h",
             name="Completed Prefill",
-            legendrank=1001,
+            legendrank=1004,
         ),
         row=1,
         col=1,
@@ -187,8 +184,8 @@ def add_initial_traces(
             y=prefilling_data["req_id"],
             marker_color="#FF6600",
             orientation="h",
-            name="Current Prefilling Tokens",
-            legendrank=1002,
+            name="Currently Prefilling",
+            legendrank=1003,
         ),
         row=1,
         col=1,
@@ -200,7 +197,7 @@ def add_initial_traces(
             marker_color="#FFCCAA",
             orientation="h",
             name="Remaining Prompt",
-            legendrank=1003,
+            legendrank=1002,
         ),
         row=1,
         col=1,
@@ -242,7 +239,7 @@ def create_frame(
         xanchor="center",
         yanchor="bottom",
         showarrow=False,
-        font=dict(size=16),
+        font=dict(size=12),
     )]
 
     return go.Frame(
@@ -285,9 +282,18 @@ def configure_figure_layout(fig: go.Figure, max_model_len: int, block_size: int,
             text=title_text,
             x=0.5,
             xanchor="center",
-            font=dict(size=16),
+            font=dict(size=14),
         ),
         barmode="stack",
+        legend=dict(
+            orientation="h",
+            yanchor="top",
+            y=-0.25,  # Moved legend further down to avoid x-axis labels
+            xanchor="center",
+            x=0.5,
+            font=dict(size=10)
+        ),
+        # Prevent auto-play on page load
         updatemenus=[
             {
                 "type": "buttons",
@@ -323,10 +329,11 @@ def configure_figure_layout(fig: go.Figure, max_model_len: int, block_size: int,
             {
                 "yanchor": "top",
                 "xanchor": "left",
-                "currentvalue": {"font": {"size": 16}, "prefix": "step: ", "visible": True, "xanchor": "right"},
-                "pad": {"b": 10, "t": 50},
+                "currentvalue": {"font": {"size": 10}, "prefix": "step: ", "visible": True, "xanchor": "right"},
+                "pad": {"b": 10, "t": 80},  # Increased top padding to provide space for x-axis labels
                 "len": 0.9,
                 "x": 0.1,
+                "font": {"size": 10},
                 "steps": [
                     {
                         "method": "animate",
@@ -360,12 +367,13 @@ def configure_figure_layout(fig: go.Figure, max_model_len: int, block_size: int,
             tickmode="array",
             tickvals=tick_vals,
             ticktext=tick_text,
+            tickfont=dict(size=10),
             row=1,
             col=1
         )
     else:
         # Fallback if chunk_size is not available
-        fig.update_xaxes(range=[0, max_model_len], dtick=block_size, row=1, col=1)
+        fig.update_xaxes(range=[0, max_model_len], dtick=block_size, tickfont=dict(size=10), row=1, col=1)
     
     fig.frames = frames
 
@@ -414,7 +422,8 @@ def generate_plots(data: Optional[dict] = None, file_path: Optional[str] = None,
         # Save to OUTPUT_DIR with the base filename
         base_name = Path(file_path).stem
         output_path = OUTPUT_DIR / f"{base_name}_prefill_only.html"
-        pio.write_html(fig, str(output_path))
+        # Disable auto-play to prevent animation from starting automatically
+        pio.write_html(fig, str(output_path), auto_play=False)
 
     if show_figure:
         fig.show()
@@ -437,7 +446,7 @@ def on_pre_build(config):
 
 def main():
     """Run the plot generation manually."""
-    generate_plots({})
+    generate_plots(file_path=DATA_PATH / "simple_example.json")
 
 
 if __name__ == "__main__":
