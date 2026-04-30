@@ -50,46 +50,60 @@ def build_waiting_plot_data(step: dict, num_waiting_displayed: int) -> tuple[lis
     return waiting_prompt_x, waiting_max_tokens_x, waiting_req_ids
 
 
-def build_prefilling_plot_data(step: dict, block_size: int) -> dict[str, Any]:
+def build_prefilling_plot_data(step: dict, chunk_size) -> dict[str, Any]:
     """Build prefilling-queue bar values for the single in-progress prefill request."""
-    is_prefill_step = step.get("step_type", "decode") == "prefill"
     prefilling = step.get("prefilling")
     if prefilling is None:
         return {
             "req_id": [" "],
+            "left_padding_x": [0.0],
             "chunks_done_x": [0.0],
             "chunk_current_x": [0.0],
             "chunks_remaining_x": [0.0],
-            "max_tokens_x": [0.0],
             "right_padding_x": [0.0],
             "label": [""],
             "chunk_info": "",
+            "active_chunk_info": "",
+            "active_chunk_start": 0.0,
+            "active_chunk_end": 0.0,
+            "has_active_chunk": False,
         }
 
     chunks_total = prefilling["chunks_total"]
     chunks_done = prefilling["chunks_done"]
+    chunk_prompt_token_start = prefilling["chunk_prompt_token_start"]
+    chunk_prompt_token_end = prefilling["chunk_prompt_token_end"]
+    left_padding = prefilling["left_padding"]
 
-    # Tokens already prefilled (completed chunks)
-    tokens_done = prefilling["chunk_start"]
-    # Tokens in current chunk being processed
-    tokens_current = prefilling["chunk_end"] - prefilling["chunk_start"]
-    # Tokens not yet reached (remaining chunks after this one)
-    tokens_remaining = prefilling["prompt_len"] - prefilling["chunk_end"]
-    tokens_remaining = max(tokens_remaining, 0)
-    
-    # Check if this is the last chunk
-    is_last_chunk = (chunks_done + 1) == chunks_total and is_prefill_step
-    
-    if is_last_chunk:
-        # Calculate right-padding to the next block boundary
-        prompt_end = prefilling["chunk_end"]
-        # Round up to next block boundary
-        next_block_boundary = ((prompt_end + block_size - 1) // block_size) * block_size
-        right_padding = next_block_boundary - prompt_end
-        max_tokens = 0.0
+    # Check if the current chunk range corresponds to an already-completed chunk
+    # This happens when chunks_done > 0 and chunk_start hasn't advanced yet
+    # In this case, there's no "Current Prefilling Tokens"
+    expected_chunk_start = chunks_done * chunk_size - left_padding
+    is_chunk_already_done = (chunks_done > 0 and chunk_prompt_token_start < expected_chunk_start)
+
+    if is_chunk_already_done:
+        # The chunk shown is already done, no current prefilling tokens
+        tokens_done = chunk_prompt_token_end
+        tokens_current = 0
+        tokens_remaining = prefilling["prompt_len"] - chunk_prompt_token_end
+        active_chunk_info = ""
+        active_chunk_start = 0.0
+        active_chunk_end = 0.0
+        has_active_chunk = False
     else:
-        right_padding = 0.0
-        max_tokens = prefilling["max_tokens"]
+        # Normal case: chunk is being processed
+        tokens_done = chunk_prompt_token_start
+        tokens_current = chunk_prompt_token_end - chunk_prompt_token_start
+        tokens_remaining = prefilling["prompt_len"] - chunk_prompt_token_end
+        active_chunk_info = f" (chunk {chunks_done + 1} / {chunks_total})"
+        active_chunk_start = float(prefilling.get("left_padding", 0)) + float(chunk_prompt_token_start)
+        active_chunk_end = float(prefilling.get("left_padding", 0)) + float(chunk_prompt_token_start + chunk_size)
+        has_active_chunk = tokens_current > 0
+
+    tokens_remaining = max(tokens_remaining, 0)
+
+    left_padding = float(prefilling.get("left_padding", 0))
+    right_padding = float(prefilling.get("right_padding", 0))
 
     chunk_label = f"chunk {chunks_done + 1}/{chunks_total}"
     req_label = f"{prefilling['id']}"
@@ -97,13 +111,18 @@ def build_prefilling_plot_data(step: dict, block_size: int) -> dict[str, Any]:
 
     return {
         "req_id": [req_label],
+        "left_padding_x": [left_padding],
         "chunks_done_x": [float(tokens_done)],
         "chunk_current_x": [float(tokens_current)],
         "chunks_remaining_x": [float(tokens_remaining)],
-        "max_tokens_x": [float(max_tokens)],
         "right_padding_x": [float(right_padding)],
         "label": [chunk_label],
         "chunk_info": chunk_info,
+        "active_chunk_info": active_chunk_info,
+        "active_chunk_start": active_chunk_start,
+        "active_chunk_end": active_chunk_end,
+        "has_active_chunk": has_active_chunk,
+        "prompt_len": prefilling["prompt_len"],
     }
 
 
@@ -305,7 +324,7 @@ def build_generated_tokens_annotations(
                 xref="paper",
                 yref="paper",
                 x=1.03,
-                y=0.55,
+                y=0.51,
                 xanchor="left",
                 yanchor="middle",
                 text="<b>Generated Tokens</b>",
@@ -387,24 +406,61 @@ def build_volume_overlay(batch_size: int, tkv_values: list[float], num_decoding:
     return shapes, annotations
 
 
-def build_inactive_overlay_shapes(is_prefill_active: bool) -> list[dict]:
+def build_prefilling_chunk_overlay(prefilling_data: dict[str, Any], chunk_size: int) -> list[dict]:
+    """Build an overlay rectangle around the currently active prefilling chunk."""
+    if not prefilling_data.get("has_active_chunk", False):
+        return [
+            dict(
+                type="rect",
+                xref="x2",
+                yref="y2",
+                x0=0,
+                y0=-0.45,
+                x1=0,
+                y1=0.45,
+                fillcolor="rgba(0, 0, 0, 0)",
+                line=dict(color="rgba(0, 0, 0, 0)", width=3),
+                layer="above",
+            )
+        ]
+
+    return [
+        dict(
+            type="rect",
+            xref="x2",
+            yref="y2",
+            x0=(prefilling_data["active_chunk_start"] // chunk_size) * chunk_size,
+            y0=-0.45,
+            x1=(prefilling_data["active_chunk_end"] // chunk_size) * chunk_size,
+            y1=0.45,
+            fillcolor="rgba(255, 0, 0, 0.10)",
+            line=dict(color="rgba(255, 0, 0, 0.95)", width=2),
+            layer="above",
+        )
+    ]
+
+
+def build_inactive_overlay_shapes(is_prefill_active: bool, has_prefilling: bool, has_decoding: bool) -> list[dict]:
     """Build semi-transparent overlay rectangles for inactive sections.
     
     Args:
         is_prefill_active: True if prefill is running, False if decode is running
+        has_prefilling: True if there is a request in the prefilling queue
+        has_decoding: True if there are requests in the decoding queue
         
     Returns:
         List of shape dictionaries for overlaying inactive sections
     """
     shapes = []
     
-    if is_prefill_active:
-        # Prefill is active, so overlay the decode section (row 3)
+    # If both queues are empty, overlay both sections
+    if not has_prefilling or not is_prefill_active:
+        # Overlay prefill section (row 2)
         shapes.append(
             dict(
                 type="rect",
-                xref="x3 domain",
-                yref="y3 domain",
+                xref="x2 domain",
+                yref="y2 domain",
                 x0=0,
                 y0=0,
                 x1=1,
@@ -414,13 +470,13 @@ def build_inactive_overlay_shapes(is_prefill_active: bool) -> list[dict]:
                 layer="above",
             )
         )
-    else:
-        # Decode is active, so overlay the prefill section (row 2)
+    if is_prefill_active:
+        # Overlay decode section (row 3)
         shapes.append(
             dict(
                 type="rect",
-                xref="x2 domain",
-                yref="y2 domain",
+                xref="x3 domain",
+                yref="y3 domain",
                 x0=0,
                 y0=0,
                 x1=1,
@@ -485,7 +541,7 @@ def add_initial_traces(
         col=1,
     )
 
-    # --- Decoding queue (row 3) - Added first to control legend order ---
+    # --- Decoding queue (row 3) - Keep original bar order ---
     fig.add_trace(
         go.Bar(
             x=decoding_data["padding_x"],
@@ -495,6 +551,7 @@ def add_initial_traces(
             name="Padding",
             legendgroup="general",
             legendgrouptitle_text="General",
+            legendrank=1005,
         ),
         row=3,
         col=1,
@@ -507,6 +564,7 @@ def add_initial_traces(
             orientation="h",
             name="Prompt Tokens",
             legendgroup="general",
+            legendrank=1001,
         ),
         row=3,
         col=1,
@@ -519,6 +577,7 @@ def add_initial_traces(
             orientation="h",
             name="Generated Tokens",
             legendgroup="general",
+            legendrank=1002,
         ),
         row=3,
         col=1,
@@ -531,6 +590,7 @@ def add_initial_traces(
             orientation="h",
             name="Completed Request",
             legendgroup="general",
+            legendrank=1004,
         ),
         row=3,
         col=1,
@@ -543,21 +603,36 @@ def add_initial_traces(
             orientation="h",
             name="Max Output Tokens",
             legendgroup="general",
+            legendrank=1003,
         ),
         row=3,
         col=1,
     )
 
-    # --- Prefilling queue (row 2) ---
+    # --- Prefilling queue (row 2) - Keep original bar order ---
+    fig.add_trace(
+        go.Bar(
+            x=prefilling_data["left_padding_x"],
+            y=prefilling_data["req_id"],
+            marker_color="#A9A9A9",
+            orientation="h",
+            name="Padding",
+            legendgroup="chunked_prefill",
+            legendgrouptitle_text="Chunked Prefill",
+            legendrank=2004,
+        ),
+        row=2,
+        col=1,
+    )
     fig.add_trace(
         go.Bar(
             x=prefilling_data["chunks_done_x"],
             y=prefilling_data["req_id"],
-            marker_color="#FFCCAA",
+            marker_color="#FF0092",
             orientation="h",
-            name="Prefilled & Remaining Prompt",
+            name="Completed Prefill",
             legendgroup="chunked_prefill",
-            legendgrouptitle_text="Chunked Prefill",
+            legendrank=2001,
         ),
         row=2,
         col=1,
@@ -568,8 +643,9 @@ def add_initial_traces(
             y=prefilling_data["req_id"],
             marker_color="#FF6600",
             orientation="h",
-            name="Current Chunk",
+            name="Current Prefilling Tokens",
             legendgroup="chunked_prefill",
+            legendrank=2002,
         ),
         row=2,
         col=1,
@@ -580,21 +656,9 @@ def add_initial_traces(
             y=prefilling_data["req_id"],
             marker_color="#FFCCAA",
             orientation="h",
-            name="Prefilled & Remaining Prompt",
+            name="Remaining Prompt",
             legendgroup="chunked_prefill",
-            showlegend=False,
-        ),
-        row=2,
-        col=1,
-    )
-    fig.add_trace(
-        go.Bar(
-            x=prefilling_data["max_tokens_x"],
-            y=prefilling_data["req_id"],
-            marker_color="#99ccff",
-            orientation="h",
-            name="Max Output Tokens",
-            showlegend=False,
+            legendrank=2003,
         ),
         row=2,
         col=1,
@@ -605,7 +669,7 @@ def add_initial_traces(
             y=prefilling_data["req_id"],
             marker_color="#A9A9A9",
             orientation="h",
-            name="Right Padding",
+            name="Padding",
             legendgroup="chunked_prefill",
             showlegend=False,
         ),
@@ -616,13 +680,12 @@ def add_initial_traces(
 
 def create_frame(
     step_index: int,
-    step_type: str,
     waiting_data: tuple[list[float], list[float], list[str]],
     prefilling_data: dict[str, Any],
     decoding_data: dict[str, list],
     batch_size: int,
-    chunk_size: int,
     is_prefill_active: bool,
+    chunk_size: int,
 ) -> go.Frame:
     """Create one animation frame."""
     waiting_prompt_x, waiting_max_tokens_x, waiting_req_ids = waiting_data
@@ -642,8 +705,13 @@ def create_frame(
     annotations.extend(volume_annotations)
 
     # Add overlay rectangles to show inactive sections
-    overlay_shapes = build_inactive_overlay_shapes(is_prefill_active)
+    has_prefilling = bool(prefilling_data["req_id"][0].strip())
+    has_decoding = num_decoding > 0
+    overlay_shapes = build_inactive_overlay_shapes(is_prefill_active, has_prefilling, has_decoding)
     shapes.extend(overlay_shapes)
+
+    # Add overlay rectangle for the currently active prefilling chunk
+    shapes.extend(build_prefilling_chunk_overlay(prefilling_data, chunk_size))
 
     # Add generated tokens annotations
     generated_tokens_annotations = build_generated_tokens_annotations(
@@ -654,8 +722,10 @@ def create_frame(
 
     step_label = f"{step_index}"
     
-    # Update the prefilling subplot title with chunk size and chunk information
-    prefilling_title = f"Prefilling (chunk size: {chunk_size}){prefilling_data.get('chunk_info', '')}"
+    # Update the prefilling subplot title with prompt length and active chunk information
+    prompt_len = prefilling_data.get('prompt_len')
+    prompt_len_str = f" (prompt len {prompt_len})" if prompt_len is not None else ""
+    prefilling_title = f"Prefilling{prompt_len_str}{prefilling_data.get('active_chunk_info', '')}"
     annotations[1] = dict(
         text=prefilling_title,
         xref="paper",
@@ -676,10 +746,10 @@ def create_frame(
             go.Bar(x=decoding_data["decoded_x"], y=decoding_data["decoding_req_ids"]),
             go.Bar(x=decoding_data["completed_x"], y=decoding_data["decoding_req_ids"]),
             go.Bar(x=decoding_data["reserved_x"], y=decoding_data["decoding_req_ids"]),
+            go.Bar(x=prefilling_data["left_padding_x"], y=prefilling_data["req_id"]),
             go.Bar(x=prefilling_data["chunks_done_x"], y=prefilling_data["req_id"]),
             go.Bar(x=prefilling_data["chunk_current_x"], y=prefilling_data["req_id"]),
             go.Bar(x=prefilling_data["chunks_remaining_x"], y=prefilling_data["req_id"]),
-            go.Bar(x=prefilling_data["max_tokens_x"], y=prefilling_data["req_id"]),
             go.Bar(x=prefilling_data["right_padding_x"], y=prefilling_data["req_id"]),
         ],
         layout=go.Layout(
@@ -690,7 +760,7 @@ def create_frame(
     )
 
 
-def build_frames(steps: list[dict], batch_size: int, num_waiting_displayed: int, display_prefill_only: bool, block_size: int, chunk_size: int) -> list[go.Frame]:
+def build_frames(steps: list[dict], batch_size: int, num_waiting_displayed: int, display_prefill_only: bool, chunk_size: int) -> list[go.Frame]:
     """Build animation frames for all scheduling steps."""
     frames = []
     previous_frame = None
@@ -699,7 +769,7 @@ def build_frames(steps: list[dict], batch_size: int, num_waiting_displayed: int,
     for i, step in enumerate(steps):
         step_type = step.get("step_type", "decode")
         waiting_data = build_waiting_plot_data(step, num_waiting_displayed)
-        prefilling_data = build_prefilling_plot_data(step, block_size)
+        prefilling_data = build_prefilling_plot_data(step, chunk_size)
         decoding_data = build_decoding_plot_data(
             step=step,
             batch_size=batch_size,
@@ -709,7 +779,7 @@ def build_frames(steps: list[dict], batch_size: int, num_waiting_displayed: int,
         # Determine if prefill is active: prefill is active if the step type is "prefill"
         is_prefill_active = step_type == "prefill"
         
-        frame = create_frame(i, step_type, waiting_data, prefilling_data, decoding_data, batch_size, chunk_size, is_prefill_active)
+        frame = create_frame(i, waiting_data, prefilling_data, decoding_data, batch_size, is_prefill_active, chunk_size)
 
         if not display_prefill_only:
             frames.append(frame)
@@ -728,7 +798,7 @@ def build_frames(steps: list[dict], batch_size: int, num_waiting_displayed: int,
     return frames
 
 
-def configure_figure_layout(fig: go.Figure, batch_size: int, max_model_len: int, block_size: int, tkv_values: list[float], frames: list[go.Frame], metadata: dict, initial_is_prefill_active: bool, initial_num_decoding: int) -> None:
+def configure_figure_layout(fig: go.Figure, batch_size: int, max_model_len: int, block_size: int, tkv_values: list[float], frames: list[go.Frame], metadata: dict, initial_is_prefill_active: bool, initial_num_decoding: int, initial_prefilling_data: dict[str, Any]) -> None:
     """Apply axis, TKV overlay, and animation controls to the figure."""
     initial_shapes, initial_annotations = build_tkv_overlay(
         batch_size=batch_size,
@@ -745,10 +815,15 @@ def configure_figure_layout(fig: go.Figure, batch_size: int, max_model_len: int,
     initial_annotations.extend(initial_volume_annotations)
     
     # Add initial overlay for inactive sections
-    initial_overlay_shapes = build_inactive_overlay_shapes(initial_is_prefill_active)
+    initial_has_prefilling = bool(initial_prefilling_data["req_id"][0].strip())
+    initial_has_decoding = initial_num_decoding > 0
+    initial_overlay_shapes = build_inactive_overlay_shapes(initial_is_prefill_active, initial_has_prefilling, initial_has_decoding)
     initial_shapes.extend(initial_overlay_shapes)
 
     chunk_size = metadata.get("chunk_size", "N/A")
+    
+    # Add initial overlay rectangle for the currently active prefilling chunk
+    initial_shapes.extend(build_prefilling_chunk_overlay(initial_prefilling_data, chunk_size))
     max_batch_tkv_limit = metadata.get("max_batch_tkv_limit", "N/A")
     title_text = (
         f"Max Model Len: {max_model_len} | Max Num Seqs: {batch_size} | "
@@ -872,7 +947,7 @@ def generate_plots(data: Optional[dict] = None, file_path: Optional[str] = None)
 
     step0 = steps[0]
     initial_waiting_data = build_waiting_plot_data(step0, NUM_WAITING_DISPLAYED)
-    initial_prefilling_data = build_prefilling_plot_data(step0, block_size)
+    initial_prefilling_data = build_prefilling_plot_data(step0, chunk_size)
     initial_decoding_data = build_decoding_plot_data(
         step=step0,
         batch_size=batch_size,
@@ -888,8 +963,7 @@ def generate_plots(data: Optional[dict] = None, file_path: Optional[str] = None)
         batch_size=batch_size,
         num_waiting_displayed=NUM_WAITING_DISPLAYED,
         display_prefill_only=DISPLAY_PREFILL_ONLY,
-        block_size=block_size,
-        chunk_size=chunk_size,
+        chunk_size=chunk_size
     )
     
     # Calculate initial number of decoding requests
@@ -905,6 +979,7 @@ def generate_plots(data: Optional[dict] = None, file_path: Optional[str] = None)
         metadata=metadata,
         initial_is_prefill_active=initial_is_prefill_active,
         initial_num_decoding=initial_num_decoding,
+        initial_prefilling_data=initial_prefilling_data,
     )
 
     if SAVE_OUTPUT:

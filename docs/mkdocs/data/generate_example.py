@@ -47,13 +47,15 @@ class _Prefilling:
     prompt_len: int
     max_tokens: int
     chunks_total: int
+    left_padding: int = 0
+    right_padding: int = 0
     chunks_done: int = 0
 
-    def chunk_start(self, chunk_size: int) -> int:
-        return self.chunks_done * chunk_size
+    def chunk_prompt_token_start(self, chunk_size: int) -> int:
+        return max(0, self.chunks_done * chunk_size - self.left_padding)
 
-    def chunk_end(self, chunk_size: int) -> int:
-        return min((self.chunks_done + 1) * chunk_size, self.prompt_len)
+    def chunk_prompt_token_end(self, chunk_size: int) -> int:
+        return min((self.chunks_done + 1) * chunk_size - self.left_padding, self.prompt_len)
 
 
 @dataclass
@@ -192,11 +194,17 @@ def simulate(config: Config, request_defs: list[RequestDef]) -> list[dict]:
             and not (config.interleave and last_was_prefill and bool(decoding))
         ):
             w = waiting.pop(0)
+            padded_prompt_len = math.ceil(w.prompt_len / config.block_size) * config.block_size
+            chunk_count = math.ceil(w.prompt_len / config.chunk_size)
+            left_padding = chunk_count * config.chunk_size - padded_prompt_len
+            right_padding = padded_prompt_len - w.prompt_len
             prefilling = _Prefilling(
                 id=w.id,
                 prompt_len=w.prompt_len,
                 max_tokens=w.max_tokens,
-                chunks_total=math.ceil(w.prompt_len / config.chunk_size),
+                chunks_total=chunk_count,
+                left_padding=left_padding,
+                right_padding=right_padding,
             )
 
         # Process a prefill chunk only if a request is being prefilled AND either
@@ -229,8 +237,10 @@ def simulate(config: Config, request_defs: list[RequestDef]) -> list[dict]:
                     "max_tokens": prefilling.max_tokens,
                     "chunks_total": prefilling.chunks_total,
                     "chunks_done": prefilling.chunks_done,
-                    "chunk_start": prefilling.chunk_start(config.chunk_size),
-                    "chunk_end": prefilling.chunk_end(config.chunk_size),
+                    "chunk_prompt_token_start": prefilling.chunk_prompt_token_start(config.chunk_size),
+                    "chunk_prompt_token_end": prefilling.chunk_prompt_token_end(config.chunk_size),
+                    "left_padding": prefilling.left_padding,
+                    "right_padding": prefilling.right_padding,
                 },
                 "decoding": decode_rows,
             }
@@ -257,23 +267,25 @@ def simulate(config: Config, request_defs: list[RequestDef]) -> list[dict]:
                 ],
                 # Non-null when a request is stuck waiting to complete its last
                 # prefill chunk (volumetric constraint not yet satisfied).
-                # chunk_start/end show the last *completed* chunk (chunks_done-1),
+                # chunk_prompt_token_start/end show the last *completed* chunk (chunks_done-1),
                 # not the pending last chunk, so the display reflects what was
                 # actually processed so far. Edge case: if no chunk is done yet
                 # (chunks_done=0, single-chunk request blocked immediately),
                 # fall back to showing the pending chunk 0.
-                "prefilling": {
+                "prefilling": ({
                     "id": prefilling.id,
                     "prompt_len": prefilling.prompt_len,
                     "max_tokens": prefilling.max_tokens,
                     "chunks_total": prefilling.chunks_total,
                     "chunks_done": prefilling.chunks_done,
-                    "chunk_start": max(0, prefilling.chunks_done - 1) * config.chunk_size,
-                    "chunk_end": min(
-                        max(1, prefilling.chunks_done) * config.chunk_size,
+                    "chunk_prompt_token_start": max(0, max(0, prefilling.chunks_done - 1) * config.chunk_size - prefilling.left_padding),
+                    "chunk_prompt_token_end": min(
+                        max(1, prefilling.chunks_done) * config.chunk_size - prefilling.left_padding,
                         prefilling.prompt_len,
                     ),
-                } if prefilling is not None else None,
+                    "left_padding": prefilling.left_padding,
+                    "right_padding": prefilling.right_padding,
+                } if prefilling is not None else None),
                 "decoding": decode_rows,
             }
             last_was_prefill = False
@@ -304,7 +316,7 @@ def main() -> None:
         RequestDef(0, 100, 40, 9),
         RequestDef(0, 80, 30, 30),
         RequestDef(0, 332, 100, 50),
-        RequestDef(0, 332, 100, 50),
+        RequestDef(0, 268, 100, 50),
         RequestDef(66, 145, 100, 50),
         RequestDef(68, 16, 100, 50),
         RequestDef(71, 100, 100, 50),
