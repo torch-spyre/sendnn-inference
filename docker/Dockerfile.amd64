@@ -1,6 +1,6 @@
-# This is a reference dockerfile for vLLM Spyre support on an x86 host
-ARG BASE_IMAGE_URL="quay.io/ibm-aiu/spyre-base"
-ARG BASE_IMAGE_TAG="2025_08_21-amd64"
+# This is a reference dockerfile for SenDNN Inference support on an x86 host
+ARG BASE_IMAGE_URL="quay.io/ibm-aiu/spyre-runtime"
+ARG BASE_IMAGE_TAG="latest"
 
 ##############################################
 # Base
@@ -19,7 +19,7 @@ RUN dnf install -y \
 ##############################################
 FROM base as builder
 
-# This stage builds vLLM Spyre and installs its dependencies into a new venv.
+# This stage builds SenDNN-Inference and installs its dependencies into a new venv.
 # This is done with system site-packages access so that we can use the installs
 # of torch_sendnn etc. from the driver image.
 
@@ -46,10 +46,10 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # Always install vllm with empty target device
 ENV VLLM_TARGET_DEVICE=empty
 
-ADD . /usr/src/vllm-spyre
+ADD . /usr/src/sendnn-inference
 
-# Use uv to build the vllm-spyre project, with dependencies locked
-WORKDIR /usr/src/vllm-spyre
+# Use uv to build the sendnn-inference project, with dependencies locked
+WORKDIR /usr/src/sendnn-inference
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --no-dev --no-editable --frozen
 
@@ -79,7 +79,7 @@ COPY docker/.senlib.json /home/senuser
 # Common vLLM-specific env setup
 ENV MASTER_ADDR=localhost \
     MASTER_PORT=12355 \
-    VLLM_PLUGINS=spyre
+    VLLM_PLUGINS=sendnn_inference
 
 RUN true \
     && mkdir -p /home/senuser/.cache \

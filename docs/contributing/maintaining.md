@@ -1,4 +1,4 @@
-# Maintaining vLLM Spyre
+# Maintaining SenDNN Inference
 
 This page describes a few key maintenance tasks and how to accomplish them.
 
@@ -13,8 +13,8 @@ When a new version of vLLM is released, the plugin usually needs to be updated t
 
 To update the version of vLLM used by the plugin, the pyproject.toml needs to be updated in two places:
 
-1. [tool.uv.sources.vllm](https://github.com/vllm-project/vllm-spyre/blob/v2.0.0-rc.1/pyproject.toml#L79)
-2. [project.dependencies](https://github.com/vllm-project/vllm-spyre/blob/v2.0.0-rc.1/pyproject.toml#L16)
+1. [tool.uv.sources.vllm](https://github.com/torch-spyre/sendnn-inference/blob/v2.0.0-rc.1/pyproject.toml#L79)
+2. [project.dependencies](https://github.com/torch-spyre/sendnn-inference/blob/v2.0.0-rc.1/pyproject.toml#L16)
 
 !!! note
     We specify the source tag for vLLM here because we generally need to install vLLM from source to avoid
@@ -28,9 +28,9 @@ with the new version of vLLM, and you can move on to fixing the failures.
 
 ### Adding forward compatibility
 
-When updating vllm-spyre code for a new version of vLLM, it's important to ensure that the code remains
+When updating sendnn-inference code for a new version of vLLM, it's important to ensure that the code remains
 backwards compatible with older releases. This usually means conditionally adding new method arguments or
-new dataclass fields. We provide two utilities in [compat_utils](https://github.com/vllm-project/vllm-spyre/blob/v2.0.0-rc.1/vllm_spyre/compat_utils.py)
+new dataclass fields. We provide two utilities in [compat_utils](https://github.com/torch-spyre/sendnn-inference/blob/v2.0.0-rc.1/sendnn_inference/compat_utils.py)
 to make this easy to do.
 
 For example:
@@ -44,7 +44,7 @@ foo(a, b, **kwargs)
 
 Whenever code like this is added, we always make sure to add a test that will begin failing once the
 lowest supported vLLM version no longer requires the backwards compatibility. This allows us to clean
-up the code on the go as we drop older vLLM support. See [examples of compatibility tests here](https://github.com/vllm-project/vllm-spyre/blob/v1.8.0/tests/utils/test_upstream_compatibility.py).
+up the code on the go as we drop older vLLM support. See [examples of compatibility tests here](https://github.com/torch-spyre/sendnn-inference/blob/v1.8.0/tests/utils/test_upstream_compatibility.py).
 
 ### Testing all supported vLLM versions
 
@@ -52,7 +52,7 @@ We maintain a matrix of test jobs that runs a small set of tests on every suppor
 This helps to ensure that our backwards compatibility is implemented correctly.
 
 When adding a new version of vLLM, we need to add an entry to this test matrix to add a test job for
-the version of vLLM that we just upgraded from. See examples of [the test matrix here](https://github.com/vllm-project/vllm-spyre/blob/v1.8.0/.github/workflows/test.yml#L83-L173).
+the version of vLLM that we just upgraded from. See examples of [the test matrix here](https://github.com/torch-spyre/sendnn-inference/blob/v1.8.0/.github/workflows/test.yml#L83-L173).
 
 ### Removing support for a vLLM version
 
@@ -60,14 +60,14 @@ We periodically raise the vLLM lower bound once all key stakeholders agree it is
 
 To do this:
 
-1. Update the lower bound in [project.dependencies](https://github.com/vllm-project/vllm-spyre/blob/v2.0.0-rc.1/pyproject.toml#L16)
-2. Update the [test matrix](https://github.com/vllm-project/vllm-spyre/blob/v1.8.0/.github/workflows/test.yml#L83-L173) to remove the tests for any versions of vllm that we removed support for
+1. Update the lower bound in [project.dependencies](https://github.com/torch-spyre/sendnn-inference/blob/v2.0.0-rc.1/pyproject.toml#L16)
+2. Update the [test matrix](https://github.com/torch-spyre/sendnn-inference/blob/v1.8.0/.github/workflows/test.yml#L83-L173) to remove the tests for any versions of vllm that we removed support for
     1. Ensure that the new lowest vLLM version is run with `vllm_version.name: "vLLM:lowest"` and runs the `compat` marker
 3. For any failing `compat` tests, remove the backwards compatibility code that is no longer required
 
 ## Managing Dependencies
 
-Dependencies for vllm-spyre are managed with the `uv` tool. Usually, updating a dependency is as easy as running `uv add`, which will update both the pyproject.toml and the uv.lock file. An example is:
+Dependencies for sendnn-inference are managed with the `uv` tool. Usually, updating a dependency is as easy as running `uv add`, which will update both the pyproject.toml and the uv.lock file. An example is:
 
 ```shell
 uv add "ibm-fms>=1.8.0,<2.0"
@@ -93,12 +93,12 @@ All decoder models used for text generation must be implemented in [FMS](https:/
 FMS takes care of ensuring that the model code is compatible with the spyre hardware and the torch_sendnn
 compilation pathway.
 
-In order to be ready to run on vllm-spyre, the models must pass tests with [AFTU](https://github.com/foundation-model-stack/aiu-fms-testing-utils) with paged attention and chunked prefill enabled.
+In order to be ready to run on sendnn-inference, the models must pass tests with [AFTU](https://github.com/foundation-model-stack/aiu-fms-testing-utils) with paged attention and chunked prefill enabled.
 
-Once the model is ready to run on spyre hardware, it can be added to vllm-spyre by:
+Once the model is ready to run on spyre hardware, it can be added to sendnn-inference by:
 
-1. Updating the [model_loader](https://github.com/vllm-project/vllm-spyre/blob/v2.0.0-rc.1/vllm_spyre/model_executor/model_loader/spyre.py#L109-L130) to allow the model architecture, making any necessary adjustments
-2. Adding working configuration overrides to [model_configs.yaml](https://github.com/vllm-project/vllm-spyre/blob/v2.0.0-rc.1/vllm_spyre/config/model_configs.yaml)
+1. Updating the [model_loader](https://github.com/torch-spyre/sendnn-inference/blob/v2.0.0-rc.1/sendnn_inference/model_executor/model_loader/spyre.py#L109-L130) to allow the model architecture, making any necessary adjustments
+2. Adding working configuration overrides to [model_configs.yaml](https://github.com/torch-spyre/sendnn-inference/blob/v2.0.0-rc.1/sendnn_inference/config/model_configs.yaml)
 
 For multimodal models, see the docs on [adding multimodal models](./multimodal/adding_new_models.md)
 
@@ -134,4 +134,4 @@ For any changes to dependencies or changes to model runner code, a thorough set 
 
 ## Cutting Releases
 
-See <https://github.com/vllm-project/vllm-spyre/blob/main/RELEASING.md>
+See <https://github.com/torch-spyre/sendnn-inference/blob/main/RELEASING.md>

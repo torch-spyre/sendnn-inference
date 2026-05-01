@@ -7,8 +7,8 @@ from unittest.mock import patch
 
 import pytest
 
-from vllm_spyre import envs
-from vllm_spyre.config.model_registry import ModelConfigRegistry
+from sendnn_inference import envs
+from sendnn_inference.config.model_registry import ModelConfigRegistry
 
 
 @pytest.fixture
@@ -44,11 +44,11 @@ def clear_registry():
 
 
 class TestEnvVarConfigPath:
-    """Tests for VLLM_SPYRE_MODEL_CONFIG_FILE environment variable."""
+    """Tests for SENDNN_INFERENCE_MODEL_CONFIG_FILE environment variable."""
 
     def test_env_var_overrides_default(self, temp_config_file):
         """Test that env var is used when no explicit path provided."""
-        with patch.dict(os.environ, {"VLLM_SPYRE_MODEL_CONFIG_FILE": temp_config_file}):
+        with patch.dict(os.environ, {"SENDNN_INFERENCE_MODEL_CONFIG_FILE": temp_config_file}):
             envs.clear_env_cache()
             registry = ModelConfigRegistry.get_instance()
             registry.initialize()
@@ -71,7 +71,7 @@ models:
             explicit_path = f.name
 
         try:
-            with patch.dict(os.environ, {"VLLM_SPYRE_MODEL_CONFIG_FILE": temp_config_file}):
+            with patch.dict(os.environ, {"SENDNN_INFERENCE_MODEL_CONFIG_FILE": temp_config_file}):
                 envs.clear_env_cache()
                 registry = ModelConfigRegistry.get_instance()
                 registry.initialize(config_path=Path(explicit_path))
@@ -84,7 +84,9 @@ models:
 
     def test_nonexistent_file_raises_error(self):
         """Test that nonexistent file raises FileNotFoundError."""
-        with patch.dict(os.environ, {"VLLM_SPYRE_MODEL_CONFIG_FILE": "/tmp/nonexistent.yaml"}):
+        with patch.dict(
+            os.environ, {"SENDNN_INFERENCE_MODEL_CONFIG_FILE": "/tmp/nonexistent.yaml"}
+        ):
             envs.clear_env_cache()
             registry = ModelConfigRegistry.get_instance()
 
@@ -98,7 +100,7 @@ models:
             empty_path = f.name
 
         try:
-            with patch.dict(os.environ, {"VLLM_SPYRE_MODEL_CONFIG_FILE": empty_path}):
+            with patch.dict(os.environ, {"SENDNN_INFERENCE_MODEL_CONFIG_FILE": empty_path}):
                 envs.clear_env_cache()
                 registry = ModelConfigRegistry.get_instance()
                 registry.initialize()

@@ -5,9 +5,9 @@ import os
 import pytest
 from unittest.mock import Mock
 
-from vllm_spyre import envs as envs_spyre
-from vllm_spyre.config.model_config import DeviceConfig, ModelConfig
-from vllm_spyre.config.configurators.model_configurator import (
+from sendnn_inference import envs as envs_spyre
+from sendnn_inference.config.model_config import DeviceConfig, ModelConfig
+from sendnn_inference.config.configurators.model_configurator import (
     ConfigValue,
     ConfigurationSummary,
     ModelConfigurator,
@@ -70,11 +70,11 @@ class TestEnvironmentVariables:
         assert os.getenv("TEST_VAR") == "123"
 
     def test_log_warning_when_different_value_no_override(
-        self, monkeypatch, model_config, caplog_vllm_spyre
+        self, monkeypatch, model_config, caplog_sendnn_inference
     ):
         """Test warning logged when already set to different value (no override)."""
         monkeypatch.setenv("TEST_VAR", "456")
-        monkeypatch.setenv("VLLM_SPYRE_REQUIRE_KNOWN_CONFIG", "0")
+        monkeypatch.setenv("SENDNN_INFERENCE_REQUIRE_KNOWN_CONFIG", "0")
 
         device_config = DeviceConfig(tp_size=4, env_vars={"TEST_VAR": "123"})
         configurator = ModelConfigurator(model_config, device_config)
@@ -86,12 +86,12 @@ class TestEnvironmentVariables:
         assert result.applied == "456"
         assert result.was_overridden() is True
         assert os.getenv("TEST_VAR") == "456"  # Not overridden
-        assert "not using model default" in caplog_vllm_spyre.text.lower()
+        assert "not using model default" in caplog_sendnn_inference.text.lower()
 
     def test_raise_error_when_require_known_config_and_conflict(self, monkeypatch, model_config):
-        """Test RuntimeError when VLLM_SPYRE_REQUIRE_KNOWN_CONFIG=1 and conflict."""
+        """Test RuntimeError when SENDNN_INFERENCE_REQUIRE_KNOWN_CONFIG=1 and conflict."""
         monkeypatch.setenv("TEST_VAR", "456")
-        monkeypatch.setenv("VLLM_SPYRE_REQUIRE_KNOWN_CONFIG", "1")
+        monkeypatch.setenv("SENDNN_INFERENCE_REQUIRE_KNOWN_CONFIG", "1")
 
         # Clear the env cache to pick up the new value
         envs_spyre.clear_env_cache()
@@ -99,7 +99,7 @@ class TestEnvironmentVariables:
         device_config = DeviceConfig(tp_size=4, env_vars={"TEST_VAR": "123"})
         configurator = ModelConfigurator(model_config, device_config)
 
-        with pytest.raises(RuntimeError, match="VLLM_SPYRE_REQUIRE_KNOWN_CONFIG"):
+        with pytest.raises(RuntimeError, match="SENDNN_INFERENCE_REQUIRE_KNOWN_CONFIG"):
             configurator.set_env_var("TEST_VAR", "123")
 
     def test_set_multiple_env_vars_from_device_config(self, monkeypatch, model_config, vllm_config):
@@ -156,10 +156,10 @@ class TestGPUBlocksOverride:
         assert summary.num_blocks.was_overridden() is False
 
     def test_log_warning_when_user_set_different_value(
-        self, monkeypatch, model_config, vllm_config, caplog_vllm_spyre
+        self, monkeypatch, model_config, vllm_config, caplog_sendnn_inference
     ):
         """Test warning when user already set --num-gpu-blocks-override to different value."""
-        monkeypatch.setenv("VLLM_SPYRE_REQUIRE_KNOWN_CONFIG", "0")
+        monkeypatch.setenv("SENDNN_INFERENCE_REQUIRE_KNOWN_CONFIG", "0")
         envs_spyre.clear_env_cache()
 
         vllm_config.cache_config.num_gpu_blocks_override = 500  # User set this
@@ -173,13 +173,14 @@ class TestGPUBlocksOverride:
         assert summary.num_blocks.default == 1000  # Summary shows what we wanted
         assert summary.num_blocks.applied == 500  # And what was actually set
         assert summary.num_blocks.was_overridden() is True
-        assert "not using model default" in caplog_vllm_spyre.text.lower()
+        assert "not using model default" in caplog_sendnn_inference.text.lower()
 
     def test_raise_error_when_require_known_config_and_user_override_conflicts(
         self, monkeypatch, model_config, vllm_config
     ):
-        """Test RuntimeError when VLLM_SPYRE_REQUIRE_KNOWN_CONFIG=1 and user override conflicts."""
-        monkeypatch.setenv("VLLM_SPYRE_REQUIRE_KNOWN_CONFIG", "1")
+        """Test RuntimeError when SENDNN_INFERENCE_REQUIRE_KNOWN_CONFIG=1 and user override
+        conflicts."""
+        monkeypatch.setenv("SENDNN_INFERENCE_REQUIRE_KNOWN_CONFIG", "1")
         envs_spyre.clear_env_cache()
 
         vllm_config.cache_config.num_gpu_blocks_override = 500  # User set this
@@ -187,7 +188,7 @@ class TestGPUBlocksOverride:
         device_config = DeviceConfig(tp_size=4, num_gpu_blocks_override=1000)
         configurator = ModelConfigurator(model_config, device_config)
 
-        with pytest.raises(RuntimeError, match="VLLM_SPYRE_REQUIRE_KNOWN_CONFIG"):
+        with pytest.raises(RuntimeError, match="SENDNN_INFERENCE_REQUIRE_KNOWN_CONFIG"):
             configurator.configure(vllm_config)
 
     def test_skip_when_num_gpu_blocks_override_is_none(self, model_config, vllm_config):
@@ -230,14 +231,14 @@ class TestNoDeviceConfig:
         assert summary.num_blocks is None
 
     def test_log_debug_message_when_no_device_config(
-        self, model_config, vllm_config, caplog_vllm_spyre
+        self, model_config, vllm_config, caplog_sendnn_inference
     ):
         """Test that debug message is logged when no device config."""
         configurator = ModelConfigurator(model_config, device_config=None)
 
         configurator.configure(vllm_config)
 
-        assert "no device configuration" in caplog_vllm_spyre.text.lower()
+        assert "no device configuration" in caplog_sendnn_inference.text.lower()
 
 
 class TestConfigValue:
@@ -281,7 +282,7 @@ class TestOverrideTracking:
             monkeypatch.delenv("TEST_VAR", raising=False)
         else:
             monkeypatch.setenv("TEST_VAR", existing_value)
-        monkeypatch.setenv("VLLM_SPYRE_REQUIRE_KNOWN_CONFIG", "0")
+        monkeypatch.setenv("SENDNN_INFERENCE_REQUIRE_KNOWN_CONFIG", "0")
         envs_spyre.clear_env_cache()
 
         device_config = DeviceConfig(tp_size=4, env_vars={"TEST_VAR": expected_value})
@@ -307,7 +308,7 @@ class TestOverrideTracking:
         self, monkeypatch, model_config, vllm_config, user_value, expected_value
     ):
         """Test that GPU blocks override correctly tracks overrides."""
-        monkeypatch.setenv("VLLM_SPYRE_REQUIRE_KNOWN_CONFIG", "0")
+        monkeypatch.setenv("SENDNN_INFERENCE_REQUIRE_KNOWN_CONFIG", "0")
         envs_spyre.clear_env_cache()
 
         vllm_config.cache_config.num_gpu_blocks_override = user_value
@@ -357,7 +358,7 @@ class TestOverrideTracking:
 class TestConfigurationSummaryLogging:
     """Tests for ConfigurationSummary.format_log_message() method"""
 
-    def test_log_format_with_no_overrides(self, caplog_vllm_spyre):
+    def test_log_format_with_no_overrides(self, caplog_sendnn_inference):
         """Test log format when all values are applied as expected."""
         # Create a summary with no overrides
         config_summary = ConfigurationSummary(
@@ -374,7 +375,7 @@ class TestConfigurationSummaryLogging:
         logging.getLogger().info(config_summary.format_log_message())
 
         # Validate the log output
-        log_text = caplog_vllm_spyre.text
+        log_text = caplog_sendnn_inference.text
         assert "Applied registry configuration for 'test-model' (TP=4):" in log_text
         assert "Environment variables:" in log_text
         assert "VLLM_DT_MAX_BATCH_TKV_LIMIT=131072 ✓" in log_text
@@ -384,7 +385,7 @@ class TestConfigurationSummaryLogging:
         assert "⚠" not in log_text
         assert "default:" not in log_text
 
-    def test_log_format_with_overrides(self, caplog_vllm_spyre):
+    def test_log_format_with_overrides(self, caplog_sendnn_inference):
         """Test log format when values are overridden by user."""
         # Create a summary with overrides
         config_summary = ConfigurationSummary(
@@ -401,7 +402,7 @@ class TestConfigurationSummaryLogging:
         logging.getLogger().info(config_summary.format_log_message())
 
         # Validate the log output
-        log_text = caplog_vllm_spyre.text
+        log_text = caplog_sendnn_inference.text
         assert "Applied registry configuration for 'granite-3.3-8b-instruct' (TP=4):" in log_text
         assert "Environment variables:" in log_text
 
@@ -415,7 +416,7 @@ class TestConfigurationSummaryLogging:
         # Check non-overridden num_blocks
         assert "num_gpu_blocks_override=8192 ✓" in log_text
 
-    def test_log_format_with_mixed_overrides(self, caplog_vllm_spyre):
+    def test_log_format_with_mixed_overrides(self, caplog_sendnn_inference):
         """Test log format with a mix of overridden and non-overridden values."""
         # Create a summary with mixed overrides
         config_summary = ConfigurationSummary(
@@ -433,7 +434,7 @@ class TestConfigurationSummaryLogging:
         logging.getLogger().info(config_summary.format_log_message())
 
         # Validate the log output
-        log_text = caplog_vllm_spyre.text
+        log_text = caplog_sendnn_inference.text
 
         # Check header
         assert "Applied registry configuration for 'test-model' (TP=2):" in log_text
@@ -448,7 +449,7 @@ class TestConfigurationSummaryLogging:
         assert "num_gpu_blocks_override=500 ⚠" in log_text
         assert "default: 1000" in log_text
 
-    def test_log_format_with_empty_config(self, caplog_vllm_spyre):
+    def test_log_format_with_empty_config(self, caplog_sendnn_inference):
         """Test log format when no device-specific configs are present."""
         # Create an empty summary
         config_summary = ConfigurationSummary(
@@ -462,7 +463,7 @@ class TestConfigurationSummaryLogging:
         logging.getLogger().info(config_summary.format_log_message())
 
         # Validate the log output
-        log_text = caplog_vllm_spyre.text
+        log_text = caplog_sendnn_inference.text
         assert "Applied registry configuration for 'test-model' (TP=1):" in log_text
         assert "no device-specific configs" in log_text
 

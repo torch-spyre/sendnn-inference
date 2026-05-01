@@ -1,4 +1,4 @@
-# This tests the publication process for vllm-spyre by pushing a pre-release to test.pypi.org
+# This tests the publication process for sendnn-inference by pushing a pre-release to test.pypi.org
 # on all main commits
 name: Test publication on test.pypi.org
 
@@ -13,7 +13,7 @@ jobs:
 
     environment:
       name: testpypi
-      url: https://test.pypi.org/p/vllm-spyre
+      url: https://test.pypi.org/p/sendnn-inference
     permissions:
       id-token: write  # IMPORTANT: this permission is mandatory for trusted publishing
 

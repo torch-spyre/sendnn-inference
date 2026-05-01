@@ -1,10 +1,10 @@
 # Supported Models
 
-The vLLM Spyre plugin relies on model code implemented by the [Foundation Model Stack](https://github.com/foundation-model-stack/foundation-model-stack/tree/main/fms/models).
+The SenDNN Inference plugin relies on model code implemented by the [Foundation Model Stack](https://github.com/foundation-model-stack/foundation-model-stack/tree/main/fms/models).
 
 ## Verified Deployment Configurations
 
-The following models have been verified to run on vLLM Spyre with the listed
+The following models have been verified to run on SenDNN Inference with the listed
 configurations. These tables are automatically generated from the model configuration file.
 
 ### Generative Models
@@ -24,7 +24,7 @@ Models with static batching support for embedding and scoring tasks.
 ## Model Configuration
 
 The Spyre engine uses a model registry to manage model-specific configurations. Model configurations
-are defined in <gh-file:vllm_spyre/config/model_configs.yaml> and include:
+are defined in <gh-file:sendnn_inference/config/model_configs.yaml> and include:
 
 - Architecture patterns for model matching
 - Device-specific configurations (environment variables, GPU block overrides)
@@ -40,7 +40,7 @@ in the registry. To enforce strict validation and fail if an unknown configurati
 set the environment variable:
 
 ```bash
-export VLLM_SPYRE_REQUIRE_KNOWN_CONFIG=1
+export SENDNN_INFERENCE_REQUIRE_KNOWN_CONFIG=1
 ```
 
 When this flag is enabled, the engine will raise a `RuntimeError` if:

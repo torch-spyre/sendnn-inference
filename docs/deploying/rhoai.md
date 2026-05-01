@@ -20,7 +20,7 @@ This example shows how to use KServe with RHOAI to deploy a model on OpenShift, 
         apiVersion: serving.kserve.io/v1alpha1
         kind: ServingRuntime
         metadata:
-          name: vllm-spyre-runtime
+          name: sendnn-inference-runtime
           annotations:
             openshift.io/display-name: vLLM IBM Spyre ServingRuntime for KServe
             opendatahub.io/recommended-accelerators: '["ibm.com/aiu_pf"]'
@@ -33,7 +33,7 @@ This example shows how to use KServe with RHOAI to deploy a model on OpenShift, 
               name: vLLM
           containers:
             - name: kserve-container
-              image: quay.io/ibm-aiu/vllm-spyre:latest.amd64
+              image: quay.io/ibm-aiu/sendnn-inference:latest.amd64
               args:
                 - /mnt/models
                 - --served-model-name={{.Name}}
@@ -74,7 +74,7 @@ This example shows how to use KServe with RHOAI to deploy a model on OpenShift, 
                 ibm.com/aiu_pf: '1'
               requests:
                 ibm.com/aiu_pf: '1'
-            runtime: vllm-spyre-runtime
+            runtime: sendnn-inference-runtime
             storageUri: 'oci://registry.redhat.io/rhelai1/modelcar-granite-3-1-8b-instruct:1.5'
             volumeMounts:
               - mountPath: /dev/shm

@@ -2,16 +2,66 @@
 
 For a complete list of configuration options, see [Environment Variables](env_vars.md).
 
-## vLLM-Spyre 1.x Migration Guide
+## SenDNN Inference 2.0 Migration Guide
 
-For users migrating from vLLM-Spyre 1.x releases, the default configuration for generative models has changed.
+This guide covers breaking changes introduced in SenDNN Inference 2.0, including the package rename from `vllm_spyre` to `sendnn_inference` and associated configuration changes.
+
+### Package Rename
+
+The Python package has been renamed from `vllm_spyre` to `sendnn_inference`. This affects:
+
+- **Installs from source** Update your remote to [https://github.com/torch-spyre/sendnn-inference](https://github.com/torch-spyre/sendnn-inference)
+- **Installs from PyPI**: Install with `pip install sendnn-inference` (was `vllm-spyre`)
+
+### VLLM_PLUGINS Configuration
+
+**Breaking Change**: The vLLM plugin entry point has changed from `spyre` to `sendnn_inference`.
+
+Update your environment configuration:
+
+```shell
+# Old (vllm-spyre 1.x)
+export VLLM_PLUGINS=spyre
+
+# New (sendnn-inference 2.0)
+export VLLM_PLUGINS=sendnn_inference
+```
+
+This change is required for vLLM to discover and load the SenDNN Inference platform plugin. Without this update, vLLM will fail to initialize the Spyre backend.
+
+### Environment Variable Renaming
+
+**Breaking Change**: All `VLLM_SPYRE_*` environment variables have been renamed to `SENDNN_INFERENCE_*`.
+
+**Example migration**:
+
+```shell
+# Old (vllm-spyre 1.x)
+export VLLM_SPYRE_DYNAMO_BACKEND=sendnn
+export VLLM_SPYRE_WARMUP_PROMPT_LENS=64,128
+export VLLM_SPYRE_WARMUP_BATCH_SIZES=1,4
+
+# New (sendnn-inference 2.0)
+export SENDNN_INFERENCE_DYNAMO_BACKEND=sendnn
+export SENDNN_INFERENCE_WARMUP_PROMPT_LENS=64,128
+export SENDNN_INFERENCE_WARMUP_BATCH_SIZES=1,4
+```
+
+!!! note
+    The old `VLLM_SPYRE_*` variable names are no longer recognized. All configuration must use the new `SENDNN_INFERENCE_*` prefix.
+
+For a complete list of environment variables, see [Environment Variables](env_vars.md).
+
+### Runtime Behavior Changes
+
+For users migrating from SenDNN Inference 1.x releases, the default configuration for generative models has changed.
 All models now run with chunked prefill, and prefix caching is enabled by default.
 
 The following environment variables can be removed from all configurations:
 
 ```shell
-VLLM_SPYRE_USE_CB
-VLLM_SPYRE_USE_CHUNKED_PREFILL
+SENDNN_INFERENCE_USE_CB
+SENDNN_INFERENCE_USE_CHUNKED_PREFILL
 ```
 
 Configuring the static chunk size for chunked prefill is now only done via `--max-num-batched-tokens`.
@@ -26,14 +76,14 @@ Any deployments for *generative* (not pooling) models with static batch shapes w
 If you have the following environment variable set, you likely need to re-evaluate your deployment:
 
 ```shell
-VLLM_SPYRE_WARMUP_NEW_TOKENS
+SENDNN_INFERENCE_WARMUP_NEW_TOKENS
 ```
 
-There are no breaking changes to deployments for pooling models with vLLM-Spyre 2.x.
+There are no breaking changes to deployments for pooling models with SenDNN Inference 2.x.
 
 ## Backend Selection
 
-The torch.compile backend can be configured with the `VLLM_SPYRE_DYNAMO_BACKEND` environment variable.
+The torch.compile backend can be configured with the `SENDNN_INFERENCE_DYNAMO_BACKEND` environment variable.
 
 All models can be tested on CPU by setting this to `eager`.
 To run inference on IBM Spyre Accelerators, this should be set to `sendnn`.
@@ -44,7 +94,7 @@ Support for the vLLM v0 backend has been removed, only the vLLM v1 backend is su
 
 ## Generative Models
 
-When running decoder models for text generation, vLLM-Spyre uses dynamic batching with chunked prefill and automatic prefix caching.
+When running decoder models for text generation, SenDNN Inference uses dynamic batching with chunked prefill and automatic prefix caching.
 This looks and feels like running vllm on any other accelerator, with a few minor differences.
 
 ### Chunked Prefill
@@ -53,10 +103,10 @@ Chunked prefill is a technique that improves Inter-Token Latency (ITL) in contin
 
 For configuration and tuning guidance, see the [vLLM official documentation on chunked prefill](https://docs.vllm.ai/en/latest/configuration/optimization/#chunked-prefill).
 
-As in vLLM, the `max_num_batched_tokens` parameter controls how chunks are formed. While vLLM can dynamically schedule mixed batches of prefill and decode with arbitrary chunk sizes, the vLLM-Spyre implementation is limited to compiling prefill programs for a single fixed chunk size.
-vLLM-Spyre interleaves decode passes with these fixed-chunk-size prefill passes to emulate chunked prefill. The `max_num_batched_tokens` parameter controls this fixed chunk size for prefill passes in vLLM-Spyre.
+As in vLLM, the `max_num_batched_tokens` parameter controls how chunks are formed. While vLLM can dynamically schedule mixed batches of prefill and decode with arbitrary chunk sizes, the SenDNN Inference implementation is limited to compiling prefill programs for a single fixed chunk size.
+SenDNN Inference interleaves decode passes with these fixed-chunk-size prefill passes to emulate chunked prefill. The `max_num_batched_tokens` parameter controls this fixed chunk size for prefill passes in SenDNN Inference.
 
-This parameter should be tuned according to your infrastructure, it is recommended to set it from `512` to `4096` tokens and it **must** be multiple of the block size (currently fixed to `64`). For convenience, when using the model `ibm-granite/granite-3.3-8b-instruct` with `tp=4`, vLLM-Spyre automatically sets `max_num_batched_tokens` to `512`, a value known to produce good hardware utilization in this setup.
+This parameter should be tuned according to your infrastructure, it is recommended to set it from `512` to `4096` tokens and it **must** be multiple of the block size (currently fixed to `64`). For convenience, when using the model `ibm-granite/granite-3.3-8b-instruct` with `tp=4`, SenDNN Inference automatically sets `max_num_batched_tokens` to `512`, a value known to produce good hardware utilization in this setup.
 
 In chunked prefill mode, the `vllm:kv_cache_usage_perc` metric will report the correct KV cache usage on the Spyre cards for all active requests.
 
@@ -72,16 +122,16 @@ When prefix caching is enabled, the `vllm:prefix_cache_queries` and `vllm:prefix
 
 For the embedding, scoring, and reranking tasks, vLLM supports running Pooling Models. More information on Pooling Models can be found in the [vLLM official documentation](https://docs.vllm.ai/en/latest/models/pooling_models/).
 
-vLLM Spyre runs all pooling models using static batching, where graphs are pre-compiled for each configured batch shape. This adds extra constraints on the sizes of inputs for each request, and requests that do not fit the precompiled graphs will be rejected.
+SenDNN Inference runs all pooling models using static batching, where graphs are pre-compiled for each configured batch shape. This adds extra constraints on the sizes of inputs for each request, and requests that do not fit the precompiled graphs will be rejected.
 
 !!! caution
     There are no up-front checks that the compiled graphs will fit into the available memory on the Spyre cards. If the graphs are too large for the available memory, vllm will crash during model warmup.
 
-These batch shapes must be configured with the `VLLM_SPYRE_WARMUP_*` environment variables. For example, to warm up two graph shapes for one single large request and four smaller requests you could use:
+These batch shapes must be configured with the `SENDNN_INFERENCE_WARMUP_*` environment variables. For example, to warm up two graph shapes for one single large request and four smaller requests you could use:
 
 ```shell
-export VLLM_SPYRE_WARMUP_BATCH_SIZES=1,4
-export VLLM_SPYRE_WARMUP_PROMPT_LENS=4096,1024
+export SENDNN_INFERENCE_WARMUP_BATCH_SIZES=1,4
+export SENDNN_INFERENCE_WARMUP_PROMPT_LENS=4096,1024
 ```
 
 !!! note
@@ -100,7 +150,7 @@ Model compilation can be resource intensive and disruptive in production environ
 To enforce the use of precompiled models, set:
 
 ```sh
-VLLM_SPYRE_REQUIRE_PRECOMPILED_DECODERS=1
+SENDNN_INFERENCE_REQUIRE_PRECOMPILED_DECODERS=1
 ```
 
 and create an empty catalog file:

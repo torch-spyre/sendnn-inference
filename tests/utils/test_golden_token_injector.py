@@ -7,7 +7,7 @@ from spyre_util import ModelInfo
 from vllm.sampling_params import SamplingParams
 from vllm.v1.sample.logits_processor import BatchUpdateBuilder, LogitsProcessor
 
-from vllm_spyre.v1.sample.golden_token_injector import GoldenTokenInjector
+from sendnn_inference.v1.sample.golden_token_injector import GoldenTokenInjector
 
 
 class DummyVllmConfig:

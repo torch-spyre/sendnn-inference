@@ -1,5 +1,5 @@
 """Verification of vLLM output by comparing with HF
-with VLLM_SPYRE_MAX_LOAD_PROCESSES enabled.
+with SENDNN_INFERENCE_MAX_LOAD_PROCESSES enabled.
 
 Run `python -m pytest tests/e2e/test_stagger_spyre_basic.py`.
 """
@@ -23,7 +23,7 @@ def test_stagger_output(
     """
     This test verifies that generated output is still correct
     when stagger mode is enabled.
-    VLLM_SPYRE_MAX_LOAD_PROCESSES is set to 1, allowing
+    SENDNN_INFERENCE_MAX_LOAD_PROCESSES is set to 1, allowing
     only a single worker to load or compile the model at
     a time.
     """
@@ -32,7 +32,7 @@ def test_stagger_output(
     if tp_size == 1:
         pytest.skip("Stagger loading mode only relevant for TP>1")
 
-    monkeypatch.setenv("VLLM_SPYRE_MAX_LOAD_PROCESSES", "1")
+    monkeypatch.setenv("SENDNN_INFERENCE_MAX_LOAD_PROCESSES", "1")
 
     prompts = get_chicken_soup_prompts(4)
 

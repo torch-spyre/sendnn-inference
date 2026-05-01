@@ -45,7 +45,7 @@ if __name__ == "__main__":
         print("Setting VLLM_WORKER_MULTIPROC_METHOD=spawn to avoid forking problems on Mac OS")
         os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
 
-    os.environ["VLLM_SPYRE_DYNAMO_BACKEND"] = args.backend
+    os.environ["SENDNN_INFERENCE_DYNAMO_BACKEND"] = args.backend
 
     template = (
         "Below is an instruction that describes a task. Write a response that "

@@ -4,8 +4,8 @@ import pytest
 import yaml
 from unittest.mock import Mock
 
-from vllm_spyre.config.model_config import ModelConfig
-from vllm_spyre.config.model_registry import ModelConfigRegistry
+from sendnn_inference.config.model_config import ModelConfig
+from sendnn_inference.config.model_registry import ModelConfigRegistry
 from .conftest import create_vllm_config
 
 pytestmark = pytest.mark.skip_global_cleanup

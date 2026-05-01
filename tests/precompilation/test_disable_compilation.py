@@ -5,12 +5,14 @@ import pytest
 from spyre_util import write_sample_model_config
 from vllm.config import ModelConfig, ParallelConfig, SchedulerConfig, VllmConfig
 
-from vllm_spyre.compilation_utils import PRE_COMPILE_MODEL_CATALOG_FILENAME
+from sendnn_inference.compilation_utils import PRE_COMPILE_MODEL_CATALOG_FILENAME
 
 
 @pytest.mark.precompilation
 @pytest.mark.parametrize("batch_type", ["cb"])
-def test_handle_disable_compilation(model, caplog_vllm_spyre, monkeypatch, tmp_path, batch_type):
+def test_handle_disable_compilation(
+    model, caplog_sendnn_inference, monkeypatch, tmp_path, batch_type
+):
     """
     Test handle_disable_compilation for static and continuous batching.
     Note: since the validation here is only giving warning in case of mismatch,
@@ -18,10 +20,10 @@ def test_handle_disable_compilation(model, caplog_vllm_spyre, monkeypatch, tmp_p
     """
 
     # Patch version to avoid test failures around version mismatch
-    monkeypatch.setattr("vllm_spyre._version.version", "0.8.0")
+    monkeypatch.setattr("sendnn_inference._version.version", "0.8.0")
 
     sample_model_config = {
-        "vllm_spyre_version": "0.8.0",
+        "sendnn_inference_version": "0.8.0",
         "data": {
             "MODEL_NAME": "/models/granite-3.3-8b-instruct-FP8",
             "NUM_AIUS": 2,
@@ -32,7 +34,7 @@ def test_handle_disable_compilation(model, caplog_vllm_spyre, monkeypatch, tmp_p
 
     write_sample_model_config(tmp_path, sample_model_config)
 
-    monkeypatch.setenv("VLLM_SPYRE_REQUIRE_PRECOMPILED_DECODERS", "1")
+    monkeypatch.setenv("SENDNN_INFERENCE_REQUIRE_PRECOMPILED_DECODERS", "1")
     monkeypatch.setenv("TORCH_SENDNN_CACHE_DIR", str(tmp_path))
     monkeypatch.setenv("TORCH_SENDNN_CACHE_ENABLE", "1")
     # Register the DISABLE_COMPILATION env variable with monkeypatch so that
@@ -40,7 +42,7 @@ def test_handle_disable_compilation(model, caplog_vllm_spyre, monkeypatch, tmp_p
     # test as a cleanup
     monkeypatch.setenv("DISABLE_COMPILATION", "")
 
-    with caplog_vllm_spyre.at_level(logging.INFO):
+    with caplog_sendnn_inference.at_level(logging.INFO):
         _ = VllmConfig(
             model_config=ModelConfig(model=model.name, revision=model.revision, max_model_len=256),
             parallel_config=ParallelConfig(tensor_parallel_size=2),
@@ -48,7 +50,7 @@ def test_handle_disable_compilation(model, caplog_vllm_spyre, monkeypatch, tmp_p
                 max_num_seqs=2, max_model_len=256, is_encoder_decoder=False
             ),
         )
-        assert "[PRECOMPILED_WARN] Setting DISABLE_COMPILATION" in caplog_vllm_spyre.text
+        assert "[PRECOMPILED_WARN] Setting DISABLE_COMPILATION" in caplog_sendnn_inference.text
 
     assert "DISABLE_COMPILATION" in os.environ
     assert os.getenv("DISABLE_COMPILATION") == "true"
@@ -57,7 +59,7 @@ def test_handle_disable_compilation(model, caplog_vllm_spyre, monkeypatch, tmp_p
 @pytest.mark.precompilation
 @pytest.mark.parametrize("batch_type", ["cb"])
 def test_handle_disable_compilation_catalog(
-    model, caplog_vllm_spyre, monkeypatch, tmp_path, batch_type
+    model, caplog_sendnn_inference, monkeypatch, tmp_path, batch_type
 ):
     """
     Test handle_disable_compilation for static and continuous batching.
@@ -66,10 +68,10 @@ def test_handle_disable_compilation_catalog(
     """
 
     # Patch version to avoid test failures around version mismatch
-    monkeypatch.setattr("vllm_spyre._version.version", "0.8.0")
+    monkeypatch.setattr("sendnn_inference._version.version", "0.8.0")
 
     sample_model_config1 = {
-        "vllm_spyre_version": "0.8.0",
+        "sendnn_inference_version": "0.8.0",
         "data": {
             "MODEL_NAME": "/models/granite-3.3-8b-instruct-FP8",
             "NUM_AIUS": 2,
@@ -78,7 +80,7 @@ def test_handle_disable_compilation_catalog(
         },
     }
     sample_model_config2 = {
-        "vllm_spyre_version": "0.8.0",
+        "sendnn_inference_version": "0.8.0",
         "data": {
             "MODEL_NAME": "/models/granite-3.3-8b-instruct-FP8",
             "NUM_AIUS": 2,
@@ -93,7 +95,7 @@ def test_handle_disable_compilation_catalog(
         tmp_path, sample_model_config, filename=PRE_COMPILE_MODEL_CATALOG_FILENAME
     )
 
-    monkeypatch.setenv("VLLM_SPYRE_REQUIRE_PRECOMPILED_DECODERS", "1")
+    monkeypatch.setenv("SENDNN_INFERENCE_REQUIRE_PRECOMPILED_DECODERS", "1")
     monkeypatch.setenv("TORCH_SENDNN_CACHE_DIR", str(tmp_path))
     monkeypatch.setenv("TORCH_SENDNN_CACHE_ENABLE", "1")
     # Register the DISABLE_COMPILATION env variable with monkeypatch so that
@@ -101,7 +103,7 @@ def test_handle_disable_compilation_catalog(
     # test as a cleanup
     monkeypatch.setenv("DISABLE_COMPILATION", "")
 
-    with caplog_vllm_spyre.at_level(logging.INFO):
+    with caplog_sendnn_inference.at_level(logging.INFO):
         _ = VllmConfig(
             model_config=ModelConfig(model=model.name, revision=model.revision, max_model_len=256),
             parallel_config=ParallelConfig(tensor_parallel_size=2),
@@ -110,7 +112,7 @@ def test_handle_disable_compilation_catalog(
             ),
         )
 
-        assert "[PRECOMPILED_WARN] Setting DISABLE_COMPILATION" in caplog_vllm_spyre.text
+        assert "[PRECOMPILED_WARN] Setting DISABLE_COMPILATION" in caplog_sendnn_inference.text
 
     assert "DISABLE_COMPILATION" in os.environ
     assert os.getenv("DISABLE_COMPILATION") == "true"
@@ -118,17 +120,17 @@ def test_handle_disable_compilation_catalog(
 
 @pytest.mark.precompilation
 @pytest.mark.parametrize("batch_type", ["cb"])
-def test_catalog_config_mismatch(model, caplog_vllm_spyre, monkeypatch, tmp_path, batch_type):
+def test_catalog_config_mismatch(model, caplog_sendnn_inference, monkeypatch, tmp_path, batch_type):
     """
     Test handle_disable_compilation for static and continuous batching
     and verify if we get proper error in case of mismatch catalog file
     """
 
     # Patch version to avoid test failures around version mismatch
-    monkeypatch.setattr("vllm_spyre._version.version", "0.8.0")
+    monkeypatch.setattr("sendnn_inference._version.version", "0.8.0")
 
     sample_model_config1 = {
-        "vllm_spyre_version": "0.8.0",
+        "sendnn_inference_version": "0.8.0",
         "data": {
             "MODEL_NAME": "/models/granite-3.3-8b-instruct-FP8",
             "NUM_AIUS": 2,
@@ -137,7 +139,7 @@ def test_catalog_config_mismatch(model, caplog_vllm_spyre, monkeypatch, tmp_path
         },
     }
     sample_model_config2 = {
-        "vllm_spyre_version": "0.8.0",
+        "sendnn_inference_version": "0.8.0",
         "data": {
             "MODEL_NAME": "/models/granite-3.3-8b-instruct-FP8",
             "NUM_AIUS": 2,
@@ -152,7 +154,7 @@ def test_catalog_config_mismatch(model, caplog_vllm_spyre, monkeypatch, tmp_path
         tmp_path, sample_model_config, filename=PRE_COMPILE_MODEL_CATALOG_FILENAME
     )
 
-    monkeypatch.setenv("VLLM_SPYRE_REQUIRE_PRECOMPILED_DECODERS", "1")
+    monkeypatch.setenv("SENDNN_INFERENCE_REQUIRE_PRECOMPILED_DECODERS", "1")
     monkeypatch.setenv("TORCH_SENDNN_CACHE_DIR", str(tmp_path))
     monkeypatch.setenv("TORCH_SENDNN_CACHE_ENABLE", "1")
     # Register the DISABLE_COMPILATION env variable with monkeypatch so that
@@ -160,7 +162,7 @@ def test_catalog_config_mismatch(model, caplog_vllm_spyre, monkeypatch, tmp_path
     # test as a cleanup
     monkeypatch.setenv("DISABLE_COMPILATION", "")
 
-    with caplog_vllm_spyre.at_level(logging.WARNING):
+    with caplog_sendnn_inference.at_level(logging.WARNING):
         _ = VllmConfig(
             model_config=ModelConfig(model=model.name, revision=model.revision, max_model_len=64),
             parallel_config=ParallelConfig(tensor_parallel_size=2),
@@ -168,10 +170,10 @@ def test_catalog_config_mismatch(model, caplog_vllm_spyre, monkeypatch, tmp_path
                 max_num_seqs=2, max_model_len=256, is_encoder_decoder=False
             ),
         )
-        assert "[PRECOMPILED_WARN]" in caplog_vllm_spyre.text
+        assert "[PRECOMPILED_WARN]" in caplog_sendnn_inference.text
         assert (
             "doesn't match any of the pre-compiled model "
-            "configurations. Catalog:" in caplog_vllm_spyre.text
+            "configurations. Catalog:" in caplog_sendnn_inference.text
         )
 
     assert "DISABLE_COMPILATION" in os.environ

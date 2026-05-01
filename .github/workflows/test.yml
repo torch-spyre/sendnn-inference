@@ -18,7 +18,7 @@ env:
   FORCE_COLOR: "1"
   VLLM_CPU_DISABLE_AVX512: "true"
   VLLM_TARGET_DEVICE: "empty"
-  VLLM_PLUGINS: "spyre"
+  VLLM_PLUGINS: "sendnn_inference"
   HF_HUB_CACHE: "${{ github.workspace }}/.cache/huggingface/hub"
   DEFAULT_HF_MODEL: "ibm-ai-platform/micro-g3.3-8b-instruct-1b"
   DEFAULT_HF_MODEL_REV: "6e9c6465a9d7e5e9fa35004a29f0c90befa7d23f"
@@ -116,6 +116,7 @@ jobs:
         run: |
           rm -rf /usr/share/swift
           rm -rf /user/local/share/chromium
+          sudo rm -rf /usr/local/share/powershell
 
       - name: "Checkout"
         uses: actions/checkout@v4
@@ -131,8 +132,8 @@ jobs:
             pyproject.toml
             uv.lock
             tests/**/*.py
-            vllm_spyre/**/*.py
-            vllm_spyre/config/model_configs.yaml
+            sendnn_inference/**/*.py
+            sendnn_inference/config/model_configs.yaml
 
       - name: "Install uv"
         if: steps.changed-src-files.outputs.any_changed == 'true'
@@ -159,7 +160,7 @@ jobs:
 
           # Syncs both the runtime and dev deps, based on the lockfile contents
           uv sync --frozen
-          # Builds and installs the vllm_spyre wheel into .venv
+          # Builds and installs the sendnn-inference wheel into .venv
           # This needs to be done after `uv sync`, or the wheel install will be
           # overwritten.
           uv pip install -v .
@@ -260,15 +261,15 @@ jobs:
           MASTER_PORT: 12355
           MASTER_ADDR: localhost
           DISTRIBUTED_STRATEGY_IGNORE_MODULES: WordEmbedding
-          VLLM_SPYRE_TEST_MODEL_LIST: ""
+          SENDNN_INFERENCE_TEST_MODEL_LIST: ""
           HF_HUB_OFFLINE: 1
         run: |
           # Delete the source code so we can ensure we're testing the installed
           # wheel
-          rm -fr vllm_spyre
+          rm -fr sendnn_inference
           # We activate .venv manually and run pytest directly instead of using
           # `uv run`, to avoid having `uv run` re-sync any dependencies or
-          # re-install the vllm_sypre package from source
+          # re-install the sendnn-inference package from source
           source .venv/bin/activate
 
           ${{matrix.test_suite.env_overrides}} python3 -m pytest ${{ matrix.test_suite.flags }} \

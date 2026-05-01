@@ -1,6 +1,6 @@
-# Multimodal Models in vLLM Spyre
+# Multimodal Models in SenDNN Inference
 
-In order to understand how to get multimodal models running through vLLM Spyre, it is important to understand the differences between how models are implemented in vLLM & vLLM Spyre. To illustrate this, we use `llava_next` as an example, because `granite vision` is the only multimodal model currently supported.
+In order to understand how to get multimodal models running through SenDNN Inference, it is important to understand the differences between how models are implemented in vLLM & SenDNN Inference. To illustrate this, we use `llava_next` as an example, because `granite vision` is the only multimodal model currently supported.
 
 NOTE: for those unfamiliar, granite vision is a special instance of llava next, and tends to run as an instance of llava next. The primary differences are:
 
@@ -41,19 +41,19 @@ This has a few implications that may be nonobvious. Namely:
 
 5. As a result of ^, we must be careful to handle warmup correctly with respect to `torch.compile`, *especially* when it comes to AIU. More details on this below.
 
-For more extensive documentation in how to implement multimodal in vLLM, see the [official docs for multimodal on vLLM](https://docs.vllm.ai/en/latest/contributing/model/multimodal) - the above is mostly meant as context for how think of these models with respect to vLLM Spyre.
+For more extensive documentation in how to implement multimodal in vLLM, see the [official docs for multimodal on vLLM](https://docs.vllm.ai/en/latest/contributing/model/multimodal) - the above is mostly meant as context for how think of these models with respect to SenDNN Inference.
 
-## Extending to vLLM Spyre
+## Extending to SenDNN Inference
 
-In vLLM Spyre, models are implemented with a generic wrapper around FMS; the implementation is *not* model specific. This adds several points of awkwardness in porting multimodal FMS wrappers into vLLM Spyre. In general, the best way to get the model working is as follows:
+In SenDNN Inference, models are implemented with a generic wrapper around FMS; the implementation is *not* model specific. This adds several points of awkwardness in porting multimodal FMS wrappers into SenDNN Inference. In general, the best way to get the model working is as follows:
 
-1. Make sure it runs correctly with vLLM and the HuggingFace implementation *before* porting the FMS implementation into vLLM Spyre.*
+1. Make sure it runs correctly with vLLM and the HuggingFace implementation *before* porting the FMS implementation into SenDNN Inference.*
 
-2. In `vllm_spyre.multimodal.mm_mappings`, create a new utils class for the model architecture and map FMS/Transformers configs to it in `MM_CFG_MAPPING`.
+2. In `sendnn_inference.multimodal.mm_mappings`, create a new utils class for the model architecture and map FMS/Transformers configs to it in `MM_CFG_MAPPING`.
 
 3. Implement the abstract methods for warmup features, multimodal embedding creation and so on.
 
-** Aside from uniformity, the main reason it's desirable to get the model running in vLLM *before* vLLM Spyre is that even though the model implementation is different, the preprocessor that vLLM uses to initialize it when it is running through vLLM Spyre is based on the underlying config, and is the *same*. This means that to implement the model in FMS, we do not have to reimplement any of the preprocessing wrapping or prompt substitution/multimodal token expansion logic, which is very well patterned in vLLM. This is ideal for keeping changes for specific model architectures in our generic wrapper to a minimum.
+** Aside from uniformity, the main reason it's desirable to get the model running in vLLM *before* SenDNN Inference is that even though the model implementation is different, the preprocessor that vLLM uses to initialize it when it is running through SenDNN Inference is based on the underlying config, and is the *same*. This means that to implement the model in FMS, we do not have to reimplement any of the preprocessing wrapping or prompt substitution/multimodal token expansion logic, which is very well patterned in vLLM. This is ideal for keeping changes for specific model architectures in our generic wrapper to a minimum.
 
 ### FAQ
 

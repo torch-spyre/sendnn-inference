@@ -6,7 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from vllm_spyre.config.model_registry import get_model_registry
+from sendnn_inference.config.model_registry import get_model_registry
 
 # Shared path to test fixtures
 FIXTURES_PATH = Path(__file__).parent.parent / "fixtures" / "model_configs"

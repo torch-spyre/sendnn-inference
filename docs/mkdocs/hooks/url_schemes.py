@@ -9,7 +9,7 @@ from mkdocs.structure.pages import Page
 def on_page_markdown(markdown: str, *, page: Page, config: MkDocsConfig, files: Files):
     gh_icon = ":octicons-mark-github-16:"
     gh_url = "https://github.com"
-    repo_url = f"{gh_url}/vllm-project/vllm-spyre"
+    repo_url = f"{gh_url}/torch-spyre/sendnn-inference"
     org_url = f"{gh_url}/orgs/vllm-project"
     urls = {
         "issue": f"{repo_url}/issues",

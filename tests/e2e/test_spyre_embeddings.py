@@ -44,7 +44,7 @@ def test_output(
     are verified to be identical for vLLM and SentenceTransformers.
     """
 
-    monkeypatch.setenv("VLLM_SPYRE_DYNAMO_BACKEND", backend)
+    monkeypatch.setenv("SENDNN_INFERENCE_DYNAMO_BACKEND", backend)
     patch_warmup_shapes(warmup_shapes, monkeypatch)
 
     prompts = get_chicken_soup_prompts(1)
@@ -90,7 +90,7 @@ def test_scheduling_invariance(
     of 1; 2) as 2 batches of 2; 3) as 1 batch of 4.
     """
 
-    monkeypatch.setenv("VLLM_SPYRE_DYNAMO_BACKEND", backend)
+    monkeypatch.setenv("SENDNN_INFERENCE_DYNAMO_BACKEND", backend)
     patch_warmup_shapes(warmup_shapes, monkeypatch)
 
     prompts = get_chicken_soup_prompts(4)

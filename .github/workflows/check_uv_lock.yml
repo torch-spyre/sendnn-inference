@@ -5,15 +5,11 @@ on:
     paths:
       - 'pyproject.toml'
       - 'uv.lock'
-      - 'vllm_spyre_next/pyproject.toml'
-      - 'vllm_spyre_next/uv.lock'
   push:
     branches: [main]
     paths:
       - 'pyproject.toml'
       - 'uv.lock'
-      - 'vllm_spyre_next/pyproject.toml'
-      - 'vllm_spyre_next/uv.lock'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -36,9 +32,6 @@ jobs:
             root:
               - pyproject.toml
               - uv.lock
-            next:
-              - vllm_spyre_next/pyproject.toml
-              - vllm_spyre_next/uv.lock
 
       - name: "Set up Python 3.12"
         if: steps.changed-files.outputs.root_any_changed == 'true' || steps.changed-files.outputs.next_any_changed == 'true'
@@ -49,13 +42,7 @@ jobs:
           ignore-nothing-to-cache: true
           cache-dependency-glob: |
             pyproject.toml
-            vllm_spyre_next/pyproject.toml
 
       - name: "Check root uv.lock is up to date"
         if: steps.changed-files.outputs.root_any_changed == 'true'
         run: uv lock --check
-
-      - name: "Check vllm_spyre_next/uv.lock is up to date"
-        if: steps.changed-files.outputs.next_any_changed == 'true'
-        run: uv lock --check
-        working-directory: vllm_spyre_next

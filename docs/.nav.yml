@@ -1,6 +1,6 @@
 nav:
   - Home:
-    - vLLM Spyre Plugin: README.md
+    - SenDNN Inference Plugin: README.md
     - Roadmap: roadmaps/q3-2025.md
     - Getting Started:
       - Installation: getting_started/installation.md
@@ -22,12 +22,6 @@ nav:
       - Architecture: contributing/architecture.md
       - MultiModal:
         - Adding New Models: contributing/multimodal/adding_new_models.md
-    - vLLM Spyre Next:
-      - Overview: vllm_spyre_next/README.md
-      - Getting Started:
-        - Installation: vllm_spyre_next/getting_started/installation.md
-      - Developer Guide:
-        - Contributing: vllm_spyre_next/contributing/README.md
 
   - Getting Started:
     - Installation: getting_started/installation.md
@@ -44,9 +38,3 @@ nav:
     - Contributing: contributing/README.md
     - Maintaining: contributing/maintaining.md
     - Architecture: contributing/architecture.md
-  - vLLM Spyre Next:
-    - Overview: vllm_spyre_next/README.md
-    - Getting Started:
-      - Installation: vllm_spyre_next/getting_started/installation.md
-    - Developer Guide:
-      - Contributing: vllm_spyre_next/contributing/README.md

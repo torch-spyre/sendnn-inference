@@ -1,3 +1,3 @@
-"""Tests for vllm_spyre.config module."""
+"""Tests for sendnn_inference.config module."""
 
 # Made with Bob

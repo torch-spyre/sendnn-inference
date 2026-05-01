@@ -1,23 +1,8 @@
 name: "Build Docker"
 
+# Manual dispatch only for now
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - "main"
-    paths-ignore:
-      - "**.md"
-  pull_request:
-    branches:
-      - "main"
-    paths:
-      - ".github/workflows/build_docker.yml"
-      - "docker/**"
-      - "vllm_spyre/**/*.py"
-      - "pyproject.toml"
-      - "uv.lock"
-  release:
-    types: [published]
 
 defaults:
   run:
@@ -27,8 +12,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      CACHE_IMAGE: "ghcr.io/vllm-project/vllm-spyre:build-cache"
-      QUAY_REPOSITORY: "quay.io/ibm-aiu/vllm-spyre"
+      CACHE_IMAGE: "ghcr.io/torch-spyre/sendnn-inference:build-cache"
+      QUAY_REPOSITORY: "quay.io/ibm-aiu/sendnn-inference"
 
     permissions:
       packages: write
@@ -38,7 +23,7 @@ jobs:
     - name: "Checkout"
       uses: actions/checkout@v4
       # We need to fetch history and tags so that we can correctly version the
-      # vllm_spyre package, since it uses setuptools_scm to version based on
+      # sendnn-inference package, since it uses setuptools_scm to version based on
       # git tags.
       with:
         fetch-depth: 0

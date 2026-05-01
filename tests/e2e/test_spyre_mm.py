@@ -17,7 +17,7 @@ from vllm import SamplingParams
 # Ensure the llava next mm mapping is imported, since
 # the FMS serialization utilities are patched at import time,
 # and the patching is currently NOT idempotent.
-import vllm_spyre.multimodal.mm_mappings.llava_next  # noqa: F401
+import sendnn_inference.multimodal.mm_mappings.llava_next  # noqa: F401
 
 # We should not use a very large value here, because
 # we do not have tiny multimodal models at the moment.
@@ -116,6 +116,6 @@ def test_alignment_with_fms(model, mode, monkeypatch):
 
     fms_texts = generate_fms_results(processor, model.name, prompts)
     # Compare the newly decoded texts with FMS
-    # and vllm spyre running with the eager backend.
+    # and sendnn_inference running with the eager backend.
     for fms_text, vllm_result in zip(fms_texts, vllm_results):
         assert vllm_result["text"] == fms_text

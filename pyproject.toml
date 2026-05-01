@@ -6,7 +6,7 @@ requires = [
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "vllm-spyre"
+name = "sendnn-inference"
 description = "vLLM plugin for Spyre hardware support"
 readme = "README.md"
 license = {text = "Apache 2"}
@@ -15,7 +15,7 @@ dependencies = [
     "ibm-fms>=1.9.0,<2",
     # NB: use strict < with the next patch version to not exclude versions with
     # build metadata suffixes
-    "vllm>=0.19.0,<0.19.1",
+    "vllm>=0.19.0,<0.19.2",
     
     # Specific torch version overrides handled by uv
     "torch",
@@ -25,25 +25,25 @@ requires-python = ">=3.11"
 dynamic = ["version"]
 
 [project.entry-points."vllm.platform_plugins"]
-spyre = "vllm_spyre:register"
+sendnn_inference = "sendnn_inference:register"
 
 [tool.setuptools.packages.find]
 where = ["."]  # list of folders that contain the packages (["."] by default)
-include = ["vllm_spyre*"]  # package names should match these glob patterns (["*"] by default)
+include = ["sendnn_inference*"]  # package names should match these glob patterns (["*"] by default)
 exclude = []  # exclude packages matching these glob patterns (empty by default)
 namespaces = false  # to disable scanning PEP 420 namespaces (true by default)
 
 [tool.setuptools_scm]
 # Version files are optional, this just marginally speeds up version inspection
 # at runtime
-version_file = "vllm_spyre/_version.py"
+version_file = "sendnn_inference/_version.py"
 # Version strings are formatted as `{version}+{local}`, e.g. "0.1.dev1+gb1a7032"
 # Local versioning is incompatible with pypi, so we disable it by default.
 local_scheme = "no-local-version"
-# Only match vX.Y.Z tags (with optional SemVer pre-release suffix), explicitly excluding spyre-next-v* tags.
+# Only match vX.Y.Z tags (with optional SemVer pre-release suffix)
 # SemVer pre-release format: hyphen followed by dot-separated identifiers (alphanumeric + hyphens)
 tag_regex = "^v(?P<version>[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?)$"
-git_describe_command = "git describe --dirty --tags --long --match 'v*' --exclude 'spyre-next-v*'"
+git_describe_command = "git describe --dirty --tags --long --match 'v*'"
 # For more version configuration, see
 # https://setuptools-scm.readthedocs.io/en/latest/config/
 
@@ -79,6 +79,12 @@ override-dependencies = [
     # vllm 0.18.0 pins compressed-tensors==0.13.0; override to 0.14.0.1
     # TODO: remove once minimum vllm is bumped past 0.18.0
     "compressed-tensors==0.14.0.1",
+
+    # llguidance>=1.7.3 fixes s390x endianness issues.
+    # This conflicts with vLLM's version range (llguidance >= 1.3.0, < 1.4.0).
+    # TODO: Remove this override once vLLM's requirement range includes or moves past 1.7.3.
+    # See: https://github.com/vllm-project/vllm/blob/v0.19.1/requirements/common.txt#L22
+    "llguidance>=1.7.3"
 ]
 # This adds constraints to all dependent build environments, which will ensure everything is built
 # with the same version of torch. This CANNOT conflict with a package's existing build dependencies
@@ -87,7 +93,7 @@ build-constraint-dependencies = ["torch==2.10.0"]
 extra-build-variables = { vllm = { VLLM_TARGET_DEVICE = "empty" } }
 
 [tool.uv.sources]
-vllm = { git = "https://github.com/vllm-project/vllm", rev = "v0.19.0" }
+vllm = { git = "https://github.com/vllm-project/vllm", rev = "v0.19.1" }
 torch = [
   { index = "pytorch-cpu" },
 ]
@@ -108,18 +114,18 @@ explicit = true
 possibly-missing-attribute = "ignore"
 
 [tool.ty.src]
-exclude = ["vllm_spyre/__init__.py"]
+exclude = ["sendnn_inference/__init__.py"]
 
 [tool.ruff]
 # Use widescreen monitors 😎😎😎
 line-length = 100
 exclude = [
-    "vllm_spyre/model_executor/model_loader/spyre_setup.py"
+    "sendnn_inference/model_executor/model_loader/spyre_setup.py"
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"vllm_spyre/version.py" = ["F401"]
-"vllm_spyre/_version.py" = ["ALL"]
+"sendnn_inference/version.py" = ["F401"]
+"sendnn_inference/_version.py" = ["ALL"]
 
 [tool.ruff.lint]
 select = [

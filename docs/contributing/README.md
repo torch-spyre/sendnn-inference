@@ -1,4 +1,4 @@
-# Contributing to vLLM Spyre
+# Contributing to SenDNN Inference
 
 Thank you for your interest in contributing to the Spyre plugin for vLLM! There are several ways you can contribute:
 
@@ -8,7 +8,7 @@ Thank you for your interest in contributing to the Spyre plugin for vLLM! There 
 
 ## Issues
 
-If you encounter a bug or have a feature request, please search [existing issues](https://github.com/vllm-project/vllm-spyre/issues?q=is%3Aissue) first to see if it has already been reported. If not, please create a new issue, by using our [issue templates](https://github.com/vllm-project/vllm-spyre/issues/new/choose):
+If you encounter a bug or have a feature request, please search [existing issues](https://github.com/torch-spyre/sendnn-inference/issues?q=is%3Aissue) first to see if it has already been reported. If not, please create a new issue, by using our [issue templates](https://github.com/torch-spyre/sendnn-inference/issues/new/choose):
 
 - **🐛 Bug Report**: For reporting bugs and unexpected behavior
 - **🚀 Feature Request**: For suggesting new features or improvements
@@ -21,7 +21,7 @@ You can also reach out for support in the `#sig-spyre` channel in the [vLLM Slac
 
 #### Install MkDocs and Plugins
 
-Install MkDocs along with the [plugins](https://github.com/vllm-project/vllm-spyre/blob/main/mkdocs.yaml) used in the vLLM Spyre documentation.
+Install MkDocs along with the [plugins](https://github.com/torch-spyre/sendnn-inference/blob/main/mkdocs.yaml) used in the SenDNN Inference documentation.
 
 ```bash
 uv pip install -r docs/requirements-docs.txt
@@ -34,7 +34,7 @@ uv pip install -r docs/requirements-docs.txt
 
 MkDocs comes with a built-in dev-server that lets you preview your documentation as you work on it.
 
-Make sure you're in the same directory as the `mkdocs.yml` configuration file in the `vllm-spyre` repository, and then start the server by running the `mkdocs serve` command:
+Make sure you're in the same directory as the `mkdocs.yml` configuration file in the `sendnn-inference` repository, and then start the server by running the `mkdocs serve` command:
 
 ```bash
 mkdocs serve
@@ -160,7 +160,7 @@ Various log levels that can be configured:
     ```
 
 For tensor-parallel debugging, you can enable an option to redirect all log output from each rank to an individual file.
-Set `VLLM_SPYRE_WORKER_LOG_REDIRECT_DIR` to a local directory, and each rank will redirect stdout and stderr into their own file inside the directory.
+Set `SENDNN_INFERENCE_WORKER_LOG_REDIRECT_DIR` to a local directory, and each rank will redirect stdout and stderr into their own file inside the directory.
 This can be helpful to avoid having interleaved stack dumps from different ranks in stderr.
 
 ### Performance Metrics
@@ -168,7 +168,7 @@ This can be helpful to avoid having interleaved stack dumps from different ranks
 When deploying to kubernetes clusters, prometheus + grafana can be installed and configured to scrape metrics from vLLM's `/metrics` endpoint.
 
 vLLM can also be configured to log performance metrics about every request to a local file.
-Setting both `VLLM_SPYRE_PERF_METRIC_LOGGING_ENABLED=1` and `VLLM_SPYRE_PERF_METRIC_LOGGING_DIR=/some/path` and ensuring that vLLM stat logging is enabled will generate metrics in `/some/path/request_metrics.jsonl`. A sample of this file looks like:
+Setting both `SENDNN_INFERENCE_PERF_METRIC_LOGGING_ENABLED=1` and `SENDNN_INFERENCE_PERF_METRIC_LOGGING_DIR=/some/path` and ensuring that vLLM stat logging is enabled will generate metrics in `/some/path/request_metrics.jsonl`. A sample of this file looks like:
 
 ```json
 {"timestamp": "2025-10-10T12:25:17.544", "prefill_interrupt_seconds": 0, "decode_only_itl_seconds": 0.05045744727055232, "finish_reason": 1, "num_prompt_tokens": 1, "num_generation_tokens": 16, "max_tokens_param": 16, "e2e_latency_seconds": 0.9784879684448242, "queued_time_seconds": 6.0582999140024185e-05, "prefill_time_seconds": 0.220398832927458, "inference_time_seconds": 0.9772605419857427, "decode_time_seconds": 0.7568617090582848, "mean_time_per_output_token_seconds": 0.05045744727055232}
@@ -225,7 +225,7 @@ prek install
 
 ### DCO and Signed-off-by
 
-When contributing, you must agree to the [DCO](https://github.com/vllm-project/vllm-spyre/blob/main/DCO).Commits must include a `Signed-off-by:` header which certifies agreement with the terms of the DCO.
+When contributing, you must agree to the [DCO](https://github.com/torch-spyre/sendnn-inference/blob/main/DCO). Commits must include a `Signed-off-by:` header which certifies agreement with the terms of the DCO.
 
 Using `-s` with `git commit` will automatically add this header.
 

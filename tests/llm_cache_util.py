@@ -35,9 +35,9 @@ def force_engine_core_shutdown(engine_core):
         # setup does not inherit stale resources from the previous run.
         cleanup_dist_env_and_memory()
 
-        # SendNN device teardown is not always instantaneous. Give the runtime
+        # Spyre device teardown is not always instantaneous. Give the runtime
         # a short grace period before the next cached config starts.
-        if os.environ.get("VLLM_SPYRE_DYNAMO_BACKEND") == "sendnn":
+        if os.environ.get("SENDNN_INFERENCE_DYNAMO_BACKEND") == "sendnn":
             time.sleep(2)
 
 
@@ -75,6 +75,7 @@ class SortKey(NamedTuple):
     max_num_seqs: int = 0
     num_blocks: int = 0
     max_num_batched_tokens: int = 0
+    structured_output_backend: str = ""
     warmup_shapes: EmbeddingWarmupShapes | None = None
 
     @staticmethod
@@ -112,6 +113,7 @@ class SortKey(NamedTuple):
             use_pc=use_pc,
             num_blocks=SortKey._get_num_blocks(item),
             max_num_batched_tokens=SortKey._get_max_num_batched_tokens(item),
+            structured_output_backend=SortKey._get_structured_output_backend(item),
             **sort_kwargs,
         )
 
@@ -140,7 +142,7 @@ class SortKey(NamedTuple):
     @staticmethod
     def _get_cache_priority(cache_type: str) -> int:
         # Sort online tests before cached LLM tests so the server-backed path
-        # does not have to follow a same-process SendNN engine teardown.
+        # does not have to follow a same-process SenDNN engine teardown.
         cache_order = {
             "": 0,
             "online": 1,
@@ -266,6 +268,20 @@ class SortKey(NamedTuple):
             return blocks if blocks is not None else 0
         # Most tests don't use this param
         return 0
+
+    @staticmethod
+    def _get_structured_output_backend(item) -> str:
+        """Extract structured output backend from test parameters."""
+        if "structured_output_backend" in item.callspec.params:
+            backend = item.callspec.params["structured_output_backend"]
+            SortKey._assert_param(
+                isinstance(backend, str),
+                "structured_output_backend must be a string.",
+                item,
+            )
+            return backend
+        # Most tests don't use structured outputs
+        return ""
 
     @staticmethod
     def _assert_param(condition, message, item):

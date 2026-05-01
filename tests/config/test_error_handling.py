@@ -7,7 +7,7 @@ from unittest.mock import Mock
 import pytest
 import yaml
 
-from vllm_spyre.config.model_registry import ModelConfigRegistry
+from sendnn_inference.config.model_registry import ModelConfigRegistry
 
 
 @pytest.fixture
@@ -27,7 +27,7 @@ def test_registry(test_config_path):
 class TestRegistryErrorHandling:
     """Tests for registry error handling."""
 
-    def test_initialize_with_nonexistent_file(self, caplog_vllm_spyre):
+    def test_initialize_with_nonexistent_file(self, caplog_sendnn_inference):
         """Test that registry handles nonexistent config file gracefully."""
         registry = ModelConfigRegistry()
         nonexistent_path = Path("/nonexistent/path/to/config.yaml")
@@ -51,7 +51,7 @@ class TestRegistryErrorHandling:
         finally:
             temp_path.unlink()
 
-    def test_initialize_twice_skips_second_load(self, test_config_path, caplog_vllm_spyre):
+    def test_initialize_twice_skips_second_load(self, test_config_path, caplog_sendnn_inference):
         """Test that initializing twice doesn't reload."""
         registry = ModelConfigRegistry()
 
@@ -67,9 +67,11 @@ class TestRegistryErrorHandling:
         assert model_count_first == model_count_second
 
         # Should log debug message about skipping
-        assert any("already initialized" in record.message for record in caplog_vllm_spyre.records)
+        assert any(
+            "already initialized" in record.message for record in caplog_sendnn_inference.records
+        )
 
-    def test_find_matching_model_with_no_hf_config(self, test_registry, caplog_vllm_spyre):
+    def test_find_matching_model_with_no_hf_config(self, test_registry, caplog_sendnn_inference):
         """Test matching when vllm_config has no HF config."""
         registry = test_registry
 
@@ -84,11 +86,11 @@ class TestRegistryErrorHandling:
 
         # Should log debug message
         assert any(
-            "No HF config available" in record.message for record in caplog_vllm_spyre.records
+            "No HF config available" in record.message for record in caplog_sendnn_inference.records
         )
 
     def test_get_configurator_for_runtime_with_no_model_match(
-        self, test_registry, caplog_vllm_spyre
+        self, test_registry, caplog_sendnn_inference
     ):
         """Test getting configurator when model doesn't match."""
         registry = test_registry
@@ -105,11 +107,12 @@ class TestRegistryErrorHandling:
 
         # Should log debug message
         assert any(
-            "No model architecture match" in record.message for record in caplog_vllm_spyre.records
+            "No model architecture match" in record.message
+            for record in caplog_sendnn_inference.records
         )
 
     def test_get_configurator_for_runtime_with_unsupported_runtime_config(
-        self, test_registry, caplog_vllm_spyre
+        self, test_registry, caplog_sendnn_inference
     ):
         """Test getting configurator when model matches but runtime config doesn't."""
         registry = test_registry
@@ -140,7 +143,7 @@ class TestRegistryErrorHandling:
         # Should log warning about unsupported runtime config
         assert any(
             "does not support the requested runtime" in record.message
-            for record in caplog_vllm_spyre.records
+            for record in caplog_sendnn_inference.records
         )
 
     def test_empty_yaml_file(self):
@@ -181,8 +184,8 @@ class TestConfiguratorEdgeCases:
 
     def test_configure_with_none_device_config(self):
         """Test that configurator handles None device_config gracefully."""
-        from vllm_spyre.config.model_config import ModelConfig, ArchitecturePattern
-        from vllm_spyre.config.configurators.model_configurator import ModelConfigurator
+        from sendnn_inference.config.model_config import ModelConfig, ArchitecturePattern
+        from sendnn_inference.config.configurators.model_configurator import ModelConfigurator
 
         # Create minimal model config
         model_config = ModelConfig(
@@ -211,7 +214,7 @@ class TestConfiguratorEdgeCases:
 
     def test_registry_os_error_path(self):
         """Test that OSError is caught and re-raised as RuntimeError when file is unreadable."""
-        from vllm_spyre.config.model_registry import ModelConfigRegistry
+        from sendnn_inference.config.model_registry import ModelConfigRegistry
         from pathlib import Path
         import tempfile
         import os

@@ -10,7 +10,7 @@ from vllm.utils.torch_utils import make_tensor_with_pad
 from vllm.v1.sample.logits_processor import LogitsProcessors
 from vllm.v1.sample.metadata import SamplingMetadata
 
-from vllm_spyre.v1.worker.spyre_input_batch import SamplingInputBatch, SamplingRequestState
+from sendnn_inference.v1.worker.spyre_input_batch import SamplingInputBatch, SamplingRequestState
 
 VOCAB_SIZE = 1024
 NUM_OUTPUT_TOKENS = 20
@@ -40,7 +40,7 @@ def _remove_requests(
     # FIXME: it is a bug in the current implementation that removed indices may
     # be duplicated, which can break logitsprocs tracking. Once fixed we should
     # add this assert.
-    # see also: https://github.com/vllm-project/vllm-spyre/issues/508
+    # see also: https://github.com/torch-spyre/sendnn-inference/issues/508
     # removed = input_batch.batch_update_builder.removed
     # assert len(set(removed)) == len(removed), "Duplicate removed indices"
 

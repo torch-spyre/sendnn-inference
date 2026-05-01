@@ -15,10 +15,10 @@ The API server, the engine core, and the workers live in
 different processes. All three refer to the platform API for backend
 specific concerns.
 
-In vLLM-Spyre, we implement a platform API that is
+In SenDNN Inference, we implement a platform API that is
 loaded at the vLLM startup time and bootstraps all other components.
 
-![vLLM Spyre architecture](images/vllm_v1_spyre.svg)
+![SenDNN Inference architecture](images/vllm_v1_spyre.svg)
 
 As we can see in the diagram, the plugin mainly modifies the engine core
 and worker processes. The platform API includes request validation hooks

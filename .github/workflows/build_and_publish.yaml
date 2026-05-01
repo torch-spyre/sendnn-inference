@@ -1,4 +1,4 @@
-name: Build and Publish vllm-spyre Library
+name: Build and Publish sendnn-inference Library
 
 on:
   release:
@@ -6,8 +6,7 @@ on:
 
 jobs:
   build:
-    # Only run for vllm-spyre releases (v* tags).
-    # spyre-next-v* tags are handled by build_and_publish_next.yaml.
+    # Only run for sendnn-inference releases (v* tags).
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
 

@@ -30,29 +30,29 @@ source .venv/bin/activate
     **Note**, pulling in the system site packages is not required for CPU-only
     installations.
 
-## Install vLLM with the vLLM-Spyre Plugin
+## Install vLLM with the SenDNN Inference Plugin
 
-You can either install a released version of the vLLM-Spyre plugin directly from
-[PyPI](https://pypi.org/project/vllm-spyre/) or you can install from source by
-cloning the [vLLM-Spyre](https://github.com/vllm-project/vllm-spyre) repo from
+You can either install a released version of the SenDNN Inference plugin directly from
+[PyPI](https://pypi.org/project/sendnn-inference/) or you can install from source by
+cloning the [SenDNN Inference](https://github.com/torch-spyre/sendnn-inference) repo from
 GitHub.
 
 === "Release (PyPI)"
 
     ```sh
-    uv pip install vllm-spyre
+    uv pip install sendnn-inference
     ```
 
 === "Source (GitHub)"
 
-    First, clone the `vllm-spyre` repo:
+    First, clone the `sendnn-inference` repo:
     
     ```sh
-    git clone https://github.com/vllm-project/vllm-spyre.git
-    cd vllm-spyre
+    git clone https://github.com/torch-spyre/sendnn-inference.git
+    cd sendnn-inference
     ```
     
-    To install `vllm-spyre` locally with development dependencies, use the following command:
+    To install `sendnn-inference` locally with development dependencies, use the following command:
     
     ```sh
     uv sync --frozen --active --inexact
@@ -105,7 +105,7 @@ If you happen to have followed the pre-`uv` installation instructions, you might
 encounter an error like this:
 
 ```sh
-LookupError: setuptools-scm was unable to detect version for /home/senuser/multi-aiu-dev/_dev/sentient-ci-cd/_dev/sen_latest/vllm-spyre.
+LookupError: setuptools-scm was unable to detect version for /home/senuser/multi-aiu-dev/_dev/sentient-ci-cd/_dev/sen_latest/sendnn-inference.
       
     Make sure you're either building from a fully intact git repository or PyPI tarballs. Most other sources (such as GitHub's tarballs, a git checkout without the .git folder) don't contain the necessary metadata and will not work.
       
@@ -129,17 +129,17 @@ RuntimeError: Device string must not be empty
 ### No module named `torch`
 
 You may have installed PyTorch into the system-wide Python environment, not into
-the virtual environment used for vLLM-Spyre:
+the virtual environment used for SenDNN Inference:
 
 ```sh
-  File "/home/senuser/multi-aiu-dev/_dev/sentient-ci-cd/_dev/sen_latest/vllm-spyre/.venv/lib64/python3.12/site-packages/vllm/env_override.py", line 4, in <module>
+  File "/home/senuser/multi-aiu-dev/_dev/sentient-ci-cd/_dev/sen_latest/sendnn-inference/.venv/lib64/python3.12/site-packages/vllm/env_override.py", line 4, in <module>
     import torch
 ModuleNotFoundError: No module named 'torch'
 ```
 
 Make sure to activate the same virtual environment for installing `torch` that
-was used to install `vllm-spyre`. If you already have a system-wide `torch`
-installation and want to reuse that for your `vllm-spyre` environment, you can
+was used to install `sendnn-inference`. If you already have a system-wide `torch`
+installation and want to reuse that for your `sendnn-inference` environment, you can
 create a new virtual environment and add the `--system-site-packages` flag to
 pull in the `torch` dependencies from the base Python environment:
 
@@ -158,7 +158,7 @@ If you forget to override the `torch` dependencies when installing from PyPI you
 will likely see a dependency resolution error like this:
 
 ```sh
-$ uv pip install vllm-spyre==0.4.1
+$ uv pip install sendnn-inference==0.4.1
   ...
   × No solution found when resolving dependencies:
   ╰─▶ Because fms-model-optimizer==0.2.0 depends on torch>=2.1,<2.5 and only the following versions of fms-model-optimizer are available:
@@ -177,14 +177,14 @@ $ uv pip install vllm-spyre==0.4.1
           vllm==0.9.0.1
           vllm==0.9.1
           vllm==0.9.2
-      and vllm-spyre==0.4.1 depends on fms-model-optimizer, we can conclude that all of:
+      and sendnn-inference==0.4.1 depends on fms-model-optimizer, we can conclude that all of:
           vllm>=0.9.0,<0.9.1
           vllm>0.9.1
-       and vllm-spyre==0.4.1 are incompatible.
-      And because vllm-spyre==0.4.1 depends on one of:
+       and sendnn-inference==0.4.1 are incompatible.
+      And because sendnn-inference==0.4.1 depends on one of:
           vllm>=0.9.0,<0.9.1
           vllm>0.9.1
-      and you require vllm-spyre==0.4.1, we can conclude that your requirements are unsatisfiable.
+      and you require sendnn-inference==0.4.1, we can conclude that your requirements are unsatisfiable.
 ```
 
 <!-- markdownlint-disable MD051 link-fragments -->

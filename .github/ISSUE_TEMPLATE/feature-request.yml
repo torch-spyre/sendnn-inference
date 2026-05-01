@@ -1,5 +1,5 @@
 name: 🚀 Feature request
-description: Suggest a new feature for vLLM Spyre
+description: Suggest a new feature for SenDNN Inference
 title: "[Feature]: "
 labels: ["enhancement"]
 
@@ -7,7 +7,7 @@ body:
 - type: markdown
   attributes:
     value: |
-      Before submitting, please search [existing issues](https://github.com/vllm-project/vllm-spyre/issues) to avoid duplicates.
+      Before submitting, please search [existing issues](https://github.com/torch-spyre/sendnn-inference/issues) to avoid duplicates.
 
 - type: textarea
   attributes:
@@ -22,7 +22,7 @@ body:
   attributes:
     label: Motivation and context
     description: |
-      Why is this feature important? How would it benefit vLLM Spyre users?
+      Why is this feature important? How would it benefit SenDNN Inference users?
       
       Is this related to a specific problem or limitation?
   validations:

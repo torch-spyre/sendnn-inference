@@ -14,7 +14,7 @@ from vllm.v1.executor.abstract import Executor
 from vllm.forward_context import get_forward_context
 
 
-from vllm_spyre.v1.sample.golden_token_injector import GoldenTokenInjector
+from sendnn_inference.v1.sample.golden_token_injector import GoldenTokenInjector
 
 T = TypeVar("T")
 
@@ -112,6 +112,7 @@ class LLMCache:
         max_num_seqs: int | None = None,
         use_pc: bool = False,
         max_num_batched_tokens: int | None = None,
+        structured_outputs_config=None,
     ) -> LLM:
         """Creates an LLM with the provided runtime configuration.
 
@@ -126,6 +127,8 @@ class LLMCache:
             "use_pc": use_pc,
             "max_num_batched_tokens": max_num_batched_tokens,
         }
+        if structured_outputs_config is not None:
+            runtime_config["structured_outputs_config"] = structured_outputs_config
         if warmup_shapes:
             runtime_config.update({"warmup_shapes": tuple(warmup_shapes)})
         else:
@@ -152,6 +155,7 @@ class LLMCache:
                 tensor_parallel_size=tensor_parallel_size,
                 max_num_batched_tokens=max_num_batched_tokens,
                 enable_prefix_caching=use_pc,
+                structured_outputs_config=structured_outputs_config,
             ),
         )
 
@@ -167,6 +171,7 @@ def _create_llm(
     max_num_seqs: int | None,
     max_num_batched_tokens: int | None,
     enable_prefix_caching: bool,
+    structured_outputs_config=None,
 ) -> LLM:
     if isinstance(model, ModelInfo):
         model_name = model.name
@@ -175,18 +180,22 @@ def _create_llm(
         model_name = model
         revision = None
 
-    return LLM(
-        model=model_name,
-        tokenizer=model_name,
-        revision=revision,
-        tokenizer_revision=revision,
-        max_model_len=max_model_len,
-        max_num_seqs=max_num_seqs,
-        tensor_parallel_size=tensor_parallel_size,
-        max_num_batched_tokens=max_num_batched_tokens,
-        logits_processors=[GoldenTokenInjector],
-        enable_prefix_caching=enable_prefix_caching,
-    )
+    llm_kwargs = {
+        "model": model_name,
+        "tokenizer": model_name,
+        "revision": revision,
+        "tokenizer_revision": revision,
+        "max_model_len": max_model_len,
+        "max_num_seqs": max_num_seqs,
+        "tensor_parallel_size": tensor_parallel_size,
+        "max_num_batched_tokens": max_num_batched_tokens,
+        "logits_processors": [GoldenTokenInjector],
+        "enable_prefix_caching": enable_prefix_caching,
+    }
+    if structured_outputs_config is not None:
+        llm_kwargs["structured_outputs_config"] = structured_outputs_config
+
+    return LLM(**llm_kwargs)
 
 
 class EngineCache:
@@ -407,6 +416,7 @@ def get_llm(
     max_num_batched_tokens: int | None = None,
     use_pc: bool = False,
     cached: bool = True,
+    structured_outputs_config=None,
 ) -> LLM:
     # Clear other caches first
     API_SERVER_CACHE.clear()
@@ -423,6 +433,7 @@ def get_llm(
             max_num_seqs=max_num_seqs,
             use_pc=use_pc,
             max_num_batched_tokens=max_num_batched_tokens,
+            structured_outputs_config=structured_outputs_config,
         )
 
     patch_environment(
@@ -439,6 +450,7 @@ def get_llm(
         max_num_seqs=max_num_seqs,
         max_num_batched_tokens=max_num_batched_tokens,
         enable_prefix_caching=use_pc,
+        structured_outputs_config=structured_outputs_config,
     )
 
 

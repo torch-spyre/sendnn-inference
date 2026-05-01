@@ -11,7 +11,7 @@ from vllm.config import (
     ProfilerConfig,
 )
 from vllm.v1.worker.gpu_worker import Worker as UpstreamWorker
-from vllm_spyre.v1.worker.spyre_worker import SpyreWorker
+from sendnn_inference.v1.worker.spyre_worker import SpyreWorker
 
 
 @pytest.fixture
@@ -47,8 +47,8 @@ def mock_vllm_config():
 
 
 def _make_worker(monkeypatch, vllm_config):
-    monkeypatch.setattr("vllm_spyre.v1.worker.spyre_worker.ChunkedPrefillModelRunner", Mock())
-    monkeypatch.setattr("vllm_spyre.v1.worker.spyre_worker.perf_metrics", Mock())
+    monkeypatch.setattr("sendnn_inference.v1.worker.spyre_worker.ChunkedPrefillModelRunner", Mock())
+    monkeypatch.setattr("sendnn_inference.v1.worker.spyre_worker.perf_metrics", Mock())
     return SpyreWorker(
         vllm_config=vllm_config,
         local_rank=0,

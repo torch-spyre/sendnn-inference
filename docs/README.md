@@ -1,18 +1,18 @@
-# Welcome to the vLLM Spyre Plugin
+# Welcome to SenDNN Inference
 
 <p style="text-align:center">
 <script async defer src="https://buttons.github.io/buttons.js"></script>
-<a class="github-button" href="https://github.com/vllm-project/vllm-spyre" data-show-count="true" data-size="large" aria-label="Star">Star</a>
-<a class="github-button" href="https://github.com/vllm-project/vllm-spyre/subscription" data-icon="octicon-eye" data-size="large" aria-label="Watch">Watch</a>
-<a class="github-button" href="https://github.com/vllm-project/vllm-spyre/fork" data-icon="octicon-repo-forked" data-size="large" aria-label="Fork">Fork</a>
+<a class="github-button" href="https://github.com/torch-spyre/sendnn-inference" data-show-count="true" data-size="large" aria-label="Star">Star</a>
+<a class="github-button" href="https://github.com/torch-spyre/sendnn-inference/subscription" data-icon="octicon-eye" data-size="large" aria-label="Watch">Watch</a>
+<a class="github-button" href="https://github.com/torch-spyre/sendnn-inference/fork" data-icon="octicon-repo-forked" data-size="large" aria-label="Fork">Fork</a>
 </p>
 
-!!! info "The vLLM-Spyre site is moving."
-    The vLLM-Spyre documentation is now hosted at: **[docs.vllm.ai/projects/spyre/](https://docs.vllm.ai/projects/spyre/)**. Please update any bookmarks.
+!!! info "Documentation hosted at docs.vllm.ai/projects/spyre/"
+    The SenDNN Inference documentation is hosted at: **[docs.vllm.ai/projects/spyre/](https://docs.vllm.ai/projects/spyre/)**. Please update any bookmarks.
 
 **IBM Spyre** is the first production-grade Artificial Intelligence Unit (AIU) accelerator born out of the IBM Research AIU family. It is part of a long-term strategy of developing novel architectures and full-stack technology solutions for the emerging space of generative AI. Spyre builds on the foundation of IBM’s internal AIU research and delivers a scalable, efficient architecture for accelerating AI in enterprise environments.
 
-The vLLM Spyre plugin (`vllm-spyre`) is a dedicated backend extension that enables seamless integration of IBM Spyre Accelerator with vLLM. It follows the architecture described in [vLLM's Plugin System](https://docs.vllm.ai/en/latest/design/plugin_system.html), making it easy to integrate IBM's advanced AI acceleration into existing vLLM workflows.
+SenDNN Inference (`sendnn-inference`) is a vLLM plugin that enables seamless integration of IBM Spyre Accelerator with vLLM. It follows the architecture described in [vLLM’s Plugin System](https://docs.vllm.ai/en/latest/design/plugin_system.html), making it easy to integrate IBM’s advanced AI acceleration into existing vLLM workflows.
 
 For more information, check out the following:
 

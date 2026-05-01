@@ -1,6 +1,6 @@
-site_name: vLLM Spyre Plugin
-site_url: https://vllm-project.github.io/vllm-spyre/
-repo_url: https://github.com/vllm-project/vllm-spyre
+site_name: SenDNN Inference Plugin
+site_url: https://docs.vllm.ai/projects/spyre/
+repo_url: https://github.com/torch-spyre/sendnn-inference
 exclude_docs: |
   *.inc.md
   *.template.md

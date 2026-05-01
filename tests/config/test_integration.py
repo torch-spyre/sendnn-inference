@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from vllm_spyre.config.configurators.model_configurator import ModelConfigurator
+from sendnn_inference.config.configurators.model_configurator import ModelConfigurator
 from .conftest import create_vllm_config
 
 pytestmark = pytest.mark.skip_global_cleanup
@@ -140,7 +140,7 @@ class TestUnregisteredModels:
         configurator = registry.get_configurator_for_runtime(vllm_config)
         assert configurator is None
 
-    def test_log_message_when_model_not_found(self, registry, caplog_vllm_spyre):
+    def test_log_message_when_model_not_found(self, registry, caplog_sendnn_inference):
         """Test that appropriate message is logged when model not found."""
         hf_config = Mock(model_type="unknown_model")
         vllm_config = create_vllm_config(
@@ -158,7 +158,7 @@ class TestUnregisteredModels:
         # Check that debug message was logged
         assert any(
             "No matching model configuration found" in record.message
-            for record in caplog_vllm_spyre.records
+            for record in caplog_sendnn_inference.records
         )
 
 

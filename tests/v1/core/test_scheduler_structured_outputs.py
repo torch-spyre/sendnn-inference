@@ -1,7 +1,8 @@
 """Unit tests for scheduler handling of structured outputs.
 
-Tests the fix in vllm_spyre/v1/core/scheduler.py that strips
-structured_output_request from Request objects in the chunked prefill scheduler.
+Tests the structured output support in sendnn_inference/v1/core/scheduler.py that
+preserves structured_output_request on Request objects and attaches grammar
+output via _spyre_grammar_output attribute in the chunked prefill scheduler.
 
 These unit tests mock the scheduler dependencies and call the actual schedule() method.
 """
@@ -12,7 +13,7 @@ from vllm import SamplingParams
 from vllm.sampling_params import StructuredOutputsParams
 from vllm.v1.core.sched.request_queue import FCFSRequestQueue
 from vllm.v1.request import Request, RequestStatus
-from vllm_spyre.v1.core.scheduler import ChunkedPrefillSpyreScheduler
+from sendnn_inference.v1.core.scheduler import ChunkedPrefillSpyreScheduler
 
 pytestmark = pytest.mark.skip_global_cleanup
 
@@ -35,6 +36,7 @@ def mocked_scheduler():
     scheduler.model_config = mock_vllm_config.model_config
     scheduler.scheduler_config = mock_vllm_config.scheduler_config
     scheduler.waiting = FCFSRequestQueue()
+    scheduler.skipped_waiting = FCFSRequestQueue()
     scheduler.running = []
     scheduler.ongoing_prefills = []
     scheduler.chunk_size = 128
@@ -48,18 +50,22 @@ def mocked_scheduler():
 
     # Mock the base scheduler's schedule method and can_schedule_prefill,
     # but ChunkedPrefillSpyreScheduler.schedule uses the code implementation
+    mock_output = Mock()
+    mock_output.has_structured_output_requests = False
+    mock_output.num_scheduled_tokens = {}
+
     with (
         patch.object(ChunkedPrefillSpyreScheduler, "can_schedule_prefill", return_value=True),
-        patch("vllm.v1.core.sched.scheduler.Scheduler.schedule", return_value=Mock()),
+        patch("vllm.v1.core.sched.scheduler.Scheduler.schedule", return_value=mock_output),
     ):
         yield scheduler
 
 
 class TestSchedulerStructuredOutputHandling:
-    """Test that the scheduler strips structured_output_request from requests."""
+    """Test that the scheduler preserves structured_output_request on requests."""
 
-    def test_scheduler_strips_structured_output_request(self, mocked_scheduler, caplog_vllm_spyre):
-        """Test that the scheduler removes structured_output_request from new requests."""
+    def test_scheduler_preserves_structured_output_request(self, mocked_scheduler):
+        """Test that the scheduler preserves structured_output_request on requests."""
 
         # Create a request with structured outputs
         sampling_params = SamplingParams(
@@ -86,14 +92,8 @@ class TestSchedulerStructuredOutputHandling:
         # Call the actual schedule method
         mocked_scheduler.schedule()
 
-        # Verify structured_output_request was stripped
-        assert request.structured_output_request is None
-        assert request.status == RequestStatus.WAITING
-
-        # Verify warning was logged
-        assert any(
-            "Removing structured output" in record.message for record in caplog_vllm_spyre.records
-        )
+        # Verify structured_output_request is preserved
+        assert request.structured_output_request is not None
 
     def test_scheduler_handles_request_without_structured_output(self, mocked_scheduler):
         """Test that requests without structured_output_request are unaffected."""
@@ -125,10 +125,8 @@ class TestSchedulerStructuredOutputHandling:
         assert request.structured_output_request is None
         # Status may have changed due to base scheduler, but that's OK
 
-    def test_scheduler_handles_multiple_requests_with_structured_outputs(
-        self, mocked_scheduler, caplog_vllm_spyre
-    ):
-        """Test that multiple requests with structured outputs are all stripped."""
+    def test_scheduler_handles_multiple_requests_with_structured_outputs(self, mocked_scheduler):
+        """Test that multiple requests with structured outputs are all preserved."""
 
         # Create multiple requests with structured outputs
         requests = []
@@ -158,55 +156,12 @@ class TestSchedulerStructuredOutputHandling:
         # Call the actual schedule method
         mocked_scheduler.schedule()
 
-        # Verify all were stripped
+        # Verify all are preserved
         for request in requests:
-            assert request.structured_output_request is None
-            assert request.status == RequestStatus.WAITING
+            assert request.structured_output_request is not None
 
-        # Verify warnings were logged for each request
-        warning_count = sum(
-            1
-            for record in caplog_vllm_spyre.records
-            if "Removing structured output" in record.message
-        )
-        assert warning_count == 3
-
-    def test_scheduler_only_strips_when_can_schedule_prefill_true(self, mocked_scheduler):
-        """Test that structured_output_request is only stripped when request can be scheduled."""
-
-        # Create a request with structured outputs
-        sampling_params = SamplingParams(
-            max_tokens=20,
-            temperature=0.0,
-            structured_outputs=StructuredOutputsParams(json_object=True),
-        )
-
-        request = Request(
-            request_id="test_req",
-            sampling_params=sampling_params,
-            prompt_token_ids=list(range(50)),
-            arrival_time=0,
-            lora_request=None,
-            pooling_params=None,
-        )
-
-        # Verify structured_output_request is set
-        assert request.structured_output_request is not None
-
-        # Add request to waiting queue
-        mocked_scheduler.waiting.append(request)
-        # Mock can_schedule_prefill to return False (request cannot be scheduled)
-        with patch.object(ChunkedPrefillSpyreScheduler, "can_schedule_prefill", return_value=False):
-            # Call the actual schedule method
-            mocked_scheduler.schedule()
-
-        # Verify structured_output_request was NOT stripped (request wasn't scheduled)
-        assert request.structured_output_request is not None
-
-    def test_scheduler_preserves_other_request_attributes(
-        self, mocked_scheduler, caplog_vllm_spyre
-    ):
-        """Test that other request attributes are not affected when stripping."""
+    def test_scheduler_preserves_other_request_attributes(self, mocked_scheduler):
+        """Test that other request attributes are not affected by scheduling."""
 
         sampling_params = SamplingParams(
             max_tokens=20,
@@ -240,9 +195,9 @@ class TestSchedulerStructuredOutputHandling:
         assert request.prompt_token_ids == original_prompt_tokens
         assert request.arrival_time == original_arrival_time
         assert request.sampling_params is original_sampling_params
-        # But structured_output_request should be None
-        assert request.structured_output_request is None
-        assert request.status == RequestStatus.WAITING
+        # structured_output_request is preserved
+        assert request.structured_output_request is not None
+        assert request.status == RequestStatus.WAITING_FOR_STRUCTURED_OUTPUT_GRAMMAR
 
 
 # Made with Bob

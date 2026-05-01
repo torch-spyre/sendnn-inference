@@ -7,7 +7,7 @@ export MASTER_ADDR=localhost
 export MASTER_PORT=12345
 
 # Run on CPU
-export VLLM_SPYRE_DYNAMO_BACKEND=eager
+export SENDNN_INFERENCE_DYNAMO_BACKEND=eager
 
 # Test related
 

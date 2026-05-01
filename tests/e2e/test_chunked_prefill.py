@@ -24,7 +24,7 @@ from spyre_util import (
 from vllm import LLM, SamplingParams
 
 from scheduling_utils import random_prompt
-from vllm_spyre.v1.worker.spyre_model_runner import SamplingForwardInputs
+from sendnn_inference.v1.worker.spyre_model_runner import SamplingForwardInputs
 
 
 def get_model_runner(cp_model: LLM):
@@ -74,7 +74,7 @@ def test_chunked_prefill_correctness(
     use_llm_cache,
 ) -> None:
     """
-    Minimal test to check if vllm-spyre activate code for chunked prefill for
+    Minimal test to check if sendnn-inference activate code for chunked prefill for
     a prompt greater than the chunk size
     """
 
@@ -90,7 +90,7 @@ def test_chunked_prefill_correctness(
     ### NB: May not be guaranteed to be set
     monkeypatch.setenv("VLLM_ENABLE_V1_MULTIPROCESSING", "0")
 
-    # SendNN chunked-prefill correctness cases cannot safely reuse the same
+    # Spyre chunked-prefill correctness cases cannot safely reuse the same
     # cached LLM across different use_case prompt shapes in one pytest process.
     use_cached_llm = backend != "sendnn"
     cp_model = get_llm(

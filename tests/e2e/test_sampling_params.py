@@ -24,7 +24,6 @@ def test_spyre_temperature(
         max_num_batched_tokens=max_num_batched_tokens,
         backend=backend,
         monkeypatch=monkeypatch,
-        use_pc=True,
     )
 
     prompt = "The capital of the United Kingdom is"
@@ -55,7 +54,6 @@ def test_spyre_max_tokens(
         max_num_batched_tokens=max_num_batched_tokens,
         backend=backend,
         monkeypatch=monkeypatch,
-        use_pc=True,
     )
 
     prompt = "Count to twenty"
@@ -89,7 +87,6 @@ def test_spyre_stop_sequence(
         max_num_batched_tokens=max_num_batched_tokens,
         backend=backend,
         monkeypatch=monkeypatch,
-        use_pc=True,
     )
     stop_str = "7"
     prompt = "1 2 3 4 5 "
@@ -129,7 +126,6 @@ def test_spyre_presence_penalty(
         max_num_batched_tokens=max_num_batched_tokens,
         backend=backend,
         monkeypatch=monkeypatch,
-        use_pc=True,
     )
     prompt = "REPEAT OVER AND OVER AGAIN THE MINIMUM TIMES POSSIBLE: one one one one one"
 
@@ -162,7 +158,6 @@ def test_spyre_frequency_penalty(
         max_num_batched_tokens=max_num_batched_tokens,
         backend=backend,
         monkeypatch=monkeypatch,
-        use_pc=True,
     )
 
     prompt = "repeat the word hi ten times:"
@@ -195,7 +190,6 @@ def test_spyre_n_generations(
         max_num_batched_tokens=max_num_batched_tokens,
         backend=backend,
         monkeypatch=monkeypatch,
-        use_pc=True,
     )
     prompt = "The three most popular sports in the world are: "
 
@@ -250,7 +244,6 @@ def test_spyre_top_p(
         max_num_batched_tokens=max_num_batched_tokens,
         backend=backend,
         monkeypatch=monkeypatch,
-        use_pc=True,
     )
     prompt = "The first three letters of the alphabet are"
     params1 = SamplingParams(top_p=0.01, temperature=1, max_tokens=10)
@@ -277,7 +270,6 @@ def test_spyre_top_k(
         max_num_batched_tokens=max_num_batched_tokens,
         backend=backend,
         monkeypatch=monkeypatch,
-        use_pc=True,
     )
     prompt = "The opposite of hot is"
     params1 = SamplingParams(temperature=1, top_k=1, max_tokens=5)
@@ -303,7 +295,6 @@ def test_spyre_logit_bias(
         max_num_batched_tokens=max_num_batched_tokens,
         backend=backend,
         monkeypatch=monkeypatch,
-        use_pc=True,
     )
     tokenizer = spyre_model.get_tokenizer()
     banned_word = "train"
@@ -350,7 +341,6 @@ def test_spyre_min_tokens(
         max_num_batched_tokens=max_num_batched_tokens,
         backend=backend,
         monkeypatch=monkeypatch,
-        use_pc=True,
     )
     prompt = "What is the capital of the USA?"
     tokenizer = spyre_model.get_tokenizer()
@@ -385,7 +375,6 @@ def test_spyre_ignore_eos(
         max_num_batched_tokens=max_num_batched_tokens,
         backend=backend,
         monkeypatch=monkeypatch,
-        use_pc=True,
     )
     tokenizer = spyre_model.get_tokenizer()
     eos_id = tokenizer.eos_token_id
@@ -420,7 +409,6 @@ def test_spyre_min_p(
         max_num_batched_tokens=max_num_batched_tokens,
         backend=backend,
         monkeypatch=monkeypatch,
-        use_pc=True,
     )
     prompt = "The opposite of black is"
     params1 = SamplingParams(min_p=0.5, temperature=1, max_tokens=5)
@@ -447,7 +435,6 @@ def test_spyre_bad_words(
         max_num_batched_tokens=max_num_batched_tokens,
         backend=backend,
         monkeypatch=monkeypatch,
-        use_pc=True,
     )
     prompt = "The capital of France is"
     params1 = SamplingParams(
@@ -479,7 +466,6 @@ def test_spyre_detokenize(
         max_num_batched_tokens=max_num_batched_tokens,
         backend=backend,
         monkeypatch=monkeypatch,
-        use_pc=True,
     )
     prompt = "Hello, world!"
     params = SamplingParams(max_tokens=5, temperature=0, detokenize=False)
@@ -505,7 +491,6 @@ def test_spyre_logprobs(
         max_num_batched_tokens=max_num_batched_tokens,
         backend=backend,
         monkeypatch=monkeypatch,
-        use_pc=True,
     )
     num_logprobs = 5
     prompt = "The sky is"

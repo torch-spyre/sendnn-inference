@@ -6,12 +6,12 @@
 # unless a later match takes precedence
 * @joerunde @prashantgupta24
 
-# This lists cover the "core" components of vLLM-Spyre that require careful review
-/vllm_spyre @yannicks1 @tdoublep @nikolaospapandreou @sducouedic
+# This lists cover the "core" components of SenDNN-Inference that require careful review
+/sendnn_inference @yannicks1 @tdoublep @nikolaospapandreou @sducouedic
 
 # TODO: separate code into different packages:
-#   /vllm_spyre/v1/worker/continuous_batching @nikolaospapandreou
-#   /vllm_spyre/v1/worker/static_batching ...
+#   /sendnn_inference/v1/worker/continuous_batching @nikolaospapandreou
+#   /sendnn_inference/v1/worker/static_batching ...
 
 # Tests
 /tests @rafvasq @prashantgupta24 @sducouedic

@@ -8,7 +8,7 @@ This table summarize the status of features on Spyre. By default, those features
 | Automatic Prefix Caching      |   ✅   |
 | LoRA                          |   ⛔   |
 | Speculative Decoding          |   ⛔   |
-| Guided Decoding               |   ⛔   |
+| Guided Decoding               |   ✅   |
 | Enc-dec                       |   ⛔   |
 | Multi Modality                |   ⚠️   |
 | LogProbs                      |   ✅   |

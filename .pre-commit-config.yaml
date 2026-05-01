@@ -37,7 +37,7 @@ repos:
   hooks:
     - id: ty
       name: ty check
-      entry: uvx ty@0.0.16 check vllm_spyre
+      entry: uvx ty@0.0.16 check sendnn_inference
       # `system` here instead of python so that we avoid running inside an isolated venv created by
       # prek, and instead have access to the .venv created by uv for the project
       language: system
