@@ -448,6 +448,22 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         num_running = len(decoding_requests)
         cond1 = num_running + len(self.waiting) < self.max_num_running_reqs
 
+        # EXPERIMENTAL CONSTRAINT: Do not schedule a request that requires
+        # additional padding during decode (shifts the TKV).
+        curr_tkv_block = math.floor(self.tkv / self.block_size)
+        new_tkv_block = math.floor(request.num_prompt_tokens / self.block_size)
+        if new_tkv_block > curr_tkv_block > 0:
+            logger.debug(
+                "Number of blocks needed to prefill the new sequence "
+                "(%d blocks) exceeds the number of blocks per sequence "
+                "needed in the current decode batch (%d blocks) -> "
+                "request %s is not scheduled.",
+                new_tkv_block,
+                curr_tkv_block,
+                request.request_id,
+            )
+            return False
+
         # calculate new max tkv of the batch given the new sequence joins
         # considers all possible cases:
         # - prompt_len > self.tkv and fall into different blocks
