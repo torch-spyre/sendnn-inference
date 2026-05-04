@@ -43,7 +43,7 @@ For each prefill step, only one chunk is processed. The active chunk is determin
 
 ##### Illustration
 
-These visualizations below show the chunked prefill process for prompt for different lenghts.
+These visualizations below show the chunked prefill process for prompt for different lengths.
 
 **Single chunk prefill (prompt len = 15):**
 
@@ -70,7 +70,7 @@ When a request generates enough tokens to require an additional KV-cache block, 
 
 ##### Illustration
 
-The plot below illustrate the full-blocks padding and per-request tkv. We can observe the padding blocks being dynamically appened or removed leading to "jumps" in the tkv values from one step to another when:
+The plot below illustrate the full-blocks padding and per-request tkv. We can observe the padding blocks being dynamically appended or removed leading to "jumps" in the tkv values from one step to another when:
 * the tkv of any of the request is about to reach a new block (steps 11, 16, 52)
 * a long request finishes, so the other requests can remove their padding blocks (steps 58, 65)
 

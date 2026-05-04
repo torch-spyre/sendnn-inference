@@ -1,9 +1,8 @@
 """Generate Plotly HTML plots from benchmark JSON data."""
 
 import json
-import os
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import plotly.graph_objects as go
 import plotly.io as pio
@@ -28,13 +27,15 @@ def get_max_tkv_indices(values: list[float]) -> set[int]:
 
 def load_plot_data(file_path: str) -> tuple[dict, list[dict]]:
     """Load metadata and per-step scheduling data from a JSONL file."""
-    with open(file_path, "r", encoding="utf-8") as f:
+    with open(file_path, encoding="utf-8") as f:
         metadata = json.loads(f.readline())
         steps = [json.loads(line) for line in f]
     return metadata, steps
 
 
-def build_waiting_plot_data(step: dict, num_waiting_displayed: int) -> tuple[list[float], list[float], list[str]]:
+def build_waiting_plot_data(
+    step: dict, num_waiting_displayed: int
+) -> tuple[list[float], list[float], list[str]]:
     """Build waiting-queue bar values and pad empty display slots."""
     waiting = step["waiting"][:num_waiting_displayed]
     waiting_prompt_x = [item["prompt_len"] for item in waiting]
@@ -79,7 +80,7 @@ def build_prefilling_plot_data(step: dict, chunk_size) -> dict[str, Any]:
     # This happens when chunks_done > 0 and chunk_start hasn't advanced yet
     # In this case, there's no "Currently Prefilling"
     expected_chunk_start = chunks_done * chunk_size - left_padding
-    is_chunk_already_done = (chunks_done > 0 and chunk_prompt_token_start < expected_chunk_start)
+    is_chunk_already_done = chunks_done > 0 and chunk_prompt_token_start < expected_chunk_start
 
     if is_chunk_already_done:
         # The chunk shown is already done, no current prefilling tokens
@@ -96,8 +97,12 @@ def build_prefilling_plot_data(step: dict, chunk_size) -> dict[str, Any]:
         tokens_current = chunk_prompt_token_end - chunk_prompt_token_start
         tokens_remaining = prefilling["prompt_len"] - chunk_prompt_token_end
         active_chunk_info = f" (chunk {chunks_done + 1} / {chunks_total})"
-        active_chunk_start = float(prefilling.get("left_padding", 0)) + float(chunk_prompt_token_start)
-        active_chunk_end = float(prefilling.get("left_padding", 0)) + float(chunk_prompt_token_start + chunk_size)
+        active_chunk_start = float(prefilling.get("left_padding", 0)) + float(
+            chunk_prompt_token_start
+        )
+        active_chunk_end = float(prefilling.get("left_padding", 0)) + float(
+            chunk_prompt_token_start + chunk_size
+        )
         has_active_chunk = tokens_current > 0
 
     tokens_remaining = max(tokens_remaining, 0)
@@ -129,7 +134,7 @@ def build_prefilling_plot_data(step: dict, chunk_size) -> dict[str, Any]:
 def build_decoding_plot_data(
     step: dict,
     batch_size: int,
-    previous_completed_ids: Optional[set[str]] = None,
+    previous_completed_ids: set[str] | None = None,
     completed_value_includes_reserved: bool = False,
 ) -> dict[str, Any]:
     """Build decoding-queue stacked-bar values and per-request TKV values."""
@@ -230,7 +235,8 @@ def build_tkv_overlay(batch_size: int, tkv_values: list[float]) -> tuple[list[di
                     x1=0,
                     y1=idx,
                     line=dict(color="rgba(0,0,0,0)", width=0),
-                ))
+                )
+            )
             annotations.append(
                 dict(
                     xref="x3",
@@ -242,7 +248,8 @@ def build_tkv_overlay(batch_size: int, tkv_values: list[float]) -> tuple[list[di
                     font=dict(color="rgba(0,0,0,0)", size=9),
                     bgcolor="rgba(0,0,0,0)",
                     borderwidth=0,
-                ))
+                )
+            )
             continue
 
         is_max_tkv = idx in max_tkv_indices
@@ -261,7 +268,8 @@ def build_tkv_overlay(batch_size: int, tkv_values: list[float]) -> tuple[list[di
                 x1=tkv_value,
                 y1=idx + 0.4,
                 line=dict(color=line_color, width=line_width, dash="dot"),
-            ))
+            )
+        )
         annotations.append(
             dict(
                 xref="x3",
@@ -273,7 +281,8 @@ def build_tkv_overlay(batch_size: int, tkv_values: list[float]) -> tuple[list[di
                 font=dict(color=text_color, size=9, weight=text_weight),
                 bgcolor="rgba(0,0,0,0)",  # Fully transparent background
                 borderwidth=0,
-            ))
+            )
+        )
 
     return shapes, annotations
 
@@ -283,22 +292,19 @@ def build_generated_tokens_annotations(
     decoded_actual: list[float],
 ) -> list[dict]:
     """Build annotations showing the number of generated tokens at the end of each decoding line.
-    
+
     Args:
         batch_size: Maximum number of sequences
         decoded_actual: List of actual decoded (generated) token counts for each request
-        
+
     Returns:
         List of annotation dictionaries for generated token counts
     """
     annotations = []
-    has_any_generated = False
-    
+
     for idx in range(batch_size):
         generated_tokens = int(decoded_actual[idx])
-        
-        has_any_generated = True
-        
+
         # Fixed x position on the right side, aligned with the label
         annotations.append(
             dict(
@@ -315,8 +321,9 @@ def build_generated_tokens_annotations(
                 bordercolor="rgba(0,0,0,0)",
                 borderwidth=2,
                 borderpad=4,
-            ))
-    
+            )
+        )
+
     # Add a single "Generated Tokens" label annotation
     annotations.append(
         dict(
@@ -330,25 +337,28 @@ def build_generated_tokens_annotations(
             showarrow=False,
             font=dict(color="#00CC96", size=12),
             bgcolor="rgba(255, 255, 255, 0.9)",
-        ))
-    
+        )
+    )
+
     return annotations
 
 
-def build_volume_overlay(batch_size: int, tkv_values: list[float], num_decoding: int) -> tuple[list[dict], list[dict]]:
+def build_volume_overlay(
+    batch_size: int, tkv_values: list[float], num_decoding: int
+) -> tuple[list[dict], list[dict]]:
     """Build volume overlay rectangle and annotation for decoding requests.
-    
+
     Args:
         batch_size: Maximum number of sequences
         tkv_values: List of TKV values for each request
         num_decoding: Number of active decoding requests
-        
+
     Returns:
         Tuple of (shapes, annotations) for the volume overlay
     """
     shapes = []
     annotations = []
-    
+
     # Determine if there are active decoding requests
     if num_decoding == 0:
         max_tkv = 0
@@ -362,7 +372,7 @@ def build_volume_overlay(batch_size: int, tkv_values: list[float], num_decoding:
         else:
             max_tkv = max(positive_tkvs)
             volume = max_tkv * num_decoding
-    
+
     # Always create a rectangle (infinitely small when no decoding)
     # This ensures the shape exists in all frames for proper animation
     shapes.append(
@@ -373,13 +383,20 @@ def build_volume_overlay(batch_size: int, tkv_values: list[float], num_decoding:
             x0=0,
             y0=-0.5,
             x1=max_tkv if max_tkv > 0 else 0.001,  # Infinitely small when no decoding
-            y1=(num_decoding - 0.5) if num_decoding > 0 else -0.499,  # Infinitely small when no decoding
-            fillcolor="rgba(255, 165, 0, 0.2)" if volume > 0 else "rgba(255, 165, 0, 0)",  # Transparent when no volume
-            line=dict(color="rgba(255, 140, 0, 0.8)" if volume > 0 else "rgba(255, 140, 0, 0)", width=2 if volume > 0 else 0),
+            y1=(num_decoding - 0.5)
+            if num_decoding > 0
+            else -0.499,  # Infinitely small when no decoding
+            fillcolor="rgba(255, 165, 0, 0.2)"
+            if volume > 0
+            else "rgba(255, 165, 0, 0)",  # Transparent when no volume
+            line=dict(
+                color="rgba(255, 140, 0, 0.8)" if volume > 0 else "rgba(255, 140, 0, 0)",
+                width=2 if volume > 0 else 0,
+            ),
             layer="below",
         )
     )
-    
+
     # Always add volume annotation (shows 0 when no decoding)
     annotations.append(
         dict(
@@ -395,7 +412,7 @@ def build_volume_overlay(batch_size: int, tkv_values: list[float], num_decoding:
             bgcolor="rgba(255, 255, 255, 0.9)",
         )
     )
-    
+
     return shapes, annotations
 
 
@@ -433,19 +450,21 @@ def build_prefilling_chunk_overlay(prefilling_data: dict[str, Any], chunk_size: 
     ]
 
 
-def build_inactive_overlay_shapes(is_prefill_active: bool, has_prefilling: bool, has_decoding: bool) -> list[dict]:
+def build_inactive_overlay_shapes(
+    is_prefill_active: bool, has_prefilling: bool, has_decoding: bool
+) -> list[dict]:
     """Build semi-transparent overlay rectangles for inactive sections.
-    
+
     Args:
         is_prefill_active: True if prefill is running, False if decode is running
         has_prefilling: True if there is a request in the prefilling queue
         has_decoding: True if there are requests in the decoding queue
-        
+
     Returns:
         List of shape dictionaries for overlaying inactive sections
     """
     shapes = []
-    
+
     # If both queues are empty, overlay both sections
     if not has_prefilling or not is_prefill_active:
         # Overlay prefill section (row 2)
@@ -479,7 +498,7 @@ def build_inactive_overlay_shapes(is_prefill_active: bool, has_prefilling: bool,
                 layer="above",
             )
         )
-    
+
     return shapes
 
 
@@ -497,10 +516,10 @@ def create_figure(batch_size: int, num_waiting_displayed: int, chunk_size: int) 
             0.2 * batch_size,
         ],
     )
-    
+
     # Set subplot title font size to 12
     fig.update_annotations(font_size=12)
-    
+
     return fig
 
 
@@ -719,9 +738,9 @@ def create_frame(
     annotations.extend(generated_tokens_annotations)
 
     step_label = f"{step_index}"
-    
+
     # Update the prefilling subplot title with prompt length and active chunk information
-    prompt_len = prefilling_data.get('prompt_len')
+    prompt_len = prefilling_data.get("prompt_len")
     prompt_len_str = f" (prompt len {prompt_len})" if prompt_len is not None else ""
     prefilling_title = f"Prefilling{prompt_len_str}{prefilling_data.get('active_chunk_info', '')}"
     annotations[1] = dict(
@@ -758,7 +777,13 @@ def create_frame(
     )
 
 
-def build_frames(steps: list[dict], batch_size: int, num_waiting_displayed: int, display_prefill_only: bool, chunk_size: int) -> list[go.Frame]:
+def build_frames(
+    steps: list[dict],
+    batch_size: int,
+    num_waiting_displayed: int,
+    display_prefill_only: bool,
+    chunk_size: int,
+) -> list[go.Frame]:
     """Build animation frames for all scheduling steps."""
     frames = []
     previous_frame = None
@@ -776,8 +801,16 @@ def build_frames(steps: list[dict], batch_size: int, num_waiting_displayed: int,
         )
         # Determine if prefill is active: prefill is active if the step type is "prefill"
         is_prefill_active = step_type == "prefill"
-        
-        frame = create_frame(i, waiting_data, prefilling_data, decoding_data, batch_size, is_prefill_active, chunk_size)
+
+        frame = create_frame(
+            i,
+            waiting_data,
+            prefilling_data,
+            decoding_data,
+            batch_size,
+            is_prefill_active,
+            chunk_size,
+        )
 
         if not display_prefill_only:
             frames.append(frame)
@@ -796,13 +829,24 @@ def build_frames(steps: list[dict], batch_size: int, num_waiting_displayed: int,
     return frames
 
 
-def configure_figure_layout(fig: go.Figure, batch_size: int, max_model_len: int, block_size: int, tkv_values: list[float], frames: list[go.Frame], metadata: dict, initial_is_prefill_active: bool, initial_num_decoding: int, initial_prefilling_data: dict[str, Any]) -> None:
+def configure_figure_layout(
+    fig: go.Figure,
+    batch_size: int,
+    max_model_len: int,
+    block_size: int,
+    tkv_values: list[float],
+    frames: list[go.Frame],
+    metadata: dict,
+    initial_is_prefill_active: bool,
+    initial_num_decoding: int,
+    initial_prefilling_data: dict[str, Any],
+) -> None:
     """Apply axis, TKV overlay, and animation controls to the figure."""
     initial_shapes, initial_annotations = build_tkv_overlay(
         batch_size=batch_size,
         tkv_values=tkv_values,
     )
-    
+
     # # Add initial volume overlay
     initial_volume_shapes, initial_volume_annotations = build_volume_overlay(
         batch_size=batch_size,
@@ -811,20 +855,23 @@ def configure_figure_layout(fig: go.Figure, batch_size: int, max_model_len: int,
     )
     initial_shapes.extend(initial_volume_shapes)
     initial_annotations.extend(initial_volume_annotations)
-    
+
     # Add initial overlay for inactive sections
     initial_has_prefilling = bool(initial_prefilling_data["req_id"][0].strip())
     initial_has_decoding = initial_num_decoding > 0
-    initial_overlay_shapes = build_inactive_overlay_shapes(initial_is_prefill_active, initial_has_prefilling, initial_has_decoding)
+    initial_overlay_shapes = build_inactive_overlay_shapes(
+        initial_is_prefill_active, initial_has_prefilling, initial_has_decoding
+    )
     initial_shapes.extend(initial_overlay_shapes)
 
     chunk_size = metadata.get("chunk_size", "N/A")
-    
+
     # Add initial overlay rectangle for the currently active prefilling chunk
     initial_shapes.extend(build_prefilling_chunk_overlay(initial_prefilling_data, chunk_size))
     max_batch_tkv_limit = metadata.get("max_batch_tkv_limit", "N/A")
     title_text = (
-        f"Max Model Len: {max_model_len} | Max Num Seqs: {batch_size} | Block Size: {block_size}<br>"
+        f"Max Model Len: {max_model_len} | Max Num Seqs: {batch_size} | "
+        f"Block Size: {block_size}<br>"
         f"Chunk Size: {chunk_size} | Max Volume: {max_batch_tkv_limit}"
     )
 
@@ -844,7 +891,7 @@ def configure_figure_layout(fig: go.Figure, batch_size: int, max_model_len: int,
             x=0.5,
             tracegroupgap=30,
             font=dict(size=10),
-            grouptitlefont=dict(size=11)
+            grouptitlefont=dict(size=11),
         ),
         shapes=initial_shapes,
         annotations=initial_annotations,
@@ -868,7 +915,10 @@ def configure_figure_layout(fig: go.Figure, batch_size: int, max_model_len: int,
                     {
                         "label": "Stop",
                         "method": "animate",
-                        "args": [[None], {"frame": {"duration": 0, "redraw": False}, "mode": "immediate"}],
+                        "args": [
+                            [None],
+                            {"frame": {"duration": 0, "redraw": False}, "mode": "immediate"},
+                        ],
                     },
                 ],
                 "direction": "left",
@@ -884,7 +934,12 @@ def configure_figure_layout(fig: go.Figure, batch_size: int, max_model_len: int,
             {
                 "yanchor": "bottom",
                 "xanchor": "left",
-                "currentvalue": {"font": {"size": 10}, "prefix": "step: ", "visible": True, "xanchor": "right"},
+                "currentvalue": {
+                    "font": {"size": 10},
+                    "prefix": "step: ",
+                    "visible": True,
+                    "xanchor": "right",
+                },
                 "pad": {"b": 10, "t": 50},
                 "len": 0.9,
                 "x": 0.1,
@@ -909,17 +964,16 @@ def configure_figure_layout(fig: go.Figure, batch_size: int, max_model_len: int,
         ],
     )
 
-    fig.update_xaxes(range=[0, max_model_len], dtick=block_size, tickfont=dict(size=10), row=1, col=1)
-    
+    fig.update_xaxes(
+        range=[0, max_model_len], dtick=block_size, tickfont=dict(size=10), row=1, col=1
+    )
+
     # Configure prefilling x-axis with bold labels at chunk size borders
     if isinstance(chunk_size, int) and chunk_size > 0:
         # Generate tick values at block_size intervals
         tick_vals = list(range(0, max_model_len + 1, block_size))
         # Create tick text with bold formatting at chunk size multiples
-        tick_text = [
-            f"<b>{val}</b>" if val % chunk_size == 0 else str(val)
-            for val in tick_vals
-        ]
+        tick_text = [f"<b>{val}</b>" if val % chunk_size == 0 else str(val) for val in tick_vals]
         fig.update_xaxes(
             range=[0, max_model_len],
             tickmode="array",
@@ -927,17 +981,23 @@ def configure_figure_layout(fig: go.Figure, batch_size: int, max_model_len: int,
             ticktext=tick_text,
             tickfont=dict(size=10),
             row=2,
-            col=1
+            col=1,
         )
     else:
         # Fallback if chunk_size is not available
-        fig.update_xaxes(range=[0, max_model_len], dtick=block_size, tickfont=dict(size=10), row=2, col=1)
-    
-    fig.update_xaxes(range=[0, max_model_len], dtick=block_size, tickfont=dict(size=10), row=3, col=1)
+        fig.update_xaxes(
+            range=[0, max_model_len], dtick=block_size, tickfont=dict(size=10), row=2, col=1
+        )
+
+    fig.update_xaxes(
+        range=[0, max_model_len], dtick=block_size, tickfont=dict(size=10), row=3, col=1
+    )
     fig.frames = frames
 
 
-def generate_plots(data: Optional[dict] = None, file_path: Optional[str] = None, show_figure: bool = True) -> None:
+def generate_plots(
+    data: dict | None = None, file_path: str | None = None, show_figure: bool = True
+) -> None:
     """Generate scheduling plots from JSONL data.
 
     Args:
@@ -956,7 +1016,9 @@ def generate_plots(data: Optional[dict] = None, file_path: Optional[str] = None,
     block_size = metadata["block_size"]
     chunk_size = metadata.get("chunk_size", "N/A")
 
-    fig = create_figure(batch_size=batch_size, num_waiting_displayed=NUM_WAITING_DISPLAYED, chunk_size=chunk_size)
+    fig = create_figure(
+        batch_size=batch_size, num_waiting_displayed=NUM_WAITING_DISPLAYED, chunk_size=chunk_size
+    )
 
     step0 = steps[0]
     initial_waiting_data = build_waiting_plot_data(step0, NUM_WAITING_DISPLAYED)
@@ -976,12 +1038,14 @@ def generate_plots(data: Optional[dict] = None, file_path: Optional[str] = None,
         batch_size=batch_size,
         num_waiting_displayed=NUM_WAITING_DISPLAYED,
         display_prefill_only=DISPLAY_PREFILL_ONLY,
-        chunk_size=chunk_size
+        chunk_size=chunk_size,
     )
-    
+
     # Calculate initial number of decoding requests
-    initial_num_decoding = len([req for req in initial_decoding_data["decoding_req_ids"] if req.strip()])
-    
+    initial_num_decoding = len(
+        [req for req in initial_decoding_data["decoding_req_ids"] if req.strip()]
+    )
+
     configure_figure_layout(
         fig=fig,
         batch_size=batch_size,
@@ -1009,10 +1073,10 @@ def generate_plots(data: Optional[dict] = None, file_path: Optional[str] = None,
 def on_pre_build(config):
     """MkDocs hook that runs before the build."""
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    
+
     # Generate plots for all JSON files in the data directory
     json_files = list(DATA_PATH.glob("scheduling_*.json"))
-    
+
     for json_file in json_files:
         try:
             print(f"Generating scheduling plot for: {json_file.name}")

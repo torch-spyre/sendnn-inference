@@ -7,13 +7,13 @@ Each request is defined as a tuple:
 Run:
     python docs/mkdocs/data/generate_example.py
 """
+
 from __future__ import annotations
 
 import json
 import math
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
@@ -22,7 +22,7 @@ class Config:
     max_num_seqs: int
     block_size: int
     chunk_size: int
-    max_batch_tkv_limit: Optional[int] = None
+    max_batch_tkv_limit: int | None = None
     interleave: bool = False
 
 
@@ -86,21 +86,21 @@ def _decode_rows(reqs: list[_Decoding], block_size: int) -> list[dict]:
     for req in reqs:
         left_pad = (max_blocks - req.blocks_needed(block_size)) * block_size
         tkv = left_pad + req.actual_tokens
-        rows.append({
-            "id": req.id,
-            "prompt_len": req.prompt_len,
-            "max_tokens": req.max_tokens,
-            "tkv": tkv,
-            "padding": left_pad,
-            "decoded": req.decoded,
-            "reserved": req.max_tokens - req.decoded,
-        })
+        rows.append(
+            {
+                "id": req.id,
+                "prompt_len": req.prompt_len,
+                "max_tokens": req.max_tokens,
+                "tkv": tkv,
+                "padding": left_pad,
+                "decoded": req.decoded,
+                "reserved": req.max_tokens - req.decoded,
+            }
+        )
     return rows
 
 
-def _advance_decode(
-    reqs: list[_Decoding], block_size: int
-) -> tuple[list[dict], list[str]]:
+def _advance_decode(reqs: list[_Decoding], block_size: int) -> tuple[list[dict], list[str]]:
     for req in reqs:
         req.decoded += 1
     rows = _decode_rows(reqs, block_size)
@@ -136,7 +136,8 @@ def _volumetric_ok(
         max(
             (math.ceil((d.prompt_len + d.max_tokens) / block_size) + 1) * block_size,
             max(0, new_blocks_at_join - d.blocks_needed(block_size)) * block_size
-            + d.prompt_len + d.max_tokens,
+            + d.prompt_len
+            + d.max_tokens,
         )
         for d in decoding
     ]
@@ -152,7 +153,7 @@ def simulate(config: Config, request_defs: list[RequestDef]) -> list[dict]:
     req_map: dict[str, RequestDef] = {str(i): rd for i, rd in enumerate(request_defs)}
 
     waiting: list[_Waiting] = []
-    prefilling: Optional[_Prefilling] = None
+    prefilling: _Prefilling | None = None
     decoding: list[_Decoding] = []
     last_was_prefill = False
     steps: list[dict] = []
@@ -163,23 +164,27 @@ def simulate(config: Config, request_defs: list[RequestDef]) -> list[dict]:
             waiting.append(_Waiting(req_id, rd.prompt_len, rd.max_output_tokens))
 
         if step == 0 and new_arrivals:
-            steps.append({
-                "step_type": "waiting",
-                "waiting": [
-                    {"id": w.id, "prompt_len": w.prompt_len, "max_tokens": w.max_tokens}
-                    for w in waiting
-                ],
-                "prefilling": None,
-                "decoding": [],
-            })
+            steps.append(
+                {
+                    "step_type": "waiting",
+                    "waiting": [
+                        {"id": w.id, "prompt_len": w.prompt_len, "max_tokens": w.max_tokens}
+                        for w in waiting
+                    ],
+                    "prefilling": None,
+                    "decoding": [],
+                }
+            )
 
         if not waiting and prefilling is None and not decoding:
-            steps.append({
-                "step_type": "done",
-                "waiting": [],
-                "prefilling": None,
-                "decoding": [],
-            })
+            steps.append(
+                {
+                    "step_type": "done",
+                    "waiting": [],
+                    "prefilling": None,
+                    "decoding": [],
+                }
+            )
             break
 
         completed: list[str] = []
@@ -211,17 +216,19 @@ def simulate(config: Config, request_defs: list[RequestDef]) -> list[dict]:
         # it is not the last chunk yet, OR the volumetric constraint allows it to
         # join the decoding batch. If the last chunk is blocked the request stays
         # in the prefill state and a plain decode step is emitted instead.
-        if prefilling is not None and not (
-            config.interleave and last_was_prefill and bool(decoding)
-        ) and (
-            prefilling.chunks_done + 1 < prefilling.chunks_total
-            or config.max_batch_tkv_limit is None
-            or _volumetric_ok(
-                prefilling.prompt_len,
-                prefilling.max_tokens,
-                decoding,
-                config.block_size,
-                config.max_batch_tkv_limit,
+        if (
+            prefilling is not None
+            and not (config.interleave and last_was_prefill and bool(decoding))
+            and (
+                prefilling.chunks_done + 1 < prefilling.chunks_total
+                or config.max_batch_tkv_limit is None
+                or _volumetric_ok(
+                    prefilling.prompt_len,
+                    prefilling.max_tokens,
+                    decoding,
+                    config.block_size,
+                    config.max_batch_tkv_limit,
+                )
             )
         ):
             decode_rows = _decode_rows(decoding, config.block_size)
@@ -237,7 +244,9 @@ def simulate(config: Config, request_defs: list[RequestDef]) -> list[dict]:
                     "max_tokens": prefilling.max_tokens,
                     "chunks_total": prefilling.chunks_total,
                     "chunks_done": prefilling.chunks_done,
-                    "chunk_prompt_token_start": prefilling.chunk_prompt_token_start(config.chunk_size),
+                    "chunk_prompt_token_start": prefilling.chunk_prompt_token_start(
+                        config.chunk_size
+                    ),
                     "chunk_prompt_token_end": prefilling.chunk_prompt_token_end(config.chunk_size),
                     "left_padding": prefilling.left_padding,
                     "right_padding": prefilling.right_padding,
@@ -247,13 +256,15 @@ def simulate(config: Config, request_defs: list[RequestDef]) -> list[dict]:
             prefilling.chunks_done += 1
             if prefilling.chunks_done >= prefilling.chunks_total:
                 rd = req_map[prefilling.id]
-                decoding.append(_Decoding(
-                    id=prefilling.id,
-                    prompt_len=prefilling.prompt_len,
-                    max_tokens=prefilling.max_tokens,
-                    total_generated=rd.total_tokens_generated,
-                    decoded=1,
-                ))
+                decoding.append(
+                    _Decoding(
+                        id=prefilling.id,
+                        prompt_len=prefilling.prompt_len,
+                        max_tokens=prefilling.max_tokens,
+                        total_generated=rd.total_tokens_generated,
+                        decoded=1,
+                    )
+                )
                 prefilling = None
             last_was_prefill = True
         else:
@@ -272,20 +283,29 @@ def simulate(config: Config, request_defs: list[RequestDef]) -> list[dict]:
                 # actually processed so far. Edge case: if no chunk is done yet
                 # (chunks_done=0, single-chunk request blocked immediately),
                 # fall back to showing the pending chunk 0.
-                "prefilling": ({
-                    "id": prefilling.id,
-                    "prompt_len": prefilling.prompt_len,
-                    "max_tokens": prefilling.max_tokens,
-                    "chunks_total": prefilling.chunks_total,
-                    "chunks_done": prefilling.chunks_done,
-                    "chunk_prompt_token_start": max(0, max(0, prefilling.chunks_done - 1) * config.chunk_size - prefilling.left_padding),
-                    "chunk_prompt_token_end": min(
-                        max(1, prefilling.chunks_done) * config.chunk_size - prefilling.left_padding,
-                        prefilling.prompt_len,
-                    ),
-                    "left_padding": prefilling.left_padding,
-                    "right_padding": prefilling.right_padding,
-                } if prefilling is not None else None),
+                "prefilling": (
+                    {
+                        "id": prefilling.id,
+                        "prompt_len": prefilling.prompt_len,
+                        "max_tokens": prefilling.max_tokens,
+                        "chunks_total": prefilling.chunks_total,
+                        "chunks_done": prefilling.chunks_done,
+                        "chunk_prompt_token_start": max(
+                            0,
+                            max(0, prefilling.chunks_done - 1) * config.chunk_size
+                            - prefilling.left_padding,
+                        ),
+                        "chunk_prompt_token_end": min(
+                            max(1, prefilling.chunks_done) * config.chunk_size
+                            - prefilling.left_padding,
+                            prefilling.prompt_len,
+                        ),
+                        "left_padding": prefilling.left_padding,
+                        "right_padding": prefilling.right_padding,
+                    }
+                    if prefilling is not None
+                    else None
+                ),
                 "decoding": decode_rows,
             }
             last_was_prefill = False
@@ -312,14 +332,19 @@ def main() -> None:
 
     # (arrival_step, prompt_len, max_output_tokens, total_tokens_generated)
     requests = [
-        RequestDef(0, 200, 50, 50),
-        RequestDef(0, 100, 40, 9),
-        RequestDef(0, 80, 30, 30),
-        RequestDef(0, 332, 100, 50),
-        RequestDef(0, 268, 100, 50),
-        RequestDef(66, 145, 100, 50),
-        RequestDef(68, 16, 100, 50),
-        RequestDef(71, 100, 100, 50),
+        # TODO write target setup here
+        # RequestDef(0, 15, 3, 3),
+        # RequestDef(0, 200, 50, 50),
+        # RequestDef(0, 100, 40, 9),
+        # RequestDef(0, 80, 30, 30),
+        # RequestDef(0, 332, 100, 50),
+        # RequestDef(0, 268, 100, 50),
+        # RequestDef(66, 145, 100, 50),
+        # RequestDef(68, 16, 100, 50),
+        # RequestDef(71, 100, 100, 50),
+        RequestDef(0, 264, 100, 62),
+        RequestDef(0, 45, 100, 71),
+        RequestDef(0, 115, 100, 67),
     ]
 
     config_line = {

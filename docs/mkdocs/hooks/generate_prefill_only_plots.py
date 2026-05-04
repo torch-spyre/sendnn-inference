@@ -1,9 +1,8 @@
 """Generate Plotly HTML plots showing only prefilling from benchmark JSON data."""
 
 import json
-import os
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import plotly.graph_objects as go
 import plotly.io as pio
@@ -18,7 +17,7 @@ SAVE_OUTPUT = True
 
 def load_plot_data(file_path: str) -> tuple[dict, list[dict]]:
     """Load metadata and per-step scheduling data from a JSONL file."""
-    with open(file_path, "r", encoding="utf-8") as f:
+    with open(file_path, encoding="utf-8") as f:
         metadata = json.loads(f.readline())
         steps = [json.loads(line) for line in f]
     return metadata, steps
@@ -54,8 +53,8 @@ def build_prefilling_plot_data(step: dict, chunk_size) -> dict[str, Any]:
     # This happens when chunks_done > 0 and current prompt range hasn't advanced yet
     # In this case, there's no "Currently Prefilling"
     expected_chunk_start = chunks_done * chunk_size - left_padding
-    is_chunk_already_done = (chunks_done > 0 and chunk_prompt_token_start < expected_chunk_start)
-    
+    is_chunk_already_done = chunks_done > 0 and chunk_prompt_token_start < expected_chunk_start
+
     if is_chunk_already_done:
         # The chunk shown is already done, no current prefilling tokens
         tokens_done = chunk_prompt_token_end
@@ -71,10 +70,14 @@ def build_prefilling_plot_data(step: dict, chunk_size) -> dict[str, Any]:
         tokens_current = chunk_prompt_token_end - chunk_prompt_token_start
         tokens_remaining = prefilling["prompt_len"] - chunk_prompt_token_end
         active_chunk_info = f" (chunk {chunks_done + 1} / {chunks_total})"
-        active_chunk_start = float(prefilling.get("left_padding", 0)) + float(chunk_prompt_token_start)
-        active_chunk_end = float(prefilling.get("left_padding", 0)) + float(chunk_prompt_token_start + chunk_size)
+        active_chunk_start = float(prefilling.get("left_padding", 0)) + float(
+            chunk_prompt_token_start
+        )
+        active_chunk_end = float(prefilling.get("left_padding", 0)) + float(
+            chunk_prompt_token_start + chunk_size
+        )
         has_active_chunk = tokens_current > 0
-    
+
     tokens_remaining = max(tokens_remaining, 0)
 
     left_padding = float(prefilling.get("left_padding", 0))
@@ -140,7 +143,7 @@ def create_figure() -> go.Figure:
     fig = make_subplots(
         rows=1,
         cols=1,
-        subplot_titles=(f"Prefilling",),
+        subplot_titles=("Prefilling",),
         vertical_spacing=0.15,
         column_widths=[1.0],
         row_heights=[1.0],
@@ -223,24 +226,26 @@ def create_frame(
 ) -> go.Frame:
     """Create one animation frame."""
     step_label = f"{step_index}"
-    
+
     # Add overlay rectangle for the currently active prefilling chunk
     shapes = build_prefilling_chunk_overlay(prefilling_data, chunk_size)
-    
+
     # Update the prefilling subplot title with prompt length and active chunk information
-    prompt_len = prefilling_data.get('prompt_len')
+    prompt_len = prefilling_data.get("prompt_len")
     prompt_len_str = f" (prompt len {prompt_len})" if prompt_len is not None else ""
     prefilling_title = f"Prefilling{prompt_len_str}{prefilling_data.get('active_chunk_info', '')}"
-    annotations = [dict(
-        text=prefilling_title,
-        xref="paper",
-        yref="paper",
-        x=0.5,
-        xanchor="center",
-        yanchor="bottom",
-        showarrow=False,
-        font=dict(size=12),
-    )]
+    annotations = [
+        dict(
+            text=prefilling_title,
+            xref="paper",
+            yref="paper",
+            x=0.5,
+            xanchor="center",
+            yanchor="bottom",
+            showarrow=False,
+            font=dict(size=12),
+        )
+    ]
 
     return go.Frame(
         data=[
@@ -270,7 +275,9 @@ def build_frames(steps: list[dict], chunk_size) -> list[go.Frame]:
     return frames
 
 
-def configure_figure_layout(fig: go.Figure, max_model_len: int, block_size: int, frames: list[go.Frame], metadata: dict) -> None:
+def configure_figure_layout(
+    fig: go.Figure, max_model_len: int, block_size: int, frames: list[go.Frame], metadata: dict
+) -> None:
     """Apply axis and animation controls to the figure."""
     chunk_size = metadata.get("chunk_size", "N/A")
     title_text = (
@@ -291,7 +298,7 @@ def configure_figure_layout(fig: go.Figure, max_model_len: int, block_size: int,
             y=-0.25,  # Moved legend further down to avoid x-axis labels
             xanchor="center",
             x=0.5,
-            font=dict(size=10)
+            font=dict(size=10),
         ),
         # Prevent auto-play on page load
         updatemenus=[
@@ -313,7 +320,10 @@ def configure_figure_layout(fig: go.Figure, max_model_len: int, block_size: int,
                     {
                         "label": "Stop",
                         "method": "animate",
-                        "args": [[None], {"frame": {"duration": 0, "redraw": False}, "mode": "immediate"}],
+                        "args": [
+                            [None],
+                            {"frame": {"duration": 0, "redraw": False}, "mode": "immediate"},
+                        ],
                     },
                 ],
                 "direction": "left",
@@ -329,8 +339,16 @@ def configure_figure_layout(fig: go.Figure, max_model_len: int, block_size: int,
             {
                 "yanchor": "top",
                 "xanchor": "left",
-                "currentvalue": {"font": {"size": 10}, "prefix": "step: ", "visible": True, "xanchor": "right"},
-                "pad": {"b": 10, "t": 80},  # Increased top padding to provide space for x-axis labels
+                "currentvalue": {
+                    "font": {"size": 10},
+                    "prefix": "step: ",
+                    "visible": True,
+                    "xanchor": "right",
+                },
+                "pad": {
+                    "b": 10,
+                    "t": 80,
+                },  # Increased top padding to provide space for x-axis labels
                 "len": 0.9,
                 "x": 0.1,
                 "font": {"size": 10},
@@ -358,10 +376,7 @@ def configure_figure_layout(fig: go.Figure, max_model_len: int, block_size: int,
         # Generate tick values at block_size intervals
         tick_vals = list(range(0, max_model_len + 1, block_size))
         # Create tick text with bold formatting at chunk size multiples
-        tick_text = [
-            f"<b>{val}</b>" if val % chunk_size == 0 else str(val)
-            for val in tick_vals
-        ]
+        tick_text = [f"<b>{val}</b>" if val % chunk_size == 0 else str(val) for val in tick_vals]
         fig.update_xaxes(
             range=[0, max_model_len],
             tickmode="array",
@@ -369,16 +384,20 @@ def configure_figure_layout(fig: go.Figure, max_model_len: int, block_size: int,
             ticktext=tick_text,
             tickfont=dict(size=10),
             row=1,
-            col=1
+            col=1,
         )
     else:
         # Fallback if chunk_size is not available
-        fig.update_xaxes(range=[0, max_model_len], dtick=block_size, tickfont=dict(size=10), row=1, col=1)
-    
+        fig.update_xaxes(
+            range=[0, max_model_len], dtick=block_size, tickfont=dict(size=10), row=1, col=1
+        )
+
     fig.frames = frames
 
 
-def generate_plots(data: Optional[dict] = None, file_path: Optional[str] = None, show_figure: bool = True) -> None:
+def generate_plots(
+    data: dict | None = None, file_path: str | None = None, show_figure: bool = True
+) -> None:
     """Generate prefill-only scheduling plots from JSONL data.
 
     Args:
@@ -403,10 +422,10 @@ def generate_plots(data: Optional[dict] = None, file_path: Optional[str] = None,
     add_initial_traces(fig, initial_prefilling_data)
 
     frames = build_frames(steps=steps, chunk_size=chunk_size)
-    
+
     # Add initial overlay shapes for the active chunk
     initial_shapes = build_prefilling_chunk_overlay(initial_prefilling_data, chunk_size)
-    
+
     configure_figure_layout(
         fig=fig,
         max_model_len=max_model_len,
@@ -414,7 +433,7 @@ def generate_plots(data: Optional[dict] = None, file_path: Optional[str] = None,
         frames=frames,
         metadata=metadata,
     )
-    
+
     # Update layout with initial shapes
     fig.update_layout(shapes=initial_shapes)
 
@@ -432,10 +451,10 @@ def generate_plots(data: Optional[dict] = None, file_path: Optional[str] = None,
 def on_pre_build(config):
     """MkDocs hook that runs before the build."""
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    
+
     # Generate plots for all JSON files in the data directory
     json_files = list(DATA_PATH.glob("prefill_*.json"))
-    
+
     for json_file in json_files:
         try:
             print(f"Generating prefill-only plot for: {json_file.name}")
