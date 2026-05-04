@@ -47,6 +47,9 @@ def mocked_scheduler():
     scheduler.block_size = 64
     scheduler.n_free_blocks = 100
     scheduler.max_batch_tkv_limit = "8192"
+    scheduler.max_tkv_shift_ratio = float("inf")
+    scheduler.max_skip_count = 0
+    scheduler._skip_counts = {}
 
     # Mock the base scheduler's schedule method and can_schedule_prefill,
     # but ChunkedPrefillSpyreScheduler.schedule uses the code implementation
