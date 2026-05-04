@@ -207,6 +207,14 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             "Expecting the env var VLLM_DT_MAX_BATCH_TKV_LIMIT to be set in platform.py"
         )
 
+        # Soft admission gate: skip a new prefill candidate if it would push
+        # decode tkv by more than this ratio, unless it has aged out.
+        self.max_tkv_shift_ratio: float = envs_spyre.SENDNN_INFERENCE_MAX_TKV_SHIFT_RATIO
+        self.max_skip_count: int = envs_spyre.SENDNN_INFERENCE_MAX_SKIP_COUNT
+        # Per-request skip counter. Incremented when a candidate is passed over by the 
+        # shift-ratio gate. Removed on admission or request completion.
+        self._skip_counts: dict[str, int] = {}
+
     def update_from_output(self, scheduler_output, model_runner_output):
         assert isinstance(model_runner_output, SpyreModelRunnerOutput), (
             "Expecting an instance of CPSpyreModelRunnerOutput when doing chunked prefill."
@@ -273,10 +281,32 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         while self.skipped_waiting:
             holdback_queue.append(self.skipped_waiting.pop_request())
 
-        # Check if new requests can be scheduled for prefill
+        # Check if new requests can be scheduled for prefill.
+        # The shift-ratio soft gate may skip candidates that would push
+        # decode tkv too far; skipped requests are set aside here and
+        # restored to holdback after admission.
+        skipped_for_shift: deque[Request] = deque()
         while holdback_queue:
-            if self.can_schedule_prefill(holdback_queue[0]):
+            candidate = holdback_queue[0]
+
+            if not self._within_tkv_shift_budget(candidate):
+                skipped = holdback_queue.popleft()
+                self._skip_counts[skipped.request_id] = (
+                    self._skip_counts.get(skipped.request_id, 0) + 1
+                )
+                skipped_for_shift.append(skipped)
+                logger.debug(
+                    "Skipping request (%d prompt tokens) due to tkv shift "
+                    "budget (skip_count=%d/%d)",
+                    skipped.num_prompt_tokens,
+                    self._skip_counts[skipped.request_id],
+                    self.max_skip_count,
+                )
+                continue
+
+            if self.can_schedule_prefill(candidate):
                 new_request = holdback_queue.popleft()
+                self._skip_counts.pop(new_request.request_id, None)
 
                 logger.debug(
                     "Scheduling a new request (%d prompt tokens), holding back %d requests",
@@ -287,9 +317,14 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
                 # Add request to the waiting queue
                 self.waiting.append(new_request)
             else:
-                # Otherwise, we simply stop here so that the scheduler
-                # can work with the batch we have
+                # Hard constraint failure — stop scanning and let the
+                # scheduler work with the batch we have
                 break
+
+        # Restore soft-skipped candidates to the front of holdback,
+        # preserving their original priority order.
+        while skipped_for_shift:
+            holdback_queue.appendleft(skipped_for_shift.pop())
 
         assert len(self.ongoing_prefills) <= 1, (
             "Only one request can be prefilled at a time, but got %d" % len(self.ongoing_prefills)
@@ -397,6 +432,30 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             return False
 
         return self._satisfies_constraints(request)
+
+    def _within_tkv_shift_budget(self, request: Request) -> bool:
+        """Soft admission gate: return False if admitting ``request`` would
+        push decode-batch tkv by more than ``max_tkv_shift_ratio`` while
+        decoders are running. Force-admit (return True) once the request
+        has been skipped ``max_skip_count`` times to prevent starvation.
+        """
+        # Ongoing prefills are past the admission decision.
+        if request in self.ongoing_prefills:
+            return True
+
+        decoding_requests = [r for r in self.running if r not in self.ongoing_prefills]
+        # No decodes to protect, or no decode tkv yet.
+        if not decoding_requests or self.tkv <= 0:
+            return True
+
+        # Anti-starvation override.
+        if self._skip_counts.get(request.request_id, 0) >= self.max_skip_count:
+            return True
+
+        # Compare block-aligned tkvs
+        current_tkv = round_up_to_block_size(self.tkv)
+        new_tkv = round_up_to_block_size(max(self.tkv, request.num_prompt_tokens))
+        return new_tkv / current_tkv <= self.max_tkv_shift_ratio
 
     def _satisfies_constraints(self, request: Request) -> bool:
         # Use a local variable to check the prefix cache hit length ahead of time without mutating
@@ -599,6 +658,13 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             if request_ids is None
             else [r for r in self.ongoing_prefills if r.request_id not in request_ids]
         )
+
+        # Delete skip counters for finished requests.
+        if request_ids is None:
+            self._skip_counts.clear()
+        else:
+            for request_id in request_ids:
+                self._skip_counts.pop(request_id, None)
 
         return aborted_requests
 
