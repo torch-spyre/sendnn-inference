@@ -26,8 +26,8 @@ The scheduler uses continuous batching: new requests are prefilled in chunks whi
 
 The padding strategy is designed to meet two constraints specific to Spyre:
 
-- **Decode alignment:** All sequences in the decode batch must occupy the same number of KV-cache blocks at every step. Shorter sequences are padded with dummy blocks on the left.
-- **Prefix caching:** Variable-length left-padding inside a block would corrupt hash-based block comparisons. By aligning prompts to block boundaries we avoid left-padding any block, keeping block contents identical for equal token sequences.
+- **Decode alignment:** All sequences in the decode batch must occupy the same number of KV-cache blocks at every step. Shorter sequences are padded with full dummy blocks on the left.
+- **Prefix caching:** Variable-length left-padding inside a block would corrupt hash-based block comparisons. By aligning prompts to block boundaries (using dummy block ids) we avoid left-padding inside any block, keeping block contents identical for equal token sequences.
 
 ### Prefill padding
 
@@ -41,7 +41,7 @@ Dummy blocks prepended on the left are ignored during attention. Right-padding t
 
 For each prefill step, only one chunk is processed. The active chunk is determined by the number of tokens already computed, offset by the left-padding. The last chunked prefill produces one output token.
 
-##### Illustration
+##### Visualization – Prefill Padding
 
 These visualizations below show the chunked prefill process for prompt for different lengths.
 
@@ -56,9 +56,13 @@ These visualizations below show the chunked prefill process for prompt for diffe
 
 During decode, every request generates exactly one new token per step.
 
-#### Left-padding with dummy blocks
+#### Left-padding with full blocks
 
-All requests must share the same number of KV-cache blocks so that the block table is rectangular. The request with the most blocks sets the common width; shorter requests are left-padded with dummy blocks. Dummy blocks are masked out by the attention mechanism and do not affect outputs.
+All requests must share the same number of KV-cache blocks so that the block table is rectangular. The request with the most blocks sets the common width; shorter requests are left-padded with dummy blocks (ie. using any block from the block table). Dummy blocks are masked out by the attention mechanism and do not affect outputs. We always keep the number of left-padding blocks minimal, so when a long request that was necessitating other requests to left-pad finishes, we also remove the left-pad for these other requests.
+
+#### Right-padding until next block boundary
+
+In addition to full-blocks padding on the left of the sequences, we additionally pad the current right-most block of the request (the block containing the tkv) to the right boundary of the block. These padded tokens are also masked out by the attention mechanism and do not affect outputs.
 
 #### Per-request tkv
 
@@ -68,11 +72,14 @@ Each request's tkv is its left-padding offset plus the number of tokens computed
 
 When a request generates enough tokens to require an additional KV-cache block, it would need one more block than the rest of the batch. To keep all block tables the same width, one fewer dummy block is prepended instead. This causes that request's tkv to jump forward by one block in a single step, while all other requests' tkv values increase by one as usual.
 
-##### Illustration
+##### Visualization – Decode Padding
 
-The plot below illustrate the full-blocks padding and per-request tkv. We can observe the padding blocks being dynamically appended or removed leading to "jumps" in the tkv values from one step to another when:
-* the tkv of any of the request is about to reach a new block (steps 11, 16, 52)
-* a long request finishes, so the other requests can remove their padding blocks (steps 58, 65)
+The plot below illustrates the full-blocks padding and per-request tkv. We can observe the padding blocks being dynamically appended or removed leading to "jumps" in the tkv values from one step to another when:
+
+1. The tkv of any of the request is about to reach a new block (steps 11, 16, 52)
+2. A long request finishes, so the other requests can remove their padding blocks (steps 58, 65)
+
+Note: In the interactive figure below, we don't show the right-padding, because the max-output-tokens is displayed. But it follows the same logic as shown in the [prefill padding]("##### Illustration – Prefill Padding") visualization: we pad individual tokens until the block's right boundary.
 
 <iframe src="../assets/plots/scheduling_padding_tkv_jump.html" width="100%" height="700px" frameborder="0"></iframe>
 
