@@ -88,7 +88,7 @@ override-dependencies = [
 ]
 # This adds constraints to all dependent build environments, which will ensure everything is built
 # with the same version of torch. This CANNOT conflict with a package's existing build dependencies
-build-constraint-dependencies = []
+build-constraint-dependencies = ["torch==2.11.0"]
 # This ensures that we build with the empty backend for vLLM
 extra-build-variables = { vllm = { VLLM_TARGET_DEVICE = "empty" } }
 
