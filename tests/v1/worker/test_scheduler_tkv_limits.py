@@ -183,6 +183,7 @@ def test_scheduler_tkv_limits_ongoing_batch(monkeypatch: pytest.MonkeyPatch):
         scheduler.update_from_output(sched_output, output)
         if len(scheduler.running) == 0:
             break
+<<<<<<< HEAD
 
 @pytest.mark.cpu
 @pytest.mark.chunked_prefill
@@ -285,3 +286,5 @@ def test_scheduler_tkv_limits_ongoing_batch(monkeypatch: pytest.MonkeyPatch):
         scheduler.update_from_output(sched_output, output)
         if len(scheduler.running) == 0:
             break
+=======
+>>>>>>> Tkv limit bug (#954)

@@ -29,6 +29,10 @@ def round_up_to_block_size(n: int) -> int:
     # Helper function to round up to the nearest block size
     # Uses bitwise alignment for better performance
     return (n + 63) & ~63
+<<<<<<< HEAD
+=======
+
+>>>>>>> Tkv limit bug (#954)
 
 class SpyreScheduler(Scheduler):
     """Base class inheriting from the V1 scheduler to support static
@@ -539,9 +543,12 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         # Compute the effective token length of the new request
         # Rounded up to the nearest block size to account for potential padding
         new_req_max_tkv = round_up_to_block_size(new_req_tkv + request.max_tokens - 1)
+<<<<<<< HEAD
         # Extra block of slack: left-padding can push a sequence's runtime tkv up to
         # one block past the scheduler's estimate when the batch re-aligns on admission.
         new_req_max_tkv += self.block_size
+=======
+>>>>>>> Tkv limit bug (#954)
 
         # Compute token lengths for all running requests (decode batch)
         decode_req_max_tkvs = []
@@ -553,10 +560,13 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             dec_req_max_tkv = round_up_to_block_size(
                 dec_req_tkv + (req.max_tokens - n_generated_output_tokens) - 1
             )
+<<<<<<< HEAD
             # Extra block of slack: left-padding can push a sequence's runtime tkv up to
             # one block past the scheduler's estimate when the batch re-aligns on admission.
             dec_req_max_tkv += self.block_size
 
+=======
+>>>>>>> Tkv limit bug (#954)
             decode_req_max_tkvs.append(dec_req_max_tkv)
 
         # Sort decode requests token lengths in ascending order
