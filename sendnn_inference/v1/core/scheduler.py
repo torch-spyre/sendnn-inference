@@ -211,7 +211,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         # decode tkv by more than this ratio, unless it has aged out.
         self.max_tkv_shift_ratio: float = envs_spyre.SENDNN_INFERENCE_MAX_TKV_SHIFT_RATIO
         self.max_skip_count: int = envs_spyre.SENDNN_INFERENCE_MAX_SKIP_COUNT
-        # Per-request skip counter. Incremented when a candidate is passed over by the 
+        # Per-request skip counter. Incremented when a candidate is passed over by the
         # shift-ratio gate. Removed on admission or request completion.
         self._skip_counts: dict[str, int] = {}
 
