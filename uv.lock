@@ -33,7 +33,6 @@ overrides = [
     { name = "triton", marker = "sys_platform == 'never'" },
     { name = "vllm", marker = "platform_machine not in 's390x, ppc64le'", git = "https://github.com/vllm-project/vllm?rev=v0.20.0" },
 ]
-build-constraints = [{ name = "torch", specifier = "==2.11.0", index = "https://download.pytorch.org/whl/cpu" }]
 
 [[package]]
 name = "accelerate"
