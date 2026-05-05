@@ -94,6 +94,10 @@ The scheduler enforces a strict priority order:
 1. **One prefill at a time.** Only one request can be in its prefill phase at any moment.
 2. **Ongoing prefill has priority.** A request that has already started chunked prefill is always scheduled before any new request.
 3. **Prefill–decode interleaving.** When interleaving is enabled, two consecutive prefill steps are forbidden if there are any actively decoding requests. This limits head-of-line blocking for long prompts.
+    
+    !!! note
+        Prefill-decode interleaving is enabled by default, but can be disabled or enabled by setting the `SENDNN_INFERENCE_CP_INTERLEAVE_STEPS` environment variable to 0 or 1 respectively.
+
 4. **No idle steps.** If a prefill cannot be scheduled due to constraints, a decode step is run instead — the scheduler never produces an empty output while requests are pending.
 
 ### Admission constraints
@@ -115,24 +119,32 @@ Checked when the remaining prompt tokens fit within the next chunk — meaning t
 - **Max-model-length constraint.** For every sequence already decoding, and for the new request, the tokens they may still generate must fit within the model's maximum context length.
 - **Volumetric constraint.** The product `batch_size × max-tkv` must not exceed the hardware limit at any future decode step. This is verified by the forward-looking check described below.
 
----
+    ??? info "Volumetric Constraint – Additional Details"
+        The hardware imposes a ceiling on the total KV-cache volume: the product of the batch size and max-tkv must not exceed a fixed limit at any step.
+    
+        The volumetric check answers: *if we admit this request now, will `batch_size × max-tkv` ever exceed the hardware limit?*
+    
+        The check projects the worst-case future evolution of the batch:
+    
+        - For the **new request**, its maximum future tkv is its current tkv plus the maximum number of tokens it could still generate.
+        - For each **currently decoding request**, its maximum future tkv is its current tkv plus the maximum tokens it could still generate, plus one block to account for a potential padding realignment.  
+        
+        Because shorter sequences finish earlier and reduce the effective batch size, the constraint is tightest at the steps where the longest-lived requests are still running together. The check iterates over decoding requests in order of increasing maximum future tkv: as each is projected to finish, the batch size shrinks and the binding constraint shifts to the next-longest sequence. The incoming request is accepted only if no projected future state exceeds the hardware limit.
+        The inductive correctness of this approach relies on the fact that previously admitted requests were already validated at their own admission time — so only the new constraints introduced by the incoming request need to be checked.
+   
+##### Visualization – Scheduler Constraints
 
-## Volumetric constraint
+The visualization below illustraits all the scheduling constraints preventing requests to get scheduled. The different points mentioned previously can be observed in the run.
 
-The hardware imposes a ceiling on the total KV-cache volume: the product of the batch size and max-tkv must not exceed a fixed limit at any step.
+* **Decode batch capacity:** for both requests 6 and 7, we see that they need to wait for a free slot in the decoding batch before being able to start prefilling.
 
-The volumetric check answers: *if we admit this request now, will `batch_size × max-tkv` ever exceed the hardware limit?*
+* **Prefill-decode interleaving** can be observed during the prefill of request 1, 2, and 7, where consecutive chunk prefill are separated by an individual decode step. We also observe individual decode steps between the prefills of consecutive requests.
 
-The check projects the worst-case future evolution of the batch:
+* **Max-model-length constraint:** the effect can be observed at the time of scheduling request 1. Because the prompt of request 1 is very long, and because the max-output tokens of request 0 is large, scheduling request 1 directly would move the tkv to the fourth block, and the max-output tokens of request 1 would be "pushed" beyond max-context-len. Therefore, after the second chunk completed prefill at step 5, hold back the third chunk prefill until request 0 completed at step 22.
 
-- For the **new request**, its maximum future tkv is its current tkv plus the maximum number of tokens it could still generate.
-- For each **currently decoding request**, its maximum future tkv is its current tkv plus the maximum tokens it could still generate, plus one block to account for a potential padding realignment.
+* **Volumetric constraint:** request number 4 prefilling is deferred due to the volumetric constraint. If it was directly scheduled for prefill at step 35, the max-tkv would have been 426, which would have lead to a volume of `426 x 4 (requests) = 1704` which is higher than the max-accepted volume of 1536. We thus need to wait until request 2 finishes at step 45.
 
-Because shorter sequences finish earlier and reduce the effective batch size, the constraint is tightest at the steps where the longest-lived requests are still running together. The check iterates over decoding requests in order of increasing maximum future tkv: as each is projected to finish, the batch size shrinks and the binding constraint shifts to the next-longest sequence. The incoming request is accepted only if no projected future state exceeds the hardware limit.
-
-The inductive correctness of this approach relies on the fact that previously admitted requests were already validated at their own admission time — so only the new constraints introduced by the incoming request need to be checked.
-
----
+<iframe src="../assets/plots/scheduling_admission_constraints.html" width="100%" height="700px" frameborder="0"></iframe>
 
 ## Prefix caching
 
@@ -144,31 +156,8 @@ Whole chunks whose blocks are entirely cached can be skipped. However, the last 
 
 ### Boundary chunk
 
-The chunk that straddles the cache boundary — where some blocks are cached and some are not — is always fully recomputed. The cached blocks within that chunk are treated as dummy blocks during recomputation.
+The chunk that straddles the cache boundary — where some of its blocks are cached and some are not — is always fully recomputed. The cached blocks within that chunk are masked out and treated as dummy blocks during recomputation, this allows to avoid duplicating the cache for these blocks.
 
 ### Scheduling with prefix caching
 
 When prefix caching is enabled, a newly admitted request may have part of its prompt already present in the KV cache. The scheduler accounts for this hit when evaluating first-chunk and last-chunk conditions, so that admission constraints are applied against the effective remaining prompt length rather than the full prompt length.
-
----
-
-## Summary diagram
-
-```
-Prompt:  T T T T T T T T T T   (prompt length = 10, block size = 4, chunk size = 8)
-
-1. Right-pad to block boundary:
-   T T T T | T T T T | T T O O   (padded length = 12)
-
-2. Left-pad to fill two chunks (total space = 16):
-   left padding = 16 − 12 = 4 tokens = 1 dummy block
-
-3. Final layout:
-   Chunk 0               Chunk 1
-   [ X X X X | T T T T ] [ T T T T | T T O O ]
-    ↑ dummy block ↑            ↑ right-padded ↑
-
-4. tkv values:
-   After chunk 0: tkv = 8
-   After chunk 1: tkv = 14  (capped at left-padding + prompt length = 4 + 10)
-```
