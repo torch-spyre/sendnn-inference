@@ -108,6 +108,34 @@ def _advance_decode(reqs: list[_Decoding], block_size: int) -> tuple[list[dict],
     return rows, completed
 
 
+def _model_len_ok(
+    new_prompt_len: int,
+    new_max_tokens: int,
+    decoding: list[_Decoding],
+    block_size: int,
+    max_model_len: int,
+) -> bool:
+    """Check tkv + max_output_tokens <= max_model_len for all requests after admission.
+
+    Admitting the new request may raise max_blocks, which increases left-padding for
+    all existing decoding requests. Both the new request and every existing one are
+    checked against max_model_len.
+    """
+    new_actual = new_prompt_len + 1  # decoded starts at 1
+    new_blocks = math.ceil(new_actual / block_size)
+    max_blocks = max([new_blocks] + [d.blocks_needed(block_size) for d in decoding])
+
+    new_tkv = (max_blocks - new_blocks) * block_size + new_actual
+    if new_tkv + new_max_tokens > max_model_len:
+        return False
+
+    return all(
+        (max_blocks - d.blocks_needed(block_size)) * block_size + d.actual_tokens + d.max_tokens
+        <= max_model_len
+        for d in decoding
+    )
+
+
 def _volumetric_ok(
     new_prompt_len: int,
     new_max_tokens: int,
@@ -190,44 +218,79 @@ def simulate(config: Config, request_defs: list[RequestDef]) -> list[dict]:
         completed: list[str] = []
 
         # Admit the next waiting request into the prefill slot when the slot is
-        # free. No volumetric check here — the request can always start prefilling
-        # its intermediate chunks; only the last chunk is gated (see below).
+        # free. For multi-chunk requests no admission check is needed — they can
+        # always start prefilling intermediate chunks; the last-chunk gate handles
+        # constraints later. For single-chunk requests the first chunk IS the last
+        # chunk, so volumetric + model-len must be satisfied now or the request
+        # stays waiting.
         if (
             prefilling is None
             and bool(waiting)
             and len(decoding) < config.max_num_seqs
             and not (config.interleave and last_was_prefill and bool(decoding))
         ):
-            w = waiting.pop(0)
-            padded_prompt_len = math.ceil(w.prompt_len / config.block_size) * config.block_size
-            chunk_count = math.ceil(w.prompt_len / config.chunk_size)
-            left_padding = chunk_count * config.chunk_size - padded_prompt_len
-            right_padding = padded_prompt_len - w.prompt_len
-            prefilling = _Prefilling(
-                id=w.id,
-                prompt_len=w.prompt_len,
-                max_tokens=w.max_tokens,
-                chunks_total=chunk_count,
-                left_padding=left_padding,
-                right_padding=right_padding,
+            w_next = waiting[0]
+            chunk_count = math.ceil(w_next.prompt_len / config.chunk_size)
+            single_chunk_admitted = chunk_count == 1 and (
+                (
+                    config.max_batch_tkv_limit is None
+                    or _volumetric_ok(
+                        w_next.prompt_len,
+                        w_next.max_tokens,
+                        decoding,
+                        config.block_size,
+                        config.max_batch_tkv_limit,
+                    )
+                )
+                and _model_len_ok(
+                    w_next.prompt_len,
+                    w_next.max_tokens,
+                    decoding,
+                    config.block_size,
+                    config.max_model_len,
+                )
             )
+            if chunk_count > 1 or single_chunk_admitted:
+                w = waiting.pop(0)
+                padded_prompt_len = math.ceil(w.prompt_len / config.block_size) * config.block_size
+                left_padding = chunk_count * config.chunk_size - padded_prompt_len
+                right_padding = padded_prompt_len - w.prompt_len
+                prefilling = _Prefilling(
+                    id=w.id,
+                    prompt_len=w.prompt_len,
+                    max_tokens=w.max_tokens,
+                    chunks_total=chunk_count,
+                    left_padding=left_padding,
+                    right_padding=right_padding,
+                )
 
         # Process a prefill chunk only if a request is being prefilled AND either
-        # it is not the last chunk yet, OR the volumetric constraint allows it to
-        # join the decoding batch. If the last chunk is blocked the request stays
-        # in the prefill state and a plain decode step is emitted instead.
+        # it is not the last chunk yet, OR both admission constraints allow it to
+        # join the decoding batch (volumetric + model-len). If the last chunk is
+        # blocked the request stays in the prefill state and a decode step is emitted.
         if (
             prefilling is not None
             and not (config.interleave and last_was_prefill and bool(decoding))
             and (
                 prefilling.chunks_done + 1 < prefilling.chunks_total
-                or config.max_batch_tkv_limit is None
-                or _volumetric_ok(
-                    prefilling.prompt_len,
-                    prefilling.max_tokens,
-                    decoding,
-                    config.block_size,
-                    config.max_batch_tkv_limit,
+                or (
+                    (
+                        config.max_batch_tkv_limit is None
+                        or _volumetric_ok(
+                            prefilling.prompt_len,
+                            prefilling.max_tokens,
+                            decoding,
+                            config.block_size,
+                            config.max_batch_tkv_limit,
+                        )
+                    )
+                    and _model_len_ok(
+                        prefilling.prompt_len,
+                        prefilling.max_tokens,
+                        decoding,
+                        config.block_size,
+                        config.max_model_len,
+                    )
                 )
             )
         ):
@@ -326,25 +389,21 @@ def main() -> None:
         max_num_seqs=4,
         block_size=64,
         chunk_size=128,
-        max_batch_tkv_limit=1024,
+        max_batch_tkv_limit=1536,
         interleave=True,
     )
 
     # (arrival_step, prompt_len, max_output_tokens, total_tokens_generated)
     requests = [
-        # TODO write target setup here
-        # RequestDef(0, 15, 3, 3),
-        # RequestDef(0, 200, 50, 50),
-        # RequestDef(0, 100, 40, 9),
-        # RequestDef(0, 80, 30, 30),
-        # RequestDef(0, 332, 100, 50),
-        # RequestDef(0, 268, 100, 50),
-        # RequestDef(66, 145, 100, 50),
-        # RequestDef(68, 16, 100, 50),
-        # RequestDef(71, 100, 100, 50),
-        RequestDef(0, 264, 100, 62),
-        RequestDef(0, 45, 100, 71),
-        RequestDef(0, 115, 100, 67),
+        # NOTE put request run here
+        # RequestDef(0, 40,300,20),
+        # RequestDef(0, 260,40,40),
+        # RequestDef(4, 410,100,14),
+        # RequestDef(17,70,80,44),
+        # RequestDef(21,105,15,8),
+        # RequestDef(46,10,200,40),
+        # RequestDef(46,120,100,20),
+        # RequestDef(46,130,40,12),
     ]
 
     config_line = {
