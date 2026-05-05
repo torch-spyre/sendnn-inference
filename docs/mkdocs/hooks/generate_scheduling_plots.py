@@ -502,12 +502,12 @@ def build_inactive_overlay_shapes(
     return shapes
 
 
-def create_figure(batch_size: int, num_waiting_displayed: int, chunk_size: int) -> go.Figure:
+def create_figure(batch_size: int, num_waiting_displayed: int) -> go.Figure:
     """Create the base subplot layout with waiting, prefilling, and decoding rows."""
     fig = make_subplots(
         rows=3,
         cols=1,
-        subplot_titles=("Waiting Queue", f"Prefilling (chunk size: {chunk_size})", "Decoding"),
+        subplot_titles=("Waiting Queue", "Prefilling", "Decoding"),
         vertical_spacing=0.15,
         column_widths=[1.0],
         row_heights=[
@@ -703,6 +703,7 @@ def create_frame(
     batch_size: int,
     is_prefill_active: bool,
     chunk_size: int,
+    num_waiting: int = 0,
 ) -> go.Frame:
     """Create one animation frame."""
     waiting_prompt_x, waiting_max_tokens_x, waiting_req_ids = waiting_data
@@ -738,6 +739,17 @@ def create_frame(
     annotations.extend(generated_tokens_annotations)
 
     step_label = f"{step_index}"
+
+    annotations[0] = dict(
+        text=f"Waiting Queue ({num_waiting} requests)",
+        xref="paper",
+        yref="paper",
+        x=0.5,
+        xanchor="center",
+        yanchor="bottom",
+        showarrow=False,
+        font=dict(size=12),
+    )
 
     # Update the prefilling subplot title with prompt length and active chunk information
     prompt_len = prefilling_data.get("prompt_len")
@@ -810,6 +822,7 @@ def build_frames(
             batch_size,
             is_prefill_active,
             chunk_size,
+            num_waiting=len(step["waiting"]),
         )
 
         if not display_prefill_only:
@@ -907,7 +920,7 @@ def configure_figure_layout(
                             None,
                             {
                                 "fromcurrent": True,
-                                "frame": {"duration": 1000, "redraw": True},
+                                "frame": {"duration": 750, "redraw": True},
                                 "transition": {"duration": 0},
                             },
                         ],
@@ -1016,9 +1029,7 @@ def generate_plots(
     block_size = metadata["block_size"]
     chunk_size = metadata.get("chunk_size", "N/A")
 
-    fig = create_figure(
-        batch_size=batch_size, num_waiting_displayed=NUM_WAITING_DISPLAYED, chunk_size=chunk_size
-    )
+    fig = create_figure(batch_size=batch_size, num_waiting_displayed=NUM_WAITING_DISPLAYED)
 
     step0 = steps[0]
     initial_waiting_data = build_waiting_plot_data(step0, NUM_WAITING_DISPLAYED)
