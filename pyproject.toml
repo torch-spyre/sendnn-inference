@@ -15,7 +15,7 @@ dependencies = [
     "ibm-fms>=1.9.0,<2",
     # NB: use strict < with the next patch version to not exclude versions with
     # build metadata suffixes
-    "vllm>=0.19.1,<0.20.1",
+    "vllm>=0.19.1,<0.20.2",
     
     # Specific torch version overrides handled by uv
     "torch",
@@ -93,7 +93,7 @@ build-constraint-dependencies = []
 extra-build-variables = { vllm = { VLLM_TARGET_DEVICE = "empty" } }
 
 [tool.uv.sources]
-vllm = { git = "https://github.com/vllm-project/vllm", rev = "v0.20.0" }
+vllm = { git = "https://github.com/vllm-project/vllm", rev = "v0.20.1" }
 torch = [
   { index = "pytorch-cpu" },
 ]
