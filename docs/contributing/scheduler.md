@@ -2,6 +2,10 @@
 
 This page explains how sendnn-inference overrides the vLLM V1 scheduler for decoder (generation) models to respect Spyre hardware constraints, and how requests are padded during prefill and decode execution.
 
+!!! warning
+    
+    All values and parameters (such as the chunk size) used in the figures are for illustration only; for the real configuration values refer to [configuration](../user_guide/configuration.md)
+
 ## Overview
 
 The scheduler uses continuous batching: new requests are prefilled in chunks while previously admitted requests continue decoding. Because Spyre imposes specific constraints on the KV-cache, the scheduler applies additional admission rules on top of vLLM's defaults, and pads requests to meet alignment requirements.
@@ -33,7 +37,7 @@ The padding strategy is designed to meet two constraints specific to Spyre:
 
 #### Right-alignment
 
-The last token of a prompt must fall in the last block of its final chunk (ie. we shouldn't have empty blocks on the right-end of the chunk). To achieve this, the prompt is right-padded to the nearest block boundary, and left-padded with enough dummy blocks so that the total padded length fills an exact multiple of the chunk size.
+The last token of a prompt must fall in the last block of its final chunk (i.e., there should be no empty blocks at the right end of the chunk). To achieve this, the prompt is right-padded to the nearest block boundary, and left-padded with enough dummy blocks so that the total padded length is an exact multiple of the chunk size.
 
 Dummy blocks prepended on the left are ignored during attention. Right-padding tokens appended after the last real token are also ignored.
 
@@ -43,7 +47,7 @@ For each prefill step, only one chunk is processed. The active chunk is determin
 
 ##### Visualization – Prefill Padding
 
-These visualizations below show the chunked prefill process for prompt for different lengths.
+These visualizations below show the chunked prefill process for a prompt of different lengths.
 
 **Single chunk prefill (prompt len = 15):**
 
@@ -58,11 +62,11 @@ During decode, every request generates exactly one new token per step.
 
 #### Left-padding with full blocks
 
-All requests must share the same number of KV-cache blocks so that the block table is rectangular. The request with the most blocks sets the common width; shorter requests are left-padded with dummy blocks (ie. using any block from the block table). Dummy blocks are masked out by the attention mechanism and do not affect outputs. We always keep the number of left-padding blocks minimal, so when a long request that was necessitating other requests to left-pad finishes, we also remove the left-pad for these other requests.
+All requests must share the same number of KV-cache blocks so that the block table is rectangular. The request with the most blocks sets the common width; shorter requests are left-padded with dummy blocks (i.e., any block from the block table). Dummy blocks are masked out by the attention mechanism and do not affect outputs. We always keep the number of left-padding blocks minimal, so when a long request that was forcing other requests to be left-padded finishes, we remove that left-padding for those requests.
 
 #### Right-padding until next block boundary
 
-In addition to full-blocks padding on the left of the sequences, we additionally pad the current right-most block of the request (the block containing the tkv) to the right boundary of the block. These padded tokens are also masked out by the attention mechanism and do not affect outputs.
+In addition to full-block left-padding, we also pad the rightmost block of each request (the block containing the tkv) up to its right boundary. These padded tokens are also masked out by the attention mechanism and do not affect outputs.
 
 #### Per-request tkv
 
@@ -76,10 +80,11 @@ When a request generates enough tokens to require an additional KV-cache block, 
 
 The plot below illustrates the full-blocks padding and per-request tkv. We can observe the padding blocks being dynamically appended or removed leading to "jumps" in the tkv values from one step to another when:
 
-1. The tkv of any of the request is about to reach a new block (steps 11, 16, 52)
+1. The tkv value of any of the requests is about to reach a new block (steps 11, 16, 52)
 2. A long request finishes, so the other requests can remove their padding blocks (steps 58, 65)
 
-Note: In the interactive figure below, we don't show the right-padding, because the max-output-tokens is displayed. But it follows the same logic as shown in the [prefill padding]("##### Illustration – Prefill Padding") visualization: we pad individual tokens until the block's right boundary.
+!!! note 
+    In the interactive figure below, we don't show the right-padding, because the max-output-tokens is displayed. But it follows the same logic as shown in the [prefill padding visualization](#visualization-prefill-padding): we pad individual tokens until the block's right boundary.
 
 <iframe src="../assets/plots/scheduling_padding_tkv_jump.html" width="100%" height="700px" frameborder="0"></iframe>
 
@@ -93,7 +98,7 @@ The scheduler enforces a strict priority order:
 
 1. **One prefill at a time.** Only one request can be in its prefill phase at any moment.
 2. **Ongoing prefill has priority.** A request that has already started chunked prefill is always scheduled before any new request.
-3. **Prefill–decode interleaving.** When interleaving is enabled, two consecutive prefill steps are forbidden if there are any actively decoding requests. This limits head-of-line blocking for long prompts.
+3. **Prefill–decode interleaving.** When interleaving is enabled, two consecutive prefill steps are forbidden if there are any actively decoding requests. This prevents decoding requests from stalling while a long prompt is being prefilled.
     
     !!! note
         Prefill-decode interleaving is enabled by default, but can be disabled or enabled by setting the `SENDNN_INFERENCE_CP_INTERLEAVE_STEPS` environment variable to 0 or 1 respectively.
@@ -130,19 +135,18 @@ Checked when the remaining prompt tokens fit within the next chunk — meaning t
         - For each **currently decoding request**, its maximum future tkv is its current tkv plus the maximum tokens it could still generate, plus one block to account for a potential padding realignment.  
         
         Because shorter sequences finish earlier and reduce the effective batch size, the constraint is tightest at the steps where the longest-lived requests are still running together. The check iterates over decoding requests in order of increasing maximum future tkv: as each is projected to finish, the batch size shrinks and the binding constraint shifts to the next-longest sequence. The incoming request is accepted only if no projected future state exceeds the hardware limit.
-        The inductive correctness of this approach relies on the fact that previously admitted requests were already validated at their own admission time — so only the new constraints introduced by the incoming request need to be checked.
    
 ##### Visualization – Scheduler Constraints
 
-The visualization below illustraits all the scheduling constraints preventing requests to get scheduled. The different points mentioned previously can be observed in the run.
+The visualization below illustrates all the scheduling constraints that can prevent a request from being scheduled at a given step. The different cases mentioned above can be observed in the run.
 
-* **Decode batch capacity:** for both requests 6 and 7, we see that they need to wait for a free slot in the decoding batch before being able to start prefilling.
+* **Decode batch capacity:** for both requests 6 and 7, they must wait for a free slot in the decoding batch before they can start prefilling.
 
-* **Prefill-decode interleaving** can be observed during the prefill of request 1, 2, and 7, where consecutive chunk prefill are separated by an individual decode step. We also observe individual decode steps between the prefills of consecutive requests.
+* **Prefill-decode interleaving** can be observed during the prefill of requests 1, 2, and 7, where consecutive chunk prefills are separated by an individual decode step. Individual decode steps are also visible between the prefills of consecutive requests.
 
-* **Max-model-length constraint:** the effect can be observed at the time of scheduling request 1. Because the prompt of request 1 is very long, and because the max-output tokens of request 0 is large, scheduling request 1 directly would move the tkv to the fourth block, and the max-output tokens of request 1 would be "pushed" beyond max-context-len. Therefore, after the second chunk completed prefill at step 5, hold back the third chunk prefill until request 0 completed at step 22.
+* **Max-model-length constraint:** the effect can be observed at the time of scheduling request 1. Because the prompt of request 1 is very long, and because the max-output tokens of request 0 is large, scheduling request 1 directly would move the tkv to the fourth block, and the max-output tokens of request 1 would be "pushed" beyond max-context-len. Therefore, after the second chunk completed prefill at step 5, we hold back the third chunk prefill until request 0 completed at step 22.
 
-* **Volumetric constraint:** request number 4 prefilling is deferred due to the volumetric constraint. If it was directly scheduled for prefill at step 35, the max-tkv would have been 426, which would have lead to a volume of `426 x 4 (requests) = 1704` which is higher than the max-accepted volume of 1536. We thus need to wait until request 2 finishes at step 45.
+* **Volumetric constraint:** the prefill of request 4 is deferred due to the volumetric constraint. If it had been scheduled at step 35, the max-tkv would have been 426, leading to a volume of `426 × 4 (requests) = 1704`, which exceeds the maximum accepted volume of 1536. We therefore wait until request 2 finishes at step 45.
 
 <iframe src="../assets/plots/scheduling_admission_constraints.html" width="100%" height="700px" frameborder="0"></iframe>
 
@@ -156,8 +160,23 @@ Whole chunks whose blocks are entirely cached can be skipped. However, the last 
 
 ### Boundary chunk
 
-The chunk that straddles the cache boundary — where some of its blocks are cached and some are not — is always fully recomputed. The cached blocks within that chunk are masked out and treated as dummy blocks during recomputation, this allows to avoid duplicating the cache for these blocks.
+The chunk that straddles the cache boundary — where some of its blocks are cached and some are not — is always fully recomputed. The KV writes for those blocks are redirected to a dummy block, leaving the cached values untouched while attention still reads from the real cached blocks.
 
 ### Scheduling with prefix caching
 
 When prefix caching is enabled, a newly admitted request may have part of its prompt already present in the KV cache. The scheduler accounts for this hit when evaluating first-chunk and last-chunk conditions, so that admission constraints are applied against the effective remaining prompt length rather than the full prompt length.
+
+##### Visualization – Prefix Caching
+
+The visualization below shows a typical cache hit. Since the last prefix block resides in a chunk that needs to be recomputed, it is masked out with a dummy block to avoid duplication of the KV cache.
+
+<iframe src="../assets/plots/prefix_caching_1.html" width="100%" height="700px" frameborder="0"></iframe>
+
+
+The last chunk must always be recomputed, even if it contains a full prefix hit:
+
+<iframe src="../assets/plots/prefix_caching_2.html" width="100%" height="700px" frameborder="0"></iframe>
+
+Prefix caching can also apply to decoded tokens, as long as they are part of the new prompt:
+
+<iframe src="../assets/plots/prefix_caching_3.html" width="100%" height="700px" frameborder="0"></iframe>
