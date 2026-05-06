@@ -269,9 +269,6 @@ class SpyreWorker(WorkerBase):
             )
 
         self._env_initialized = False
-        # Cached output from execute_model() for retrieval by sample_tokens()
-        # when async scheduling is used (step_with_batch_queue two-phase execution).
-        self._last_execute_model_output: ModelRunnerOutput | None = None
         # Torch profiler. Enabled and configured through ProfilerConfig. Set via:
         #   --profiler-config.profiler=torch
         #   --profiler-config.torch_profiler_dir=/path/to/save/trace)
@@ -763,21 +760,9 @@ class SpyreWorker(WorkerBase):
         return self.model_runner.get_supported_tasks()
 
     def sample_tokens(self, grammar_output: "GrammarOutput | None") -> ModelRunnerOutput:
-        # With async scheduling, the EngineCore uses a two-phase execution:
-        #   1. execute_model() - runs the forward pass (non-blocking)
-        #   2. sample_tokens() - retrieves the result
-        # Spyre samples inside execute_model(), so we cache the output and
-        # return it here. EMPTY_MODEL_RUNNER_OUTPUT is returned if execute_model
-        # produced no output (e.g. a prefill-only step).
-        #
-        # TODO(#947): Ideally sampling should happen here to support structured
-        # outputs with async scheduling. Tracked in:
-        # https://github.com/torch-spyre/sendnn-inference/issues/947
         from vllm.v1.outputs import EMPTY_MODEL_RUNNER_OUTPUT
 
-        cached = self._last_execute_model_output
-        self._last_execute_model_output = None
-        return cached if cached is not None else EMPTY_MODEL_RUNNER_OUTPUT
+        return EMPTY_MODEL_RUNNER_OUTPUT
 
     @SpyrePlatform.inference_mode()
     def execute_model(
@@ -787,11 +772,7 @@ class SpyreWorker(WorkerBase):
         if self.profiler is not None:
             self.profiler.step()
         output = self.model_runner.execute_model(scheduler_output)
-        if self.is_driver_worker:
-            # Cache the output for sample_tokens() when async scheduling is used.
-            self._last_execute_model_output = output
-            return output
-        return None
+        return output if self.is_driver_worker else None
 
     def _get_num_tokens(self, r: NewRequestData) -> int:
         assert r.prompt_token_ids is not None, "requests should have tokens!"

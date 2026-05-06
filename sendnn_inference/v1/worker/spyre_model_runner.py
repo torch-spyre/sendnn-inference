@@ -1362,6 +1362,7 @@ class ChunkedPrefillModelRunner(
         prefill_index = self.input_batch.add_request(request)
         for logitsproc in self.input_batch.logitsprocs_wrappers:
             logitsproc.set_prefill_index(prefill_index)
+
         # Refresh sampling metadata after all request are added to the batch
         self.input_batch.refresh_metadata()
         self.prefill_batch.refresh_metadata()
@@ -1397,23 +1398,6 @@ class ChunkedPrefillModelRunner(
 
             return model_inputs
         else:
-            # Reconcile input_batch with the current decode set.
-            # With async run-ahead scheduling a request can appear in both
-            # finished_req_ids and scheduled_cached_reqs simultaneously (the
-            # run-ahead decode step was scheduled before the finish committed).
-            # _update_batch defers removal of such requests; clean them up here
-            # when they are no longer in the scheduled set.
-            needs_refresh = False
-            sched_req_set = set(scheduler_output.scheduled_cached_reqs.req_ids)
-
-            for req_id in list(self.input_batch.req_id_to_index.keys()):
-                if req_id not in sched_req_set:
-                    self.input_batch.remove_request(req_id)
-                    needs_refresh = True
-
-            if needs_refresh:
-                self.input_batch.refresh_metadata()
-                self.prefill_batch.refresh_metadata()
             return self._prepare_decode(scheduler_output.scheduled_cached_reqs)
 
     def get_empty_output(self):
@@ -1476,16 +1460,11 @@ class ChunkedPrefillModelRunner(
             req_state.num_computed_tokens = num_computed_tokens
 
         if scheduler_output.finished_req_ids:
-            sched_req_ids = set(scheduler_output.scheduled_cached_reqs.req_ids)
             for req_id in scheduler_output.finished_req_ids:
-                if req_id not in sched_req_ids:
-                    # Request finished and not re-scheduled
-                    self.input_batch.remove_request(req_id)
-                    # TODO: Batch removals to avoid breaking logitprocs alignment
-                    self.input_batch.refresh_metadata()
-                # else: async run-ahead may schedule a request after it finishes; defer removal
-            if not any(req_id not in sched_req_ids for req_id in scheduler_output.finished_req_ids):
-                # All finished requests deferred — refresh metadata
+                self.input_batch.remove_request(req_id)
+                # TODO: Processing multiple removals at once can break alignment
+                # of logitprocs. Refactor so that we can batch removals to the
+                # `input_batch`
                 self.input_batch.refresh_metadata()
         else:
             # Due to logits processor we need to refresh metadata at each step
@@ -1505,16 +1484,6 @@ class ChunkedPrefillModelRunner(
                 "Cannot schedule a new prefill and running requests in the same execution"
             )
             self.add_new_request(scheduler_output.scheduled_new_reqs[0])
-            # Reset tkv when all decode requests are finishing and new prefill starts a fresh batch
-            finished = scheduler_output.finished_req_ids
-            if (
-                finished
-                and self.input_batch.num_reqs > 0
-                and all(r in finished for r in self.input_batch.req_id_to_index)
-            ):
-                prompt_ids = scheduler_output.scheduled_new_reqs[0].prompt_token_ids
-                if prompt_ids is not None:
-                    self.tkv = len(prompt_ids)
 
     def is_cached_chunk(self, scheduler_output: SchedulerOutput):
         """Returns true iff this schedule is for one chunk of a prefill, and that chunk is fully
@@ -1564,14 +1533,14 @@ class ChunkedPrefillModelRunner(
     ) -> ModelRunnerOutput:
         t0 = time.time()
 
-        # Initialize internal request states if this is the first chunk of a very new prefill
-        self.maybe_setup_new_prefill(scheduler_output)
-
         self.update_states(scheduler_output)
 
         if not scheduler_output.total_num_scheduled_tokens:
             # Return empty ModelRunnerOutput if there's no work to do.
             return self.get_empty_output()
+
+        # Initialize internal request states if this is the first chunk of a very new prefill
+        self.maybe_setup_new_prefill(scheduler_output)
 
         model_input = self.prepare_model_input(scheduler_output)
         is_prefill = model_input.is_prompt

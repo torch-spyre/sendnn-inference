@@ -114,12 +114,14 @@ class SpyrePlatform(Platform):
     ) -> type:
         """Get the appropriate Spyre scheduler class.
 
-        This follows the same pattern as vLLM's upstream SchedulerConfig.get_scheduler_cls():
-        - If scheduler_cls is already set, use it (allows custom schedulers)
-        - Otherwise, select based on scheduler_config.async_scheduling and model type
+        This follows the same pattern as vLLM's upstream
+        ``SchedulerConfig.get_scheduler_cls()``:
 
-        The scheduler selection uses factory functions that create classes with the
-        appropriate base (Scheduler or AsyncScheduler) based on async_scheduling config.
+        - If ``scheduler_cls`` is already set, use it (allows custom schedulers).
+        - For pooling models, always use the sync ``PoolingSpyreScheduler``;
+          async scheduling is not advantageous for pooling.
+        - For generative models, select the chunked-prefill variant based on
+          ``scheduler_config.async_scheduling``.
 
         Args:
             scheduler_config: The scheduler configuration object
@@ -132,32 +134,21 @@ class SpyrePlatform(Platform):
         if scheduler_config.scheduler_cls is not None:
             return scheduler_config.scheduler_cls
 
-        # Import from appropriate module based on async_scheduling config
-        # These modules have classes created at module level, so they're importable
+        if is_pooling:
+            from sendnn_inference.v1.core.scheduler import PoolingSpyreScheduler
+
+            return PoolingSpyreScheduler
+
         if scheduler_config.async_scheduling:
-            # Use async scheduler variants
-            if is_pooling:
-                from sendnn_inference.v1.core.async_scheduler import (
-                    AsyncPoolingSpyreScheduler,
-                )
+            from sendnn_inference.v1.core.async_scheduler import (
+                AsyncChunkedPrefillSpyreScheduler,
+            )
 
-                return AsyncPoolingSpyreScheduler
-            else:
-                from sendnn_inference.v1.core.async_scheduler import (
-                    AsyncChunkedPrefillSpyreScheduler,
-                )
+            return AsyncChunkedPrefillSpyreScheduler
 
-                return AsyncChunkedPrefillSpyreScheduler
-        else:
-            # Use sync scheduler variants (default)
-            if is_pooling:
-                from sendnn_inference.v1.core.scheduler import PoolingSpyreScheduler
+        from sendnn_inference.v1.core.scheduler import ChunkedPrefillSpyreScheduler
 
-                return PoolingSpyreScheduler
-            else:
-                from sendnn_inference.v1.core.scheduler import ChunkedPrefillSpyreScheduler
-
-                return ChunkedPrefillSpyreScheduler
+        return ChunkedPrefillSpyreScheduler
 
     @classmethod
     def get_max_batch_tkv_limit(cls) -> int:
