@@ -12,6 +12,50 @@ configurations. These tables are automatically generated from the model configur
 Models with continuous batching support for text generation tasks.
 
 <!-- GENERATED_GENERATIVE_MODELS_START -->
+
+
+**[ibm-granite/granite-3.3-8b-instruct](https://huggingface.co/ibm-granite/granite-3.3-8b-instruct)**
+
+| Max Model Len | Max Num Seqs | Tensor Parallel Size |
+|---------------|--------------|----------------------|
+| 3072 | 16 | 1 |
+| 8192 | 4 | 1 |
+| 8192 | 4 | 2 |
+| 32768 | 32 | 4 |
+
+
+**[ibm-granite/granite-3.3-8b-instruct-FP8](https://huggingface.co/ibm-granite/granite-3.3-8b-instruct-FP8)**
+
+| Max Model Len | Max Num Seqs | Tensor Parallel Size |
+|---------------|--------------|----------------------|
+| 3072 | 16 | 1 |
+| 16384 | 4 | 4 |
+| 32768 | 32 | 4 |
+
+
+**[meta-llama/Llama-3.1-8B-Instruct](https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct)**
+
+| Max Model Len | Max Num Seqs | Tensor Parallel Size |
+|---------------|--------------|----------------------|
+| 3072 | 16 | 1 |
+| 16384 | 4 | 4 |
+| 32768 | 32 | 4 |
+
+
+**[mistralai/Mistral-Small-3.2-24B-Instruct-2506](https://huggingface.co/mistralai/Mistral-Small-3.2-24B-Instruct-2506)**
+
+| Max Model Len | Max Num Seqs | Tensor Parallel Size |
+|---------------|--------------|----------------------|
+| 8192 | 32 | 2 |
+| 32768 | 32 | 4 |
+
+
+**[mistralai/Ministral-3-14B-Instruct-2512-BF16](https://huggingface.co/mistralai/Ministral-3-14B-Instruct-2512-BF16)**
+
+| Max Model Len | Max Num Seqs | Tensor Parallel Size |
+|---------------|--------------|----------------------|
+| 32768 | 32 | 4 |
+
 <!-- GENERATED_GENERATIVE_MODELS_END -->
 
 ### Pooling Models
@@ -19,6 +63,49 @@ Models with continuous batching support for text generation tasks.
 Models with static batching support for embedding and scoring tasks.
 
 <!-- GENERATED_POOLING_MODELS_START -->
+
+
+**[ibm-granite/granite-embedding-125m-english](https://huggingface.co/ibm-granite/granite-embedding-125m-english)**
+
+| SENDNN_INFERENCE_WARMUP_BATCH_SIZES | SENDNN_INFERENCE_WARMUP_PROMPT_LENS | Tensor Parallel Size |
+|-------------------------------------|-------------------------------------|----------------------|
+| 64 | 512 | 1 |
+
+
+**[ibm-granite/granite-embedding-278m-multilingual](https://huggingface.co/ibm-granite/granite-embedding-278m-multilingual)**
+
+| SENDNN_INFERENCE_WARMUP_BATCH_SIZES | SENDNN_INFERENCE_WARMUP_PROMPT_LENS | Tensor Parallel Size |
+|-------------------------------------|-------------------------------------|----------------------|
+| 64 | 512 | 1 |
+
+
+**[intfloat/multilingual-e5-large](https://huggingface.co/intfloat/multilingual-e5-large)**
+
+| SENDNN_INFERENCE_WARMUP_BATCH_SIZES | SENDNN_INFERENCE_WARMUP_PROMPT_LENS | Tensor Parallel Size |
+|-------------------------------------|-------------------------------------|----------------------|
+| 64 | 512 | 1 |
+
+
+**[BAAI/bge-reranker-v2-m3](https://huggingface.co/BAAI/bge-reranker-v2-m3)**
+
+| SENDNN_INFERENCE_WARMUP_BATCH_SIZES | SENDNN_INFERENCE_WARMUP_PROMPT_LENS | Tensor Parallel Size |
+|-------------------------------------|-------------------------------------|----------------------|
+| 1 | 8192 | 1 |
+
+
+**[BAAI/bge-reranker-large](https://huggingface.co/BAAI/bge-reranker-large)**
+
+| SENDNN_INFERENCE_WARMUP_BATCH_SIZES | SENDNN_INFERENCE_WARMUP_PROMPT_LENS | Tensor Parallel Size |
+|-------------------------------------|-------------------------------------|----------------------|
+| 64 | 512 | 1 |
+
+
+**[sentence-transformers/all-roberta-large-v1](https://huggingface.co/sentence-transformers/all-roberta-large-v1)**
+
+| SENDNN_INFERENCE_WARMUP_BATCH_SIZES | SENDNN_INFERENCE_WARMUP_PROMPT_LENS | Tensor Parallel Size |
+|-------------------------------------|-------------------------------------|----------------------|
+| 8 | 128 | 1 |
+
 <!-- GENERATED_POOLING_MODELS_END -->
 
 ## Model Configuration
