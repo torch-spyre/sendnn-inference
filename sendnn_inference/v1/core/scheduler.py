@@ -2,13 +2,9 @@
 """
 Spyre scheduler classes.
 
-This module provides mixin classes that implement Spyre-specific scheduling
-behavior, and concrete scheduler classes that compose the mixins with vLLM's
-Scheduler base class.  The same mixins are reused with AsyncScheduler in
-async_scheduler.py:
-
-    class PoolingSpyreScheduler(PoolingSpyreMixin, Scheduler): pass
-    class AsyncPoolingSpyreScheduler(PoolingSpyreMixin, AsyncScheduler): pass
+This module provides Spyre-specific scheduler subclasses of vLLM's
+``Scheduler``.  An async-scheduling variant for chunked prefill (subclassing
+``AsyncScheduler``) lives in ``async_scheduler.py``.
 """
 
 import math
@@ -28,45 +24,25 @@ from sendnn_inference.v1.worker.spyre_model_runner import SpyreModelRunnerOutput
 logger = init_logger(__name__)
 
 
-class PoolingSpyreMixin:
-    """Mixin that adds Spyre warmup-shape constraints to any vLLM scheduler.
-
-    Designed for use with multiple inheritance:
-
-        class PoolingSpyreScheduler(PoolingSpyreMixin, Scheduler): pass
-        class AsyncPoolingSpyreScheduler(PoolingSpyreMixin, AsyncScheduler): pass
-
-    The mixin uses ``_is_async_scheduler()`` to detect whether the concrete
-    class also inherits from AsyncScheduler, and adjusts behaviour accordingly.
-    """
-
-    def _is_async_scheduler(self) -> bool:
-        """Return True when this instance is also an AsyncScheduler."""
-        from vllm.v1.core.sched.async_scheduler import AsyncScheduler
-
-        return isinstance(self, AsyncScheduler)
+class PoolingSpyreScheduler(Scheduler):
+    """Scheduler that adds Spyre warmup-shape constraints for pooling models."""
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self.model_config = self.vllm_config.model_config  # type: ignore[attr-defined]
+        self.model_config = self.vllm_config.model_config
         self.spyre_warmup_shapes: tuple[dict[str, int], ...] = SpyrePlatform.get_warmup_shapes(
-            self.scheduler_config  # type: ignore[attr-defined]
+            self.scheduler_config
         )
 
     def schedule(self) -> SchedulerOutput:
-        """Add Spyre warmup-shape constraints then delegate to the base scheduler.
-
-        AsyncScheduler has the same ``self.running``/``self.waiting`` attributes
-        as Scheduler, so these constraints are compatible with both sync and
-        async scheduling.
-        """
+        """Add Spyre warmup-shape constraints then delegate to the base scheduler."""
         # First purge the full waiting queue into our holdback queue, preserving
         # priority, so that the base scheduler does not see them.
         # This lets us ensure that the set of requests scheduled have at least
         # one common warmup shape.
         holdback_queue: deque[Request] = deque()
-        while self.waiting:  # type: ignore[attr-defined]
-            holdback_queue.append(self.waiting.popleft())  # type: ignore[attr-defined]
+        while self.waiting:
+            holdback_queue.append(self.waiting.popleft())
 
         # store requests which don't fit the warmup shapes of the current batch
         skip_queue: deque[Request] = deque()
@@ -74,7 +50,7 @@ class PoolingSpyreMixin:
         # If no requests are currently running, we can now release requests back
         # into the waiting queue in priority order for the scheduler to prefill.
         # These must share a common warmup shape
-        if len(self.running) == 0:  # type: ignore[attr-defined]
+        if len(self.running) == 0:
             # Make a copy of the warmup shapes
             available_warmup_shapes = list(self.spyre_warmup_shapes)
             last_available_warmup_shapes = available_warmup_shapes
@@ -87,13 +63,13 @@ class PoolingSpyreMixin:
                 available_warmup_shapes = self._get_matching_warmup_shapes(
                     request=request,
                     warmup_shapes=available_warmup_shapes,
-                    current_batch_size=len(self.waiting),  # type: ignore[attr-defined]
+                    current_batch_size=len(self.waiting),
                 )
 
                 if len(available_warmup_shapes) > 0:
                     # There is still at least one valid shape, so add to the
                     # waiting queue
-                    self.waiting.append(holdback_queue.popleft())  # type: ignore[attr-defined]
+                    self.waiting.append(holdback_queue.popleft())
                     # remember the available warmup shapes of the current batch
                     last_available_warmup_shapes = available_warmup_shapes
                 else:
@@ -103,7 +79,7 @@ class PoolingSpyreMixin:
 
                     # if there is potential space in the batch but the current
                     # request does not fit, skip it and try with the next
-                    if len(self.waiting) < max_batch:  # type: ignore[attr-defined]
+                    if len(self.waiting) < max_batch:
                         available_warmup_shapes = last_available_warmup_shapes
                         skip_queue.append(holdback_queue.popleft())
                     else:
@@ -112,24 +88,23 @@ class PoolingSpyreMixin:
 
             logger.debug(
                 "Scheduling a new batch of %d requests, holding back %d requests",
-                len(self.waiting),  # type: ignore[attr-defined]
+                len(self.waiting),
                 len(holdback_queue),
             )
         else:
-            logger.debug("Scheduling a running batch of %d requests", len(self.running))  # type: ignore[attr-defined]
+            logger.debug("Scheduling a running batch of %d requests", len(self.running))
 
-        # delegate to the next class in MRO (Scheduler or AsyncScheduler)
-        outputs = super().schedule()  # type: ignore[misc]
+        outputs = super().schedule()
 
         # first move skipped and then unscheduled requests back
         # to the waiting queue, preserving priority
         while skip_queue:
-            self.waiting.append(skip_queue.popleft())  # type: ignore[attr-defined]
+            self.waiting.append(skip_queue.popleft())
 
         while holdback_queue:
-            self.waiting.append(holdback_queue.popleft())  # type: ignore[attr-defined]
+            self.waiting.append(holdback_queue.popleft())
 
-        outputs._spyre_grammar_output = self.get_grammar_bitmask(outputs)  # type: ignore[attr-defined]
+        outputs._spyre_grammar_output = self.get_grammar_bitmask(outputs)
         return outputs
 
     def _get_matching_warmup_shapes(
@@ -144,19 +119,13 @@ class PoolingSpyreMixin:
         ]
 
 
-class ChunkedPrefillSpyreMixin:
-    """Mixin that adds Spyre chunked-prefill constraints to any vLLM scheduler.
+class ChunkedPrefillSpyreScheduler(Scheduler):
+    """Scheduler that adds Spyre chunked-prefill constraints.
 
-    Designed for use with multiple inheritance:
-
-        class ChunkedPrefillSpyreScheduler(ChunkedPrefillSpyreMixin, Scheduler): pass
-        class AsyncChunkedPrefillSpyreScheduler(ChunkedPrefillSpyreMixin, AsyncScheduler): pass
-
-    The mixin uses ``_is_async_scheduler()`` to detect whether the concrete
-    class also inherits from AsyncScheduler, and adjusts behaviour accordingly:
-
-    * ``update_from_output()``: in async mode the scheduler output is filtered
-      to only include requests that were actually executed in this step.
+    The async-scheduling variant ``AsyncChunkedPrefillSpyreScheduler`` (in
+    ``async_scheduler.py``) subclasses this class and ``AsyncScheduler`` so
+    that ``super().schedule()`` resolves to ``AsyncScheduler.schedule()`` via
+    the MRO.
 
     Spyre scheduling policy
     -----------------------
@@ -174,23 +143,41 @@ class ChunkedPrefillSpyreMixin:
         - Decode batch size: at most max_num_seqs running requests.
         - Max model length: requested tokens must fit the context window.
         - Volumetric: batch_size × tkv ≤ VLLM_DT_MAX_BATCH_TKV_LIMIT.
+
+    Under async scheduling, the optimistic ``num_computed_tokens`` advance
+    performed by the base scheduler is recorded per-request in
+    ``_inflight_prefill_tokens`` on each prefill chunk;
+    ``update_from_output()`` reconciles the advance against the runner's
+    actual left-padding / prefix-cache report and decrements the counter.
+    The same code path works for sync mode where the counter is added and
+    cleared within a single step (a no-op). ``update_from_output()`` also
+    filters scheduler outputs to only include requests that were actually
+    executed (relevant under run-ahead).
+
+    Note: we deliberately do NOT mirror the prefill advance into upstream's
+    ``Request.num_output_placeholders``; that field feeds upstream's
+    ``num_new_tokens = num_tokens_with_spec + num_output_placeholders -
+    num_computed_tokens`` formula and is reserved for in-flight *decode*
+    tokens. Bumping it for prefill chunks would cause the formula to
+    re-schedule the full prompt length on every run-ahead step.
     """
-
-    def _is_async_scheduler(self) -> bool:
-        """Return True when this instance is also an AsyncScheduler."""
-        from vllm.v1.core.sched.async_scheduler import AsyncScheduler
-
-        return isinstance(self, AsyncScheduler)
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self.model_config = self.vllm_config.model_config  # type: ignore[attr-defined]
-        self.chunk_size = self.scheduler_config.max_num_batched_tokens  # type: ignore[attr-defined]
+        self.model_config = self.vllm_config.model_config
+        self.chunk_size = self.scheduler_config.max_num_batched_tokens
 
         # We want to keep track of requests for which the prefill is ongoing.
         # Theoretically, only one request can be prefilled at a time, but we
         # keep a list to be able to batch prefills in the future.
         self.ongoing_prefills: list[Request] = []
+
+        # Per-request counter of prefill-chunk tokens whose optimistic
+        # advance has been applied to ``Request.num_computed_tokens`` but
+        # not yet committed by ``update_from_output``. The committed prefill
+        # position for ``req`` is
+        # ``req.num_computed_tokens - self._inflight_prefill_tokens.get(rid, 0)``.
+        self._inflight_prefill_tokens: dict[str, int] = {}
 
         # Prefills interleaving: if the feature flag is set, prefill operations
         # are interleaved with a decode step. This allows to minimize currently
@@ -206,28 +193,46 @@ class ChunkedPrefillSpyreMixin:
             "Expecting the env var VLLM_DT_MAX_BATCH_TKV_LIMIT to be set in platform.py"
         )
 
-        # Async run-ahead snapshots to preserve committed state
-        self._prefill_scheduled_num_computed_queue: deque[dict[str, int]] = deque()
-        self._scheduled_ongoing_prefill_ids: frozenset[str] = frozenset()
-        self._schedule_awaiting_commit: bool = False
+    def _update_after_schedule(self, scheduler_output: SchedulerOutput) -> None:
+        """Track in-flight prefill-chunk advances per request.
+
+        The base ``Scheduler._update_after_schedule`` optimistically advances
+        ``request.num_computed_tokens`` by ``num_scheduled_tokens`` so the next
+        ``schedule()`` call (possibly running ahead under async scheduling) can
+        pick the next chunk without waiting for the model output. We record
+        the per-chunk advance in ``_inflight_prefill_tokens`` so
+        ``update_from_output`` can later reconcile the optimistic value
+        against what actually committed (after left-padding / prefix-cache
+        adjustments).
+
+        We use a private dict instead of upstream's ``num_output_placeholders``
+        because the latter participates in the ``num_new_tokens`` formula
+        (decode-side semantics). Decode-side placeholders are managed by
+        ``AsyncScheduler`` (which our async variant inherits via the MRO);
+        here we only handle prefill chunks. Decode requests fall through
+        unchanged.
+        """
+        super()._update_after_schedule(scheduler_output)
+        for req_id, n in scheduler_output.num_scheduled_tokens.items():
+            request = self.requests[req_id]
+            # ``is_prefill_chunk`` is set by the base method and is True iff
+            # the optimistic ``num_computed_tokens`` is still below the prompt
+            # length (i.e. we just advanced through a non-final prefill chunk).
+            if request.is_prefill_chunk:
+                self._inflight_prefill_tokens[req_id] = (
+                    self._inflight_prefill_tokens.get(req_id, 0) + n
+                )
 
     def update_from_output(self, scheduler_output, model_runner_output):
-        # Pop snapshot (FIFO) and clear run-ahead flag when queue is empty
-        scheduled_num_computed = (
-            self._prefill_scheduled_num_computed_queue.popleft()
-            if self._prefill_scheduled_num_computed_queue
-            else {}
-        )
-        if not self._prefill_scheduled_num_computed_queue:
-            self._schedule_awaiting_commit = False
-
         # Update tkv before any early returns
         if isinstance(model_runner_output, SpyreModelRunnerOutput):
             self.tkv = model_runner_output.tkv
 
-        # Handle empty output (async run-ahead)
+        # Handle empty output (async run-ahead). The optimistic advance is
+        # rolled back below for the executed-req branch; for the empty branch
+        # we do not touch placeholders because no request was executed.
         if not model_runner_output.req_ids:
-            if self._is_async_scheduler() and scheduler_output.num_scheduled_tokens:
+            if scheduler_output.num_scheduled_tokens:
                 import dataclasses
 
                 # Create empty scheduler output to match the empty model output
@@ -236,81 +241,94 @@ class ChunkedPrefillSpyreMixin:
                     num_scheduled_tokens={},
                     total_num_scheduled_tokens=0,
                 )
-                return super().update_from_output(empty_scheduler_output, model_runner_output)  # type: ignore[misc]
-            return super().update_from_output(scheduler_output, model_runner_output)  # type: ignore[misc]
+                return super().update_from_output(empty_scheduler_output, model_runner_output)
+            return super().update_from_output(scheduler_output, model_runner_output)
 
         assert isinstance(model_runner_output, SpyreModelRunnerOutput), (
-            "Expecting an instance of CPSpyreModelRunnerOutput when doing chunked prefill."
+            "Expecting an instance of SpyreModelRunnerOutput when doing chunked prefill."
         )
 
-        # Get set of executed request IDs for efficient lookup
         executed_req_ids = set(model_runner_output.req_ids)
 
-        # Update the correct num_computed_tokens value given left-padding and
-        # prefix cache hit info
-        for req in self.ongoing_prefills:
-            # Skip unexecuted requests (async scheduling)
-            if req.request_id not in executed_req_ids:
+        # Reconcile the optimistic prefill advance: for each executed prefill
+        # chunk, compute how many tokens *actually* committed (accounting for
+        # left-padding and prefix-cache hits), correct ``num_computed_tokens``
+        # by the delta, and decrement the per-request in-flight counter
+        # bumped in ``_update_after_schedule``. The per-chunk truth is
+        # derivable from the runner output and
+        # ``scheduler_output.num_scheduled_tokens``.
+        for req_id in executed_req_ids:
+            req = self.requests.get(req_id)
+            if req is None:
+                continue
+            scheduled_n = scheduler_output.num_scheduled_tokens.get(req_id, 0)
+            inflight = self._inflight_prefill_tokens.get(req_id, 0)
+            if scheduled_n == 0 or inflight == 0:
+                # Not a prefill-chunk we tracked (decode requests are not
+                # recorded in _inflight_prefill_tokens).
                 continue
 
-            # Committed tokens before this batch (from snapshot)
-            num_before_batch = scheduled_num_computed.get(req.request_id, req.num_computed_tokens)
-            is_first_chunk = num_before_batch == 0
-
-            # Committed tokens after this batch (use next snapshot if available for run-ahead)
-            next_snapshot = (
-                self._prefill_scheduled_num_computed_queue[0]
-                if self._prefill_scheduled_num_computed_queue
-                else None
-            )
-            if next_snapshot is not None and req.request_id in next_snapshot:
-                num_after_batch = next_snapshot[req.request_id]
-            else:
-                num_after_batch = req.num_computed_tokens
-
-            is_last_chunk = num_after_batch >= req.num_prompt_tokens
+            # Committed prefill position before THIS chunk's optimistic
+            # advance. ``inflight`` is the cumulative pending across all
+            # in-flight chunks for this request, so subtracting it from the
+            # current (optimistic, possibly run-ahead) ``num_computed_tokens``
+            # yields the truly committed position prior to this chunk.
+            committed_before = req.num_computed_tokens - inflight
+            # Optimistic position after THIS chunk would commit (i.e. excluding
+            # any further speculatively-scheduled chunks). This matches the
+            # semantics of the old snapshot mechanism's ``num_after_batch``.
+            optimistic_after_this_chunk = committed_before + scheduled_n
+            is_first_chunk = committed_before == 0
+            is_last_chunk = optimistic_after_this_chunk >= req.num_prompt_tokens
 
             if is_first_chunk and not is_last_chunk:
-                left_padding = model_runner_output.left_padding.get(req.request_id, 0)
-                prefix_cache_len = model_runner_output.prefix_cache_hit_len.get(req.request_id, 0)
-
-                # Adjust using the batch-specific value; apply only the delta so
-                # any run-ahead speculative advancement is preserved.
+                left_padding = model_runner_output.left_padding.get(req_id, 0)
+                prefix_cache_len = model_runner_output.prefix_cache_hit_len.get(req_id, 0)
                 adjusted = self.adjust_computed_tokens(
-                    computed_tokens=num_after_batch,
+                    computed_tokens=optimistic_after_this_chunk,
                     left_padding=left_padding,
                     prefix_cache_len=prefix_cache_len,
                 )
-                req.num_computed_tokens += adjusted - num_after_batch
+                # Apply only the delta so any speculative run-ahead advance
+                # already reflected in ``num_computed_tokens`` is preserved.
+                req.num_computed_tokens += adjusted - optimistic_after_this_chunk
 
-        # Remove completed prefills
+            # Decrement (or pop) the in-flight counter for this committed chunk.
+            new_inflight = inflight - scheduled_n
+            if new_inflight <= 0:
+                self._inflight_prefill_tokens.pop(req_id, None)
+            else:
+                self._inflight_prefill_tokens[req_id] = new_inflight
+
+        # Remove completed prefills (use committed position to avoid keeping a
+        # request whose prefill is in flight but already optimistically done).
         self.ongoing_prefills = [
-            req for req in self.ongoing_prefills if req.num_computed_tokens < req.num_prompt_tokens
+            req for req in self.ongoing_prefills
+            if (
+                req.num_computed_tokens
+                - self._inflight_prefill_tokens.get(req.request_id, 0)
+            ) < req.num_prompt_tokens
         ]
-
-        # (self.tkv is already updated at the top of this method)
 
         # With async scheduling, scheduler_output may contain requests that
         # weren't executed yet.  Filter to only pass executed requests to the
         # base scheduler.
-        if self._is_async_scheduler():
-            filtered_num_scheduled_tokens = {
-                req_id: num_tokens
-                for req_id, num_tokens in scheduler_output.num_scheduled_tokens.items()
-                if req_id in executed_req_ids
-            }
+        filtered_num_scheduled_tokens = {
+            req_id: num_tokens
+            for req_id, num_tokens in scheduler_output.num_scheduled_tokens.items()
+            if req_id in executed_req_ids
+        }
+        if len(filtered_num_scheduled_tokens) != len(scheduler_output.num_scheduled_tokens):
+            import dataclasses
 
-            if len(filtered_num_scheduled_tokens) != len(scheduler_output.num_scheduled_tokens):
-                import dataclasses
+            filtered_scheduler_output = dataclasses.replace(
+                scheduler_output,
+                num_scheduled_tokens=filtered_num_scheduled_tokens,
+                total_num_scheduled_tokens=sum(filtered_num_scheduled_tokens.values()),
+            )
+            return super().update_from_output(filtered_scheduler_output, model_runner_output)
 
-                filtered_scheduler_output = dataclasses.replace(
-                    scheduler_output,
-                    num_scheduled_tokens=filtered_num_scheduled_tokens,
-                    total_num_scheduled_tokens=sum(filtered_num_scheduled_tokens.values()),
-                )
-                return super().update_from_output(filtered_scheduler_output, model_runner_output)  # type: ignore[misc]
-
-        return super().update_from_output(scheduler_output, model_runner_output)  # type: ignore[misc]
+        return super().update_from_output(scheduler_output, model_runner_output)
 
     def adjust_computed_tokens(
         self, computed_tokens: int, left_padding: int, prefix_cache_len: int
@@ -342,25 +360,28 @@ class ChunkedPrefillSpyreMixin:
         # First purge the full waiting queue into our holdback queue, preserving
         # priority, so that the base scheduler does not see them.
         holdback_queue: deque[Request] = deque()
-        while self.waiting:  # type: ignore[attr-defined]
-            holdback_queue.append(self.waiting.popleft())  # type: ignore[attr-defined]
+        while self.waiting:
+            holdback_queue.append(self.waiting.popleft())
         # Also drain skipped_waiting: structured-output requests whose
         # grammar was not yet ready get placed here by the base scheduler.
         # We must route them through holdback to enforce the
         # one-prefill-at-a-time constraint.
-        while self.skipped_waiting:  # type: ignore[attr-defined]
-            holdback_queue.append(self.skipped_waiting.pop_request())  # type: ignore[attr-defined]
+        while self.skipped_waiting:
+            holdback_queue.append(self.skipped_waiting.pop_request())
 
-        # Restore ongoing_prefills from snapshot to prevent async run-ahead from
-        # scheduling over in-progress prefills
-        if self._is_async_scheduler() and self._schedule_awaiting_commit:
-            scheduled_ids = self._scheduled_ongoing_prefill_ids
-            self.ongoing_prefills = [
-                req
-                for req in self.running  # type: ignore[attr-defined]
-                if req.request_id in scheduled_ids
-                and req.num_computed_tokens < req.num_prompt_tokens
-            ]
+        # Re-derive ongoing_prefills from the current running set. Under async
+        # run-ahead, ``num_computed_tokens`` is optimistic while
+        # ``_inflight_prefill_tokens`` records the in-flight portion; a request
+        # is still prefilling iff its committed position is below the prompt
+        # length.
+        self.ongoing_prefills = [
+            req
+            for req in self.running
+            if (
+                req.num_computed_tokens
+                - self._inflight_prefill_tokens.get(req.request_id, 0)
+            ) < req.num_prompt_tokens
+        ]
 
         # Schedule new requests (one prefill at a time in sync mode)
         num_added_to_waiting = 0
@@ -377,7 +398,7 @@ class ChunkedPrefillSpyreMixin:
                         request.num_prompt_tokens,
                         len(holdback_queue) + len(unscheduled_requests),
                     )
-                    self.waiting.append(request)  # type: ignore[attr-defined]
+                    self.waiting.append(request)
                     num_added_to_waiting += 1
                 else:
                     # Sync mode: defer this request
@@ -394,7 +415,7 @@ class ChunkedPrefillSpyreMixin:
         assert len(self.ongoing_prefills) <= 1, (
             "Only one request can be prefilled at a time, but got %d" % len(self.ongoing_prefills)
         )
-        assert len(self.waiting) == 0 or len(self.ongoing_prefills) == 0, (  # type: ignore[attr-defined]
+        assert len(self.waiting) == 0 or len(self.ongoing_prefills) == 0, (
             "Cannot schedule new requests while another request prefill is ongoing."
         )
         assert all(r in self.running for r in self.ongoing_prefills), (
@@ -422,10 +443,10 @@ class ChunkedPrefillSpyreMixin:
                 self.previous_step_was_prefill = False
 
         # Check new requests to prefill
-        elif len(self.waiting) > 0:  # type: ignore[attr-defined]
+        elif len(self.waiting) > 0:
             # Try to promote grammar-waiting requests whose FSM is now
             # ready, so we correctly classify ready vs not-ready requests.
-            for r in list(self.waiting):  # type: ignore[attr-defined]
+            for r in list(self.waiting):
                 if r.status == RequestStatus.WAITING_FOR_STRUCTURED_OUTPUT_GRAMMAR:
                     so_req = r.structured_output_request
                     if so_req and so_req.grammar:
@@ -433,48 +454,40 @@ class ChunkedPrefillSpyreMixin:
 
             ready_to_prefill = [
                 r
-                for r in self.waiting  # type: ignore[attr-defined]
+                for r in self.waiting
                 if r.status != RequestStatus.WAITING_FOR_STRUCTURED_OUTPUT_GRAMMAR
             ]
             if ready_to_prefill:
-                # Track in ongoing_prefills BEFORE super().schedule() so the run-ahead
-                # snapshot (_scheduled_ongoing_prefill_ids) captures them correctly.
-                self.ongoing_prefills.extend(self.waiting)  # type: ignore[attr-defined]
+                # Track in ongoing_prefills so subsequent constraint checks
+                # treat these requests as prefilling.
+                self.ongoing_prefills.extend(self.waiting)
                 # Hide current decodes from the scheduler
-                running_holdback = self.running  # type: ignore[attr-defined]
-                self.running = []  # type: ignore[attr-defined]
+                running_holdback = self.running
+                self.running = []
                 self.previous_step_was_prefill = True
             else:
                 # Grammar not yet initialized for any waiting request.
                 # Return them to holdback so the base scheduler doesn't
                 # try to promote and schedule them alongside decodes.
-                while self.waiting:  # type: ignore[attr-defined]
-                    holdback_queue.appendleft(self.waiting.pop())  # type: ignore[attr-defined]
+                while self.waiting:
+                    holdback_queue.appendleft(self.waiting.pop())
                 running_holdback = []
                 self.previous_step_was_prefill = False
         else:
             self.previous_step_was_prefill = False
             running_holdback = []
 
-        # Snapshot ongoing_prefill state before super().schedule() so that:
-        # (a) the run-ahead guard above can restore ongoing_prefills on the
-        #     second schedule() call; and
-        # (b) update_from_output() uses committed num_computed_tokens (FIFO deque).
-        self._scheduled_ongoing_prefill_ids = frozenset(
-            req.request_id for req in self.ongoing_prefills
-        )
-        self._prefill_scheduled_num_computed_queue.append(
-            {req.request_id: req.num_computed_tokens for req in self.ongoing_prefills}
-        )
-        self._schedule_awaiting_commit = True
-
-        # delegate to the next class in MRO (Scheduler or AsyncScheduler)
-        outputs = super().schedule()  # type: ignore[misc]
+        # delegate to the base scheduler.  In the async variant this resolves
+        # to AsyncScheduler.schedule() via the MRO. Reconciliation of the
+        # optimistic num_computed_tokens advance happens in
+        # update_from_output() via num_output_placeholders rather than via a
+        # snapshot deque maintained here.
+        outputs = super().schedule()
 
         # restore holdbacks after running the base scheduler
         self.running = self.running + running_holdback
         while holdback_queue:
-            self.waiting.append(holdback_queue.popleft())  # type: ignore[attr-defined]
+            self.waiting.append(holdback_queue.popleft())
 
         # Log the scheduled tokens not at every step, but when doing chunked
         # prefill. These include decode steps during interleaving
@@ -490,13 +503,13 @@ class ChunkedPrefillSpyreMixin:
         # asynchronously while the model is running (as done in vLLM core).
         # TODO: Implement sample_tokens() in SpyreModelRunner to enable async grammar
         # collection for better performance.
-        outputs._spyre_grammar_output = self.get_grammar_bitmask(outputs)  # type: ignore[attr-defined]
+        outputs._spyre_grammar_output = self.get_grammar_bitmask(outputs)
         return outputs
 
     def can_schedule_prefill(self, request: Request) -> bool:
         # running and waiting queues are both empty, we can start a new batch
         # which can always be scheduled
-        if len(self.running) + len(self.waiting) == 0:  # type: ignore[attr-defined]
+        if len(self.running) + len(self.waiting) == 0:
             return True
 
         if not self._has_scheduling_priority(request):
@@ -512,7 +525,7 @@ class ChunkedPrefillSpyreMixin:
             # NB: self.kv_cache_manager comes from the parent class, and we are being super nosy.
             # This update ensures that we know when we're scheduling the last prefix chunk, in the
             # case where most of the prompt hits prefix cache and we only run a single chunk.
-            _, num_computed_tokens = self.kv_cache_manager.get_computed_blocks(request)  # type: ignore[attr-defined]
+            _, num_computed_tokens = self.kv_cache_manager.get_computed_blocks(request)
 
         is_first_chunk = request.num_computed_tokens == 0
         is_last_chunk = (request.num_prompt_tokens - num_computed_tokens) <= self.chunk_size
@@ -545,11 +558,11 @@ class ChunkedPrefillSpyreMixin:
         # if the decode batch is full, but the current implementation of input
         # batch doesn't allow to do so.
         num_running = len(self.running)
-        cond1 = num_running + len(self.waiting) < self.max_num_running_reqs  # type: ignore[attr-defined]
+        cond1 = num_running + len(self.waiting) < self.max_num_running_reqs
 
         # check that there is space in the prefill batch
         max_prefill_batch_size = 1
-        cond2 = len(self.waiting) < max_prefill_batch_size  # type: ignore[attr-defined]
+        cond2 = len(self.waiting) < max_prefill_batch_size
 
         return cond1 and cond2
 
@@ -562,7 +575,7 @@ class ChunkedPrefillSpyreMixin:
 
         # check that there is space in the current decode batch
         num_running = len(decoding_requests)
-        cond1 = num_running + len(self.waiting) < self.max_num_running_reqs  # type: ignore[attr-defined]
+        cond1 = num_running + len(self.waiting) < self.max_num_running_reqs
 
         # calculate new max tkv of the batch given the new sequence joins
         # considers all possible cases:
@@ -617,7 +630,7 @@ class ChunkedPrefillSpyreMixin:
         # We can start prefilling a new requests if we satisfy the maximum
         # number of concurrent prefills
         max_concurrent_prefills = 1
-        num_prefills = len(self.waiting) + len(self.ongoing_prefills)  # type: ignore[attr-defined]
+        num_prefills = len(self.waiting) + len(self.ongoing_prefills)
         return num_prefills < max_concurrent_prefills
 
     def check_batch_tkv_limit_cp(
@@ -696,7 +709,7 @@ class ChunkedPrefillSpyreMixin:
 
         # first defer to vLLM scheduler
         # validates the input requests and generates the output
-        aborted_requests = super().finish_requests(  # type: ignore[misc]
+        aborted_requests = super().finish_requests(
             request_ids=request_ids, finished_status=finished_status
         )
 
@@ -736,7 +749,7 @@ class ChunkedPrefillSpyreMixin:
         In sendnn-inference the last chunk is always recomputed, even though
         the space is not duplicated.
         """
-        base_stats = super().make_stats(*args, **kwargs)  # type: ignore[misc]
+        base_stats = super().make_stats(*args, **kwargs)
 
         if base_stats is not None and base_stats.prefix_cache_stats is not None:
             base_stats.prefix_cache_stats.hits = self.adjust_hit(
@@ -746,31 +759,7 @@ class ChunkedPrefillSpyreMixin:
         return base_stats
 
 
-class SpyreScheduler(Scheduler):
-    """Base class inheriting from the V1 scheduler to support static
-    and continuous batching respecting AIU Spyre constraints."""
-
-    def __init__(self, *args, **kwargs) -> None:
-        # Initialize vLLM scheduler
-        super().__init__(*args, **kwargs)
-        self.model_config = self.vllm_config.model_config
-
-
-class PoolingSpyreScheduler(PoolingSpyreMixin, Scheduler):
-    """Sync scheduler for pooling models with Spyre warmup-shape constraints."""
-
-    pass
-
-
-class ChunkedPrefillSpyreScheduler(ChunkedPrefillSpyreMixin, Scheduler):
-    """Sync scheduler with Spyre chunked-prefill constraints."""
-
-    pass
-
-
 __all__ = [
-    "PoolingSpyreMixin",
-    "ChunkedPrefillSpyreMixin",
     "PoolingSpyreScheduler",
     "ChunkedPrefillSpyreScheduler",
 ]
