@@ -286,6 +286,16 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         # decode tkv too far; skipped requests are set aside here and
         # restored to holdback after admission.
         skipped_for_shift: deque[Request] = deque()
+        if len(holdback_queue) > 0:
+            n_decoders = sum(
+                1 for r in self.running if r not in self.ongoing_prefills
+            )
+            logger.info(
+                "[tkv-shift-gate] cycle holdback_depth=%d n_decoders=%d tkv=%d",
+                len(holdback_queue),
+                n_decoders,
+                self.tkv,
+            )
         while holdback_queue:
             candidate = holdback_queue[0]
 
@@ -295,12 +305,14 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
                     self._skip_counts.get(skipped.request_id, 0) + 1
                 )
                 skipped_for_shift.append(skipped)
-                logger.debug(
-                    "Skipping request (%d prompt tokens) due to tkv shift "
-                    "budget (skip_count=%d/%d)",
+                logger.info(
+                    "[tkv-shift-gate] skipping req_id=%s prompt_tokens=%d "
+                    "skip_count=%d/%d tkv=%d",
+                    skipped.request_id,
                     skipped.num_prompt_tokens,
                     self._skip_counts[skipped.request_id],
                     self.max_skip_count,
+                    self.tkv,
                 )
                 continue
 
@@ -455,7 +467,21 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         # Compare block-aligned tkvs
         current_tkv = round_up_to_block_size(self.tkv)
         new_tkv = round_up_to_block_size(max(self.tkv, request.num_prompt_tokens))
-        return new_tkv / current_tkv <= self.max_tkv_shift_ratio
+        ratio = new_tkv / current_tkv
+        allowed = ratio <= self.max_tkv_shift_ratio
+        logger.info(
+            "[tkv-shift-gate] check req_id=%s prompt_tokens=%d tkv=%d "
+            "current_tkv=%d new_tkv=%d ratio=%.3f threshold=%.3f allowed=%s",
+            request.request_id,
+            request.num_prompt_tokens,
+            self.tkv,
+            current_tkv,
+            new_tkv,
+            ratio,
+            self.max_tkv_shift_ratio,
+            allowed,
+        )
+        return allowed
 
     def _satisfies_constraints(self, request: Request) -> bool:
         # Use a local variable to check the prefix cache hit length ahead of time without mutating
