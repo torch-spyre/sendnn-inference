@@ -1,10 +1,18 @@
 # SPDX-License-Identifier: Apache-2.0
+"""
+Spyre scheduler classes.
+
+This module provides Spyre-specific scheduler subclasses of vLLM's
+``Scheduler``.  An async-scheduling variant for chunked prefill (subclassing
+``AsyncScheduler``) lives in ``async_scheduler.py``.
+"""
 
 import math
 from collections import deque
-from typing import TYPE_CHECKING, Iterable, Union
+from typing import Iterable, Union
 
 from vllm.logger import init_logger
+from vllm.v1.core.sched.output import SchedulerOutput
 from vllm.v1.core.sched.scheduler import Scheduler
 from vllm.v1.metrics.stats import SchedulerStats
 from vllm.v1.request import Request, RequestStatus
@@ -12,11 +20,6 @@ from vllm.v1.request import Request, RequestStatus
 import sendnn_inference.envs as envs_spyre
 from sendnn_inference.platform import SpyrePlatform
 from sendnn_inference.v1.worker.spyre_model_runner import SpyreModelRunnerOutput
-
-if TYPE_CHECKING:
-    from vllm.v1.core.sched.output import SchedulerOutput
-else:
-    SchedulerOutput = None
 
 logger = init_logger(__name__)
 
@@ -31,32 +34,18 @@ def round_up_to_block_size(n: int) -> int:
     return (n + 63) & ~63
 
 
-class SpyreScheduler(Scheduler):
-    """Base class inheriting from the V1 scheduler to support static
-    and continuous batching respecting AIU Spyre constraints."""
+class PoolingSpyreScheduler(Scheduler):
+    """Scheduler that adds Spyre warmup-shape constraints for pooling models."""
 
     def __init__(self, *args, **kwargs) -> None:
-        # Initialize vLLM scheduler
         super().__init__(*args, **kwargs)
         self.model_config = self.vllm_config.model_config
-
-
-class PoolingSpyreScheduler(SpyreScheduler):
-    """Support of pooling models"""
-
-    def __init__(self, *args, **kwargs) -> None:
-        # Initialize SpyreScheduler
-        super().__init__(*args, **kwargs)
-
-        # Add our own state for handling Spyre constraints:
-        # all warmup shapes that we can support
         self.spyre_warmup_shapes: tuple[dict[str, int], ...] = SpyrePlatform.get_warmup_shapes(
             self.scheduler_config
         )
 
     def schedule(self) -> SchedulerOutput:
-        """This override adds constraints and then delegates most of the work
-        to the base scheduler"""
+        """Add Spyre warmup-shape constraints then delegate to the base scheduler."""
         # First purge the full waiting queue into our holdback queue, preserving
         # priority, so that the base scheduler does not see them.
         # This lets us ensure that the set of requests scheduled have at least
@@ -115,8 +104,7 @@ class PoolingSpyreScheduler(SpyreScheduler):
         else:
             logger.debug("Scheduling a running batch of %d requests", len(self.running))
 
-        # delegate to super of SpyreScheduler: base V1 Scheduler
-        outputs = super(SpyreScheduler, self).schedule()
+        outputs = super().schedule()
 
         # first move skipped and then unscheduled requests back
         # to the waiting queue, preserving priority
@@ -126,13 +114,13 @@ class PoolingSpyreScheduler(SpyreScheduler):
         while holdback_queue:
             self.waiting.append(holdback_queue.popleft())
 
-        outputs._spyre_grammar_output = self.get_grammar_bitmask(outputs)  # type: ignore[attr-defined]
+        outputs._spyre_grammar_output = self.get_grammar_bitmask(outputs)
         return outputs
 
     def _get_matching_warmup_shapes(
         self, request: Request, warmup_shapes: list[dict[str, int]], current_batch_size: int
     ) -> list[dict[str, int]]:
-        """Return the subset of shapes that match this request"""
+        """Return the subset of shapes that match this request."""
         return [
             shape
             for shape in warmup_shapes
@@ -141,57 +129,65 @@ class PoolingSpyreScheduler(SpyreScheduler):
         ]
 
 
-class ChunkedPrefillSpyreScheduler(SpyreScheduler):
-    """
-    Chunked-Prefill Scheduling policy
+class ChunkedPrefillSpyreScheduler(Scheduler):
+    """Scheduler that adds Spyre chunked-prefill constraints.
 
-    The prefill vs. decode priority policy is the following:
-        - Current prefill request priority: A new request cannot start prefill
-           while another request's prefill is on-going
+    The async-scheduling variant ``AsyncChunkedPrefillSpyreScheduler`` (in
+    ``async_scheduler.py``) subclasses this class and ``AsyncScheduler`` so
+    that ``super().schedule()`` resolves to ``AsyncScheduler.schedule()`` via
+    the MRO.
 
-        - Prefill step interleaving: The prefill steps are interleaved with
-            one decode step: as long as there are decoding requests, two
-            prefill steps cannot be consecutive
+    Spyre scheduling policy
+    -----------------------
+    Prefill vs decode priority:
+        - A new request cannot start prefill while another request's prefill
+          is on-going.
+        - Prefill steps are optionally interleaved with one decode step.
+        - Prefill has priority over decode (subject to the interleaving
+          constraint).
+        - If a prefill step is prevented by constraints a decode step is
+          scheduled instead.
 
-        - General prefill priority: conditioned on interleaving constraint,
-            prefill has priority over decode
+    Spyre constraints (applied at the last chunk of a chunked prefill):
+        - Prefill batch size: only one request's chunked prefill at a time.
+        - Decode batch size: at most max_num_seqs running requests.
+        - Max model length: requested tokens must fit the context window.
+        - Volumetric: batch_size × tkv ≤ VLLM_DT_MAX_BATCH_TKV_LIMIT.
 
-        - No empty step: if a prefill step is prevented because it doesn't
-            satisfy Spyre's specific constraints, a decode step is scheduled
+    Under async scheduling, the optimistic ``num_computed_tokens`` advance
+    performed by the base scheduler is recorded per-request in
+    ``_inflight_prefill_tokens`` on each prefill chunk;
+    ``update_from_output()`` reconciles the advance against the runner's
+    actual left-padding / prefix-cache report and decrements the counter.
+    The same code path works for sync mode where the counter is added and
+    cleared within a single step (a no-op). ``update_from_output()`` also
+    filters scheduler outputs to only include requests that were actually
+    executed (relevant under run-ahead).
 
-    Spyre scheduling constraints:
-
-        - Prefill batch size: prefill batch is of size 1, only one request's
-            chunked prefill can be scheduled at a time
-
-        - Decode batch size: cannot have more than max_num_seqs running
-            requests, including prefill and decode
-
-        Note: all the remaining constraints need to be satisfied at the time
-            of scheduling the last chunk of a chunked prefill
-
-        - Max model length constraint: the number of requested tokens must fit
-            between the maximum TKV of all the running requests and the end of
-            the model's context
-
-        - Volumetric constraint: the total "surface" defined by the running
-            requests should never exceed `VLLM_DT_MAX_BATCH_TKV_LIMIT`. See
-            `check_batch_tkv_limit()` method for details.
-
-        - The surface defined by the maximum TKV of
-            all the running requests and the number of running requests must
-            not exceed the limit defined by `VLLM_DT_MAX_BATCH_TKV_LIMIT`
+    Note: we deliberately do NOT mirror the prefill advance into upstream's
+    ``Request.num_output_placeholders``; that field feeds upstream's
+    ``num_new_tokens = num_tokens_with_spec + num_output_placeholders -
+    num_computed_tokens`` formula and is reserved for in-flight *decode*
+    tokens. Bumping it for prefill chunks would cause the formula to
+    re-schedule the full prompt length on every run-ahead step.
     """
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-
+        self.model_config = self.vllm_config.model_config
         self.chunk_size = self.scheduler_config.max_num_batched_tokens
 
         # We want to keep track of requests for which the prefill is ongoing.
         # Theoretically, only one request can be prefilled at a time, but we
         # keep a list to be able to batch prefills in the future.
         self.ongoing_prefills: list[Request] = []
+
+        # Per-request counter of prefill-chunk tokens whose optimistic
+        # advance has been applied to ``Request.num_computed_tokens`` but
+        # not yet committed by ``update_from_output``. The committed prefill
+        # position for ``req`` is
+        # ``req.num_computed_tokens - self._inflight_prefill_tokens.get(rid, 0)``.
+        self._inflight_prefill_tokens: dict[str, int] = {}
 
         # Prefills interleaving: if the feature flag is set, prefill operations
         # are interleaved with a decode step. This allows to minimize currently
@@ -207,35 +203,142 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             "Expecting the env var VLLM_DT_MAX_BATCH_TKV_LIMIT to be set in platform.py"
         )
 
+    def _update_after_schedule(self, scheduler_output: SchedulerOutput) -> None:
+        """Track in-flight prefill-chunk advances per request.
+
+        The base ``Scheduler._update_after_schedule`` optimistically advances
+        ``request.num_computed_tokens`` by ``num_scheduled_tokens`` so the next
+        ``schedule()`` call (possibly running ahead under async scheduling) can
+        pick the next chunk without waiting for the model output. We record
+        the per-chunk advance in ``_inflight_prefill_tokens`` so
+        ``update_from_output`` can later reconcile the optimistic value
+        against what actually committed (after left-padding / prefix-cache
+        adjustments).
+
+        We use a private dict instead of upstream's ``num_output_placeholders``
+        because the latter participates in the ``num_new_tokens`` formula
+        (decode-side semantics). Decode-side placeholders are managed by
+        ``AsyncScheduler`` (which our async variant inherits via the MRO);
+        here we only handle prefill chunks. Decode requests fall through
+        unchanged.
+        """
+        super()._update_after_schedule(scheduler_output)
+        for req_id, n in scheduler_output.num_scheduled_tokens.items():
+            request = self.requests[req_id]
+            # ``is_prefill_chunk`` is set by the base method and is True iff
+            # the optimistic ``num_computed_tokens`` is still below the prompt
+            # length (i.e. we just advanced through a non-final prefill chunk).
+            if request.is_prefill_chunk:
+                self._inflight_prefill_tokens[req_id] = (
+                    self._inflight_prefill_tokens.get(req_id, 0) + n
+                )
+
     def update_from_output(self, scheduler_output, model_runner_output):
+        # Update tkv before any early returns
+        if isinstance(model_runner_output, SpyreModelRunnerOutput):
+            self.tkv = model_runner_output.tkv
+
+        # Handle empty output (async run-ahead). The optimistic advance is
+        # rolled back below for the executed-req branch; for the empty branch
+        # we do not touch placeholders because no request was executed.
+        if not model_runner_output.req_ids:
+            if scheduler_output.num_scheduled_tokens:
+                import dataclasses
+
+                # Create empty scheduler output to match the empty model output
+                empty_scheduler_output = dataclasses.replace(
+                    scheduler_output,
+                    num_scheduled_tokens={},
+                    total_num_scheduled_tokens=0,
+                )
+                return super().update_from_output(empty_scheduler_output, model_runner_output)
+            return super().update_from_output(scheduler_output, model_runner_output)
+
         assert isinstance(model_runner_output, SpyreModelRunnerOutput), (
-            "Expecting an instance of CPSpyreModelRunnerOutput when doing chunked prefill."
+            "Expecting an instance of SpyreModelRunnerOutput when doing chunked prefill."
         )
 
-        # Update the correct num_computed_tokens value given left-padding and
-        # prefix cache hit info
-        for req in self.ongoing_prefills:
-            # The number of computed tokens only need to be adapted when it is
-            # the first chunk of a multi-chunk prefill
-            is_first_chunk = req.num_computed_tokens <= self.chunk_size
-            is_last_chunk = req.num_computed_tokens == req.num_prompt_tokens
-            if is_first_chunk and not is_last_chunk:
-                left_padding = model_runner_output.left_padding.get(req.request_id, 0)
-                prefix_cache_len = model_runner_output.prefix_cache_hit_len.get(req.request_id, 0)
+        executed_req_ids = set(model_runner_output.req_ids)
 
-                req.num_computed_tokens = self.adjust_computed_tokens(
-                    computed_tokens=req.num_computed_tokens,
+        # Reconcile the optimistic prefill advance: for each executed prefill
+        # chunk, compute how many tokens *actually* committed (accounting for
+        # left-padding and prefix-cache hits), correct ``num_computed_tokens``
+        # by the delta, and decrement the per-request in-flight counter
+        # bumped in ``_update_after_schedule``. The per-chunk truth is
+        # derivable from the runner output and
+        # ``scheduler_output.num_scheduled_tokens``.
+        for req_id in executed_req_ids:
+            req = self.requests.get(req_id)
+            if req is None:
+                continue
+            scheduled_n = scheduler_output.num_scheduled_tokens.get(req_id, 0)
+            inflight = self._inflight_prefill_tokens.get(req_id, 0)
+            if scheduled_n == 0 or inflight == 0:
+                # Not a prefill-chunk we tracked (decode requests are not
+                # recorded in _inflight_prefill_tokens).
+                continue
+
+            # Committed prefill position before THIS chunk's optimistic
+            # advance. ``inflight`` is the cumulative pending across all
+            # in-flight chunks for this request, so subtracting it from the
+            # current (optimistic, possibly run-ahead) ``num_computed_tokens``
+            # yields the truly committed position prior to this chunk.
+            committed_before = req.num_computed_tokens - inflight
+            # Optimistic position after THIS chunk would commit (i.e. excluding
+            # any further speculatively-scheduled chunks). This matches the
+            # semantics of the old snapshot mechanism's ``num_after_batch``.
+            optimistic_after_this_chunk = committed_before + scheduled_n
+            is_first_chunk = committed_before == 0
+            is_last_chunk = optimistic_after_this_chunk >= req.num_prompt_tokens
+
+            if is_first_chunk and not is_last_chunk:
+                left_padding = model_runner_output.left_padding.get(req_id, 0)
+                prefix_cache_len = model_runner_output.prefix_cache_hit_len.get(req_id, 0)
+                adjusted = self.adjust_computed_tokens(
+                    computed_tokens=optimistic_after_this_chunk,
                     left_padding=left_padding,
                     prefix_cache_len=prefix_cache_len,
                 )
+                # Apply only the delta so any speculative run-ahead advance
+                # already reflected in ``num_computed_tokens`` is preserved.
+                req.num_computed_tokens += adjusted - optimistic_after_this_chunk
 
-        # Remove completed prefills
+            # Decrement (or pop) the in-flight counter for this committed chunk.
+            new_inflight = inflight - scheduled_n
+            if new_inflight <= 0:
+                self._inflight_prefill_tokens.pop(req_id, None)
+            else:
+                self._inflight_prefill_tokens[req_id] = new_inflight
+
+        # Remove completed prefills (use committed position to avoid keeping a
+        # request whose prefill is in flight but already optimistically done).
         self.ongoing_prefills = [
-            req for req in self.ongoing_prefills if req.num_computed_tokens < req.num_prompt_tokens
+            req for req in self.ongoing_prefills
+            if (
+                req.num_computed_tokens
+                - self._inflight_prefill_tokens.get(req.request_id, 0)
+            ) < req.num_prompt_tokens
         ]
 
-        self.tkv = model_runner_output.tkv
-        return super(SpyreScheduler, self).update_from_output(scheduler_output, model_runner_output)
+        # With async scheduling, scheduler_output may contain requests that
+        # weren't executed yet.  Filter to only pass executed requests to the
+        # base scheduler.
+        filtered_num_scheduled_tokens = {
+            req_id: num_tokens
+            for req_id, num_tokens in scheduler_output.num_scheduled_tokens.items()
+            if req_id in executed_req_ids
+        }
+        if len(filtered_num_scheduled_tokens) != len(scheduler_output.num_scheduled_tokens):
+            import dataclasses
+
+            filtered_scheduler_output = dataclasses.replace(
+                scheduler_output,
+                num_scheduled_tokens=filtered_num_scheduled_tokens,
+                total_num_scheduled_tokens=sum(filtered_num_scheduled_tokens.values()),
+            )
+            return super().update_from_output(filtered_scheduler_output, model_runner_output)
+
+        return super().update_from_output(scheduler_output, model_runner_output)
 
     def adjust_computed_tokens(
         self, computed_tokens: int, left_padding: int, prefix_cache_len: int
@@ -254,12 +357,15 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         return computed_tokens - left_padding
 
     def schedule(self) -> "SchedulerOutput":
-        """
-        The chunked prefill scheduling policy is enforced in this method, then
-        delegates the final scheduling decision to the base scheduler
+        """Apply Spyre chunked-prefill constraints then delegate to the base
+        scheduler.
 
-        To avoid additional specialization, some requests are held back from the
-        base scheduler but are restored after
+        Spyre hardware constraint: Only one request can perform chunked prefill
+        at a time, and a new prefill cannot be mixed with running decodes.
+
+        Enforced by limiting the waiting queue to 1 new request and hiding
+        running decode requests from the base scheduler before delegation.
+        This pre-filter approach applies to both sync and async modes.
         """
         # First purge the full waiting queue into our holdback queue, preserving
         # priority, so that the base scheduler does not see them.
@@ -273,23 +379,48 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         while self.skipped_waiting:
             holdback_queue.append(self.skipped_waiting.pop_request())
 
-        # Check if new requests can be scheduled for prefill
+        # Re-derive ongoing_prefills from the current running set. Under async
+        # run-ahead, ``num_computed_tokens`` is optimistic while
+        # ``_inflight_prefill_tokens`` records the in-flight portion; a request
+        # is still prefilling iff its committed position is below the prompt
+        # length.
+        self.ongoing_prefills = [
+            req
+            for req in self.running
+            if (
+                req.num_computed_tokens
+                - self._inflight_prefill_tokens.get(req.request_id, 0)
+            ) < req.num_prompt_tokens
+        ]
+
+        # Schedule new requests (one prefill at a time in sync mode)
+        num_added_to_waiting = 0
+        unscheduled_requests: deque[Request] = deque()
+
         while holdback_queue:
-            if self.can_schedule_prefill(holdback_queue[0]):
-                new_request = holdback_queue.popleft()
+            request = holdback_queue.popleft()
+            if self.can_schedule_prefill(request):
+                should_add_to_waiting = len(self.ongoing_prefills) > 0 or num_added_to_waiting == 0
 
-                logger.debug(
-                    "Scheduling a new request (%d prompt tokens), holding back %d requests",
-                    new_request.num_prompt_tokens,
-                    len(holdback_queue),
-                )
-
-                # Add request to the waiting queue
-                self.waiting.append(new_request)
+                if should_add_to_waiting:
+                    logger.debug(
+                        "Scheduling a new request (%d prompt tokens), holding back %d requests",
+                        request.num_prompt_tokens,
+                        len(holdback_queue) + len(unscheduled_requests),
+                    )
+                    self.waiting.append(request)
+                    num_added_to_waiting += 1
+                else:
+                    # Sync mode: defer this request
+                    unscheduled_requests.append(request)
             else:
-                # Otherwise, we simply stop here so that the scheduler
-                # can work with the batch we have
+                # Can't schedule, restore and stop
+                holdback_queue.appendleft(request)
                 break
+
+        # Restore unscheduled requests to holdback
+        while unscheduled_requests:
+            holdback_queue.appendleft(unscheduled_requests.pop())
 
         assert len(self.ongoing_prefills) <= 1, (
             "Only one request can be prefilled at a time, but got %d" % len(self.ongoing_prefills)
@@ -300,8 +431,6 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         assert all(r in self.running for r in self.ongoing_prefills), (
             "Ongoing prefill requests must be in the running queue."
         )
-
-        new_prefill_candidates: list[Request] = []
 
         # Check ongoing prefills
         if self.ongoing_prefills:
@@ -336,10 +465,12 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             ready_to_prefill = [
                 r
                 for r in self.waiting
-                if r.status != RequestStatus.WAITING_FOR_STRUCTURED_OUTPUT_GRAMMAR  # type: ignore[attr-defined]
+                if r.status != RequestStatus.WAITING_FOR_STRUCTURED_OUTPUT_GRAMMAR
             ]
             if ready_to_prefill:
-                new_prefill_candidates = list(self.waiting)
+                # Track in ongoing_prefills so subsequent constraint checks
+                # treat these requests as prefilling.
+                self.ongoing_prefills.extend(self.waiting)
                 # Hide current decodes from the scheduler
                 running_holdback = self.running
                 self.running = []
@@ -356,14 +487,12 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             self.previous_step_was_prefill = False
             running_holdback = []
 
-        # delegate to super of SpyreScheduler: base V1 Scheduler
-        outputs = super(SpyreScheduler, self).schedule()
-
-        # Track as ongoing prefills only the requests that were actually
-        # scheduled (i.e., moved from waiting to running by the base
-        # scheduler).
-        if new_prefill_candidates:
-            self.ongoing_prefills.extend(r for r in new_prefill_candidates if r in self.running)
+        # delegate to the base scheduler.  In the async variant this resolves
+        # to AsyncScheduler.schedule() via the MRO. Reconciliation of the
+        # optimistic num_computed_tokens advance happens in
+        # update_from_output() via num_output_placeholders rather than via a
+        # snapshot deque maintained here.
+        outputs = super().schedule()
 
         # restore holdbacks after running the base scheduler
         self.running = self.running + running_holdback
@@ -384,7 +513,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         # asynchronously while the model is running (as done in vLLM core).
         # TODO: Implement sample_tokens() in SpyreModelRunner to enable async grammar
         # collection for better performance.
-        outputs._spyre_grammar_output = self.get_grammar_bitmask(outputs)  # type: ignore[attr-defined]
+        outputs._spyre_grammar_output = self.get_grammar_bitmask(outputs)
         return outputs
 
     def can_schedule_prefill(self, request: Request) -> bool:
@@ -583,13 +712,13 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         request_ids: Union[str, Iterable[str], None],
         finished_status: RequestStatus,
     ) -> list[tuple[str, int]]:
-        """Handles removing finished requests from ongoing_prefills"""
+        """Handles removing finished requests from ongoing_prefills."""
         if isinstance(request_ids, str):
             request_ids = (request_ids,)
 
         # first defer to vLLM scheduler
         # validates the input requests and generates the output
-        aborted_requests = super(SpyreScheduler, self).finish_requests(
+        aborted_requests = super().finish_requests(
             request_ids=request_ids, finished_status=finished_status
         )
 
@@ -637,3 +766,9 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             )
 
         return base_stats
+
+
+__all__ = [
+    "PoolingSpyreScheduler",
+    "ChunkedPrefillSpyreScheduler",
+]
