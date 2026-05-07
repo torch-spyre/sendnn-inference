@@ -225,7 +225,7 @@ class SpyrePlatform(Platform):
         # set_current_vllm_config
         if vllm_config.model_config is None:
             return
-        
+
         # print startup logo
         cls.log_server_boot(vllm_config)
 
