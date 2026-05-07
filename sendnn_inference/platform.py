@@ -1,5 +1,7 @@
 import sys
-
+from string import Template
+import multiprocessing
+import importlib.metadata
 
 # When running this plugin on a Mac, we assume it's for local development
 # purposes. However, due to a compatibility issue with vLLM, which overrides
@@ -89,6 +91,40 @@ class SpyrePlatform(Platform):
     @classmethod
     def get_device_name(cls, device_id: int = 0) -> str:
         return "spyre"
+
+    @classmethod
+    def log_server_boot(cls, vllm_config: VllmConfig) -> None:
+        # Only log in main process (not in TP workers)
+        if multiprocessing.current_process().name != "MainProcess":
+            return
+
+        # yapf: disable
+        logo_template = Template(
+            template="\n       ${w}█     █     █▄   ▄█${r}       ${red}▄█▀▀█▄${r}  ${orange}█▀▀▀█▄${r}  ${yellow}█   █${r}  ${green}█▀▀▀█▄${r}  ${blue}█▀▀▀▀${r}\n" # noqa: E501
+            " ${o}▄▄${r} ${b}▄█${r} ${w}█     █     █ ▀▄▀ █${r}       ${red}▀▀▄▄▄${r}   ${orange}█▄▄▄█▀${r}  ${yellow}▀▄ ▄▀${r}  ${green}█▄▄▄█▀${r}  ${blue}█▄▄▄${r}   version ${w}%s${r}\n" # noqa: E501
+            "  ${o}█${r}${b}▄█▀${r} ${w}█     █     █     █${r}            ${red}█${r}  ${orange}█${r}        ${yellow}▀█▀${r}   ${green}█ ▀█▄${r}   ${blue}█${r}      model   ${w}%s${r}\n" # noqa: E501
+            "   ${b}▀▀${r}  ${w}▀▀▀▀▀ ▀▀▀▀▀ ▀     ▀${r}       ${red}▀▄▄▄█▀${r}  ${orange}█${r}         ${yellow}█${r}    ${green}█   ▀█${r}  ${blue}█▄▄▄▄${r}\n" # noqa: E501
+        )
+        # yapf: enable
+        colors = {
+            "w": "\033[97;1m",  # white
+            "o": "\033[93m",  # orange
+            "b": "\033[94m",  # blue
+            "r": "\033[0m",  # reset
+            "red": "\033[91m",  # red (rainbow start)
+            "orange": "\033[38;5;208m",  # orange
+            "yellow": "\033[93m",  # yellow
+            "green": "\033[92m",  # green
+            "blue": "\033[94m",  # blue (rainbow end)
+        }
+
+        message = logo_template.substitute(colors)
+
+        version = importlib.metadata.version("sendnn_inference")
+
+        model_name = vllm_config.model_config.model if vllm_config.model_config else "N/A"
+
+        logger.info(message, version, model_name)
 
     @classmethod
     def import_kernels(cls) -> None:
@@ -187,6 +223,9 @@ class SpyrePlatform(Platform):
         # set_current_vllm_config
         if vllm_config.model_config is None:
             return
+        
+        # print startup logo
+        cls.log_server_boot(vllm_config)
 
         cls._config = vllm_config
         parallel_config = vllm_config.parallel_config
