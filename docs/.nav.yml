@@ -19,10 +19,11 @@ nav:
     - Developer Guide:
       - Contributing: contributing/README.md
       - Maintaining: contributing/maintaining.md
-      - Architecture: contributing/architecture.md
+      - Design Documents:
+        - Architecture: contributing/architecture.md
+        - Scheduling & Padding: contributing/scheduler.md
       - MultiModal:
         - Adding New Models: contributing/multimodal/adding_new_models.md
-      - Scheduling & Padding: contributing/scheduler.md
 
   - Getting Started:
     - Installation: getting_started/installation.md
@@ -38,5 +39,8 @@ nav:
   - Developer Guide:
     - Contributing: contributing/README.md
     - Maintaining: contributing/maintaining.md
-    - Architecture: contributing/architecture.md
-    - Scheduling & Padding: contributing/scheduler.md
+    - Design Documents:
+      - Architecture: contributing/architecture.md
+      - Scheduling & Padding: contributing/scheduler.md
+    - MultiModal:
+      - Adding New Models: contributing/multimodal/adding_new_models.md
