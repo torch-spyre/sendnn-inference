@@ -100,10 +100,11 @@ class SpyrePlatform(Platform):
 
         # yapf: disable
         logo_template = Template(
-            template="\n       ${w}█     █     █▄   ▄█${r}       ${red}▄█▀▀█▄${r}  ${orange}█▀▀▀█▄${r}  ${yellow}█   █${r}  ${green}█▀▀▀█▄${r}  ${blue}█▀▀▀▀${r}\n" # noqa: E501
-            " ${o}▄▄${r} ${b}▄█${r} ${w}█     █     █ ▀▄▀ █${r}       ${red}▀▀▄▄▄${r}   ${orange}█▄▄▄█▀${r}  ${yellow}▀▄ ▄▀${r}  ${green}█▄▄▄█▀${r}  ${blue}█▄▄▄${r}   version ${w}%s${r}\n" # noqa: E501
-            "  ${o}█${r}${b}▄█▀${r} ${w}█     █     █     █${r}            ${red}█${r}  ${orange}█${r}        ${yellow}▀█▀${r}   ${green}█ ▀█▄${r}   ${blue}█${r}      model   ${w}%s${r}\n" # noqa: E501
-            "   ${b}▀▀${r}  ${w}▀▀▀▀▀ ▀▀▀▀▀ ▀     ▀${r}       ${red}▀▄▄▄█▀${r}  ${orange}█${r}         ${yellow}█${r}    ${green}█   ▀█${r}  ${blue}█▄▄▄▄${r}\n" # noqa: E501
+            template="\n    ${red}▄█▀▀█▄${r}  ${orange}█▀▀▀▀${r}  ${yellow}█▄   █${r}  ${green}█▀▀▀█▄${r}  ${blue}█▄   █${r}  ${purple}█▄   █${r}     ${w}█  █▄   █  █▀▀▀▀ █▀▀▀▀  █▀▀▀█▄ █▀▀▀▀  █▄   █  ▄█▀▀█▄ █▀▀▀▀${r}\n" # noqa: E501
+            "    ${red}▀▀▄▄▄${r}   ${orange}█▄▄▄${r}   ${yellow}█ █  █${r}  ${green}█    █${r}  ${blue}█ █  █${r}  ${purple}█ █  █${r}     ${w}█  █ █  █  █▄▄▄  █▄▄▄   █▄▄▄█▀ █▄▄▄   █ █  █  █      █▄▄▄${r}\n" # noqa: E501
+            "         ${red}█${r}  ${orange}█${r}      ${yellow}█  █ █${r}  ${green}█    █${r}  ${blue}█  █ █${r}  ${purple}█  █ █${r}     ${w}█  █  █ █  █     █      █ ▀█▄  █      █  █ █  █      █${r}\n" # noqa: E501
+            "    ${red}▀▄▄▄█▀${r}  ${orange}█▄▄▄▄${r}  ${yellow}█   ▀█${r}  ${green}█▄▄▄█▀${r}  ${blue}█   ▀█${r}  ${purple}█   ▀█${r}     ${w}█  █   ▀█  █     █▄▄▄▄  █   ▀█ █▄▄▄▄  █   ▀█  ▀█▄▄█▀ █▄▄▄▄${r}\n" # noqa: E501
+            "\n    version ${w}%s${r}    model ${w}%s${r}\n"
         )
         # yapf: enable
         colors = {
@@ -115,7 +116,8 @@ class SpyrePlatform(Platform):
             "orange": "\033[38;5;208m",  # orange
             "yellow": "\033[93m",  # yellow
             "green": "\033[92m",  # green
-            "blue": "\033[94m",  # blue (rainbow end)
+            "blue": "\033[94m",  # blue
+            "purple": "\033[38;5;21m",  # #0000FF (rainbow end)
         }
 
         message = logo_template.substitute(colors)
@@ -124,7 +126,7 @@ class SpyrePlatform(Platform):
 
         model_name = vllm_config.model_config.model if vllm_config.model_config else "N/A"
 
-        logger.info(message, version, model_name)
+        print(message % (version, model_name), flush=True)
 
     @classmethod
     def import_kernels(cls) -> None:
