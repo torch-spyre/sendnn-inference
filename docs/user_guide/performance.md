@@ -109,7 +109,7 @@ The end-to-end latency (E2EL) is the time from submitting a request to the serve
 
 ## Visualization – Results Interpretation
 
-For the run described in the [Scheduler Constraints visualization](../contributing/scheduler.md#visualization-scheduler-constraints), we show the corresponding timeline that would be obtained using `--plot-timeline`. Here the timeline is reconstructed (because we cannot control exactly the arrival step of the requests with `vllm bench serve`), but it follows the shape of what would be produced by `--plot-timeline`. We assume a decode takes 1 unit time, and a chunked prefill takes 8 unit times.
+For the run described in the [Scheduler Constraints visualization](../contributing/scheduler.md#visualization-scheduler-constraints), we show the corresponding timeline that would be obtained using `--plot-timeline`. The timeline is reconstructed for educational purposes (since request arrival steps cannot be precisely controlled with vllm bench serve), but it matches the expected shape. We assume a decode takes 1 unit of time and a chunked prefill takes 8 units.
 
 **Observations**:
 
