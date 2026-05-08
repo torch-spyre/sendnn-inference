@@ -300,7 +300,6 @@ def configure_figure_layout(
             x=0.5,
             font=dict(size=10),
         ),
-        # Prevent auto-play on page load
         updatemenus=[
             {
                 "type": "buttons",
@@ -333,6 +332,7 @@ def configure_figure_layout(
                 "xanchor": "right",
                 "y": 0,
                 "yanchor": "top",
+                "visible": len(frames) > 1,
             }
         ],
         sliders=[

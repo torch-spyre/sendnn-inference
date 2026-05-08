@@ -601,7 +601,7 @@ def configure_figure_layout(
                             None,
                             {
                                 "fromcurrent": True,
-                                "frame": {"duration": 25, "redraw": True},
+                                "frame": {"duration": 750, "redraw": True},
                                 "transition": {"duration": 0},
                             },
                         ],
@@ -622,6 +622,7 @@ def configure_figure_layout(
                 "xanchor": "right",
                 "y": -0.7,
                 "yanchor": "bottom",
+                "visible": len(frames) > 1,
             }
         ],
         sliders=[
