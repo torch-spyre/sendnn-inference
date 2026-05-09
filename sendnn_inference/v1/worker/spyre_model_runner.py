@@ -52,12 +52,13 @@ from sendnn_inference.v1.worker.spyre_input_batch import (
 
 # yapf: enable
 if TYPE_CHECKING:
-    from vllm.v1.core.sched.output import NewRequestData, SchedulerOutput
+    from vllm.v1.core.sched.output import GrammarOutput, NewRequestData, SchedulerOutput
     from vllm.v1.sample.metadata import SamplingMetadata
 else:
     SchedulerOutput = None
     NewRequestData = None
     SamplingMetadata = None
+    GrammarOutput = None
 
 logger = init_logger(__name__)
 
@@ -232,8 +233,28 @@ class BaseSpyreModelRunner(ABC, Generic[InputBatchT, RequestStateT, ModelInputsT
         self,
         scheduler_output: SchedulerOutput,
         **kwargs,
-    ) -> ModelRunnerOutput:
+    ) -> ModelRunnerOutput | None:
+        """Run the forward pass.
+
+        Subclasses that fold sampling into the forward pass (e.g. pooling)
+        return a concrete ``ModelRunnerOutput``. Subclasses that defer
+        sampling to ``sample_tokens`` (e.g. chunked prefill) may return
+        ``None`` for paths where sampling is required, in which case the
+        engine will subsequently call ``sample_tokens(grammar_output)``.
+        """
         raise NotImplementedError
+
+    def sample_tokens(
+        self,
+        grammar_output: "GrammarOutput | None",
+    ) -> ModelRunnerOutput:
+        """Sample tokens for whatever was forwarded by ``execute_model``.
+
+        Default implementation returns an empty output. Subclasses that
+        return ``None`` from ``execute_model`` MUST override this to consume
+        the stashed forward state and produce the real output.
+        """
+        return EMPTY_MODEL_RUNNER_OUTPUT
 
 
 class PoolerAdapter(torch.nn.Module):
@@ -698,6 +719,16 @@ class ChunkedPrefillModelRunner(
 
         self.block_size = SpyrePlatform.get_block_size()
         self.tkv: int = 0
+
+        # Stashed state populated by execute_model and consumed by
+        # sample_tokens. Tuple layout:
+        #   (logits, is_prefill, scheduler_output, batch_size, t0)
+        # ``None`` means execute_model already returned a concrete output
+        # (empty / non-driver / incomplete-prefill paths) and sample_tokens
+        # is a no-op.
+        self._pending_sample: (
+            tuple[torch.Tensor, bool, SchedulerOutput, int, float] | None
+        ) = None
 
         self._enable_prefix_caching = vllm_config.cache_config.enable_prefix_caching
 
@@ -1508,13 +1539,13 @@ class ChunkedPrefillModelRunner(
     def apply_grammar_bitmask(
         self,
         scheduler_output: "SchedulerOutput",
+        grammar_output: "GrammarOutput | None",
         logits: torch.Tensor,
         batch: SamplingInputBatch,
     ) -> None:
         """Apply grammar bitmask in-place to constrain logits for structured
         output requests.
         """
-        grammar_output = getattr(scheduler_output, "_spyre_grammar_output", None)
         if grammar_output is None:
             return
 
@@ -1525,12 +1556,27 @@ class ChunkedPrefillModelRunner(
             logits,
         )
 
+    def execute_and_sample(
+        self,
+        scheduler_output: SchedulerOutput,
+        grammar_output: "GrammarOutput | None" = None,
+    ) -> ModelRunnerOutput:
+        """Convenience helper that runs the forward pass and then samples.
+
+        Mirrors the pre-split combined behaviour of ``execute_model``. Used
+        by tests that drive the runner directly.
+        """
+        output = self.execute_model(scheduler_output)
+        if output is None:
+            output = self.sample_tokens(grammar_output)
+        return output
+
     @SpyrePlatform.inference_mode()
     def execute_model(
         self,
         scheduler_output: SchedulerOutput,
         **kwargs,
-    ) -> ModelRunnerOutput:
+    ) -> ModelRunnerOutput | None:
         t0 = time.time()
 
         self.update_states(scheduler_output)
@@ -1581,9 +1627,31 @@ class ChunkedPrefillModelRunner(
             logger.debug("t_forward_pass: %.2fms [prefill single chunk][batch size 1]", (t1 * 1000))
             return self.prefill_output()
 
+        # Defer sampling (and grammar bitmask application) to ``sample_tokens``
+        # so that the engine's async scheduling path -- which uses the
+        # ``sample_tokens`` future as the model output passed to
+        # ``scheduler.update_from_output`` -- sees the real output instead of
+        # the empty placeholder. Stash everything ``sample_tokens`` needs.
+        batch_size = model_input.input_tokens.shape[0]
+        self._pending_sample = (logits, is_prefill, scheduler_output, batch_size, t0)
+        return None
+
+    def sample_tokens(
+        self,
+        grammar_output: "GrammarOutput | None",
+    ) -> ModelRunnerOutput:
+        # If execute_model already produced a concrete output (empty /
+        # non-driver / incomplete-prefill paths), there is nothing to sample.
+        if self._pending_sample is None:
+            return EMPTY_MODEL_RUNNER_OUTPUT
+
+        logits, is_prefill, scheduler_output, batch_size, t0 = self._pending_sample
+        self._pending_sample = None
+
         # Apply grammar bitmask for structured output requests.
         self.apply_grammar_bitmask(
             scheduler_output,
+            grammar_output,
             logits,
             self.prefill_batch if is_prefill else self.input_batch,
         )
@@ -1596,7 +1664,6 @@ class ChunkedPrefillModelRunner(
         assert output is not None, "Expected sampler output"
 
         t1 = time.time() - t0
-        batch_size = model_input.input_tokens.shape[0]
         step_type = "[prefill last chunk]" if is_prefill else "[decode]"
         logger.debug("t_token: %.2fms %s[batch size %d]", (t1 * 1000), step_type, batch_size)
 
@@ -1622,8 +1689,7 @@ class ChunkedPrefillModelRunner(
         if not self.is_driver_worker:
             return self.get_empty_output()
 
-        model_output = self.sampled_output(output, is_prefill)
-        return model_output
+        return self.sampled_output(output, is_prefill)
 
     def prefill_output(self) -> SpyreModelRunnerOutput:
         req_id_to_index = self.get_req_id_to_index(is_prefill=True)

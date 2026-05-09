@@ -76,7 +76,7 @@ def test_scheduler_tkv_limits(monkeypatch: pytest.MonkeyPatch):
     # configuration that exceeds the TKV limit
     while True:
         sched_output = scheduler.schedule()
-        output = model_runner.execute_model(sched_output)
+        output = model_runner.execute_and_sample(sched_output)
         scheduler.update_from_output(sched_output, output)
         if len(scheduler.running) == 0:
             break

@@ -26,7 +26,7 @@ from vllm.sampling_params import SamplingParams
 from vllm.utils.torch_utils import set_random_seed
 from vllm.v1.core.sched.output import CachedRequestData, NewRequestData, SchedulerOutput
 from vllm.v1.kv_cache_interface import KVCacheConfig, KVCacheSpec
-from vllm.v1.outputs import ModelRunnerOutput
+from vllm.v1.outputs import EMPTY_MODEL_RUNNER_OUTPUT, ModelRunnerOutput
 from vllm.v1.worker.worker_base import WorkerBase
 
 import sendnn_inference.envs as envs_spyre
@@ -509,7 +509,7 @@ class SpyreWorker(WorkerBase):
             **_get_extra_args(),
         )
         logger.info("[WARMUP] Deploying to device...")
-        self.execute_model(scheduler_output)
+        self._execute_and_sample(scheduler_output)
         self._cleanup_model_runner(request=[deploy_req])
 
         model_runner.complete_warmup()
@@ -678,7 +678,7 @@ class SpyreWorker(WorkerBase):
 
             logger.info("[WARMUP] Prefill [%s/%s]...", idx + 1, req_count)
 
-            self.execute_model(scheduler_output)
+            self._execute_and_sample(scheduler_output)
 
         random_token_id = lambda: torch.randint(0, len(valid_token_ids_tensor), (1,)).item()
 
@@ -704,7 +704,7 @@ class SpyreWorker(WorkerBase):
             **_get_extra_args(),
         )
         logger.info("[WARMUP] Decode...")
-        self.execute_model(scheduler_output)
+        self._execute_and_sample(scheduler_output)
         self._cleanup_model_runner(request=requests)
 
     def _warmup_model_forward_pass(
@@ -720,7 +720,7 @@ class SpyreWorker(WorkerBase):
         scheduler_output.num_scheduled_tokens = {
             r.req_id: self._get_num_tokens(r) for r in requests
         }
-        self.execute_model(scheduler_output)  # Prefill
+        self._execute_and_sample(scheduler_output)  # Prefill
 
     def profile(self, is_start: bool = True, profile_prefix: str | None = None):
         if self.profiler_config.profiler is None:
@@ -760,9 +760,8 @@ class SpyreWorker(WorkerBase):
         return self.model_runner.get_supported_tasks()
 
     def sample_tokens(self, grammar_output: "GrammarOutput | None") -> ModelRunnerOutput:
-        from vllm.v1.outputs import EMPTY_MODEL_RUNNER_OUTPUT
-
-        return EMPTY_MODEL_RUNNER_OUTPUT
+        output = self.model_runner.sample_tokens(grammar_output)
+        return output if self.is_driver_worker else EMPTY_MODEL_RUNNER_OUTPUT
 
     @SpyrePlatform.inference_mode()
     def execute_model(
@@ -772,7 +771,25 @@ class SpyreWorker(WorkerBase):
         if self.profiler is not None:
             self.profiler.step()
         output = self.model_runner.execute_model(scheduler_output)
+        if output is None:
+            return None
         return output if self.is_driver_worker else None
+
+    def _execute_and_sample(
+        self,
+        scheduler_output: "SchedulerOutput",
+    ) -> None:
+        """Drive a forward pass and (if needed) the sampling step.
+
+        Used by warmup paths that invoke the worker directly without the
+        engine's two-call execute_model/sample_tokens orchestration. After
+        the chunked-prefill split, ``execute_model`` may return ``None`` to
+        defer sampling; this helper drains the deferred state so warmup
+        does not leave dangling ``_pending_sample`` between iterations.
+        """
+        output = self.execute_model(scheduler_output)
+        if output is None:
+            self.sample_tokens(None)
 
     def _get_num_tokens(self, r: NewRequestData) -> int:
         assert r.prompt_token_ids is not None, "requests should have tokens!"

@@ -145,7 +145,7 @@ class InstrumentedModelRunner(ChunkedPrefillModelRunner):
 
     def execute_new_request(self, request: Request) -> ModelRunnerOutput:
         scheduler_output = self._schedule_new_request(request)
-        output = self.execute_model(scheduler_output)
+        output = self.execute_and_sample(scheduler_output)
         self.scheduler.update_from_output(scheduler_output, output)
         return output
 
@@ -153,7 +153,7 @@ class InstrumentedModelRunner(ChunkedPrefillModelRunner):
         self,
     ) -> ModelRunnerOutput:
         scheduler_output = self._schedule_running_requests()
-        output = self.execute_model(scheduler_output)
+        output = self.execute_and_sample(scheduler_output)
         self.scheduler.update_from_output(scheduler_output, output)
         return output
 
