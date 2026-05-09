@@ -1,5 +1,7 @@
 import sys
-
+from string import Template
+import multiprocessing
+import importlib.metadata
 
 # When running this plugin on a Mac, we assume it's for local development
 # purposes. However, due to a compatibility issue with vLLM, which overrides
@@ -89,6 +91,42 @@ class SpyrePlatform(Platform):
     @classmethod
     def get_device_name(cls, device_id: int = 0) -> str:
         return "spyre"
+
+    @classmethod
+    def log_server_boot(cls, vllm_config: VllmConfig) -> None:
+        # Only log in main process (not in TP workers)
+        if multiprocessing.current_process().name != "MainProcess":
+            return
+
+        # yapf: disable
+        logo_template = Template(
+            template="\n    ${red}▄█▀▀█▄${r}  ${orange}█▀▀▀▀${r}  ${yellow}█▄   █${r}  ${green}█▀▀▀█▄${r}  ${blue}█▄   █${r}  ${purple}█▄   █${r}     ${w}█  █▄   █  █▀▀▀▀ █▀▀▀▀  █▀▀▀█▄ █▀▀▀▀  █▄   █  ▄█▀▀█▄ █▀▀▀▀${r}\n" # noqa: E501
+            "    ${red}▀▀▄▄▄${r}   ${orange}█▄▄▄${r}   ${yellow}█ █  █${r}  ${green}█    █${r}  ${blue}█ █  █${r}  ${purple}█ █  █${r}     ${w}█  █ █  █  █▄▄▄  █▄▄▄   █▄▄▄█▀ █▄▄▄   █ █  █  █      █▄▄▄${r}\n" # noqa: E501
+            "         ${red}█${r}  ${orange}█${r}      ${yellow}█  █ █${r}  ${green}█    █${r}  ${blue}█  █ █${r}  ${purple}█  █ █${r}     ${w}█  █  █ █  █     █      █ ▀█▄  █      █  █ █  █      █${r}\n" # noqa: E501
+            "    ${red}▀▄▄▄█▀${r}  ${orange}█▄▄▄▄${r}  ${yellow}█   ▀█${r}  ${green}█▄▄▄█▀${r}  ${blue}█   ▀█${r}  ${purple}█   ▀█${r}     ${w}█  █   ▀█  █     █▄▄▄▄  █   ▀█ █▄▄▄▄  █   ▀█  ▀█▄▄█▀ █▄▄▄▄${r}\n" # noqa: E501
+            "\n    version ${w}%s${r}    model ${w}%s${r}\n"
+        )
+        # yapf: enable
+        colors = {
+            "w": "\033[97;1m",  # white
+            "o": "\033[93m",  # orange
+            "b": "\033[94m",  # blue
+            "r": "\033[0m",  # reset
+            "red": "\033[91m",  # red (rainbow start)
+            "orange": "\033[38;5;208m",  # orange
+            "yellow": "\033[93m",  # yellow
+            "green": "\033[92m",  # green
+            "blue": "\033[94m",  # blue
+            "purple": "\033[38;5;21m",  # #0000FF (rainbow end)
+        }
+
+        message = logo_template.substitute(colors)
+
+        version = importlib.metadata.version("sendnn_inference")
+
+        model_name = vllm_config.model_config.model if vllm_config.model_config else "N/A"
+
+        print(message % (version, model_name), flush=True)
 
     @classmethod
     def import_kernels(cls) -> None:
@@ -235,6 +273,9 @@ class SpyrePlatform(Platform):
         # set_current_vllm_config
         if vllm_config.model_config is None:
             return
+
+        # print startup logo
+        cls.log_server_boot(vllm_config)
 
         cls._config = vllm_config
         parallel_config = vllm_config.parallel_config
@@ -438,6 +479,10 @@ class SpyrePlatform(Platform):
         This allows to fall back to `torch.no_grad` when inference mode is set.
         """
         return torch.no_grad()
+
+    @classmethod
+    def manual_seed_all(cls, seed: int) -> None:
+        pass
 
     @classmethod
     def get_warmup_shapes(cls, scheduler_config) -> tuple[dict[str, int], ...]:
@@ -716,6 +761,32 @@ class SpyrePlatform(Platform):
         return max_new_tokens
 
     @classmethod
+    def _patch_tokenizer_registry_get_config(cls) -> None:
+        """Patch get_config to suppress KeyError when called from tokenizer registry.
+
+        The tokenizer registry imports get_config via:
+            from vllm.transformers_utils.config import get_config
+
+        This creates a local reference, so we must patch the registry module's
+        reference directly, not just the source module.
+
+        """
+        import vllm.tokenizers.registry as tokenizer_registry
+
+        original_get_config = tokenizer_registry.get_config
+
+        def safe_get_config(*args, **kwargs):
+            try:
+                return original_get_config(*args, **kwargs)
+            except KeyError:
+                return None
+
+        # Patch the imported reference in the registry module
+        tokenizer_registry.get_config = safe_get_config  # type:ignore[invalid-assignment]
+
+        logger.debug("Patched get_config in vllm.tokenizers.registry to suppress KeyError")
+
+    @classmethod
     def is_backend_sendnn_enabled(cls) -> bool:
         return envs_spyre.SENDNN_INFERENCE_DYNAMO_BACKEND in ("sendnn", "sendnn_compile_only")
 
@@ -839,3 +910,12 @@ def _compute_config_format(namespace: argparse.Namespace) -> str:
     ):
         return "mistral"
     return "auto"
+
+
+# 🌶️🌶️🌶️ Patch vllm.tokenizers.registry to suppress KeyError from get_config
+# The tokenizer registry calls get_config() which can raise KeyError when
+# an unknown model_type is encountered in LazyConfigDict. The original code
+# only suppresses ValueError and OSError, but KeyError should also be
+# suppressed since it's expected for models not in the registry.
+# This must be done at import time to be applied to spawned worker processes.
+SpyrePlatform._patch_tokenizer_registry_get_config()
