@@ -89,7 +89,7 @@ def get_cpu_model_runner(
             abort_sched = make_scheduler_output(
                 scheduled_new_reqs=[], finished_req_ids={request_id}
             )
-            runner.execute_model(abort_sched)
+            runner.execute_and_sample(abort_sched)
 
     return runner
 

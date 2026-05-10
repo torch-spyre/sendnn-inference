@@ -726,9 +726,7 @@ class ChunkedPrefillModelRunner(
         # ``None`` means execute_model already returned a concrete output
         # (empty / non-driver / incomplete-prefill paths) and sample_tokens
         # is a no-op.
-        self._pending_sample: (
-            tuple[torch.Tensor, bool, SchedulerOutput, int, float] | None
-        ) = None
+        self._pending_sample: tuple[torch.Tensor, bool, SchedulerOutput, int, float] | None = None
 
         self._enable_prefix_caching = vllm_config.cache_config.enable_prefix_caching
 
@@ -1318,7 +1316,6 @@ class ChunkedPrefillModelRunner(
         is_new_batch = self.input_batch.num_reqs == 0
         prompt_len = len(prompt_token_ids)
         mm_features = getattr(request, "mm_features", None)
-
         self.prefill_batch.clear_requests()
 
         # set the new tkv to the prompt length if starting a new decode batch
@@ -1367,7 +1364,6 @@ class ChunkedPrefillModelRunner(
         num_computed_tokens = request.num_computed_tokens
         prompt_len = len(request.prompt_token_ids)
         num_scheduled_tokens = scheduler_output.num_scheduled_tokens[req_id]
-
         if num_computed_tokens + num_scheduled_tokens < prompt_len:
             return
 
@@ -1397,6 +1393,25 @@ class ChunkedPrefillModelRunner(
         # Refresh sampling metadata after all request are added to the batch
         self.input_batch.refresh_metadata()
         self.prefill_batch.refresh_metadata()
+
+    def _reconcile_input_batch_for_decode(self, cached_request_data: CachedRequestData) -> None:
+        """Drop or restore ``input_batch`` rows so they match this step's decode schedule.
+
+        Under async scheduling the engine may schedule only a subset of running
+        requests. ``_prepare_decode`` builds tensors from ``input_batch`` in lockstep
+        with ``cached_request_data.req_ids``; without this reconciliation the batch
+        sizes diverge and workers assert or diverge across TP ranks.
+        """
+        if not cached_request_data.req_ids:
+            return
+        sched_ids = set(cached_request_data.req_ids)
+        for req_id in list(self.input_batch.req_id_to_index.keys()):
+            if req_id not in sched_ids:
+                self.input_batch.remove_request(req_id)
+        for req_id in cached_request_data.req_ids:
+            if req_id not in self.input_batch.req_id_to_index:
+                self.input_batch.add_request(self.requests[req_id])
+        self.input_batch.refresh_metadata()
 
     def prepare_model_input(self, scheduler_output: SchedulerOutput) -> SamplingForwardInputs:
         is_prefill = False
@@ -1429,7 +1444,9 @@ class ChunkedPrefillModelRunner(
 
             return model_inputs
         else:
-            return self._prepare_decode(scheduler_output.scheduled_cached_reqs)
+            cached = scheduler_output.scheduled_cached_reqs
+            self._reconcile_input_batch_for_decode(cached)
+            return self._prepare_decode(cached)
 
     def get_empty_output(self):
         return SpyreModelRunnerOutput(
@@ -1648,10 +1665,17 @@ class ChunkedPrefillModelRunner(
         logits, is_prefill, scheduler_output, batch_size, t0 = self._pending_sample
         self._pending_sample = None
 
+        # Prefer grammar passed by the engine's ``sample_tokens`` call; fall back to
+        # ``SchedulerOutput._spyre_grammar_output`` (Spyre scheduler attachment)
+        # so masking matches pre-split behaviour when the argument is omitted.
+        grammar_for_mask = grammar_output or getattr(
+            scheduler_output, "_spyre_grammar_output", None
+        )
+
         # Apply grammar bitmask for structured output requests.
         self.apply_grammar_bitmask(
             scheduler_output,
-            grammar_output,
+            grammar_for_mask,
             logits,
             self.prefill_batch if is_prefill else self.input_batch,
         )
@@ -1711,14 +1735,18 @@ class ChunkedPrefillModelRunner(
         )
 
     def sampled_output(self, output: SamplerOutput, is_prefill: bool) -> SpyreModelRunnerOutput:
-        req_id_to_index = self.get_req_id_to_index(is_prefill)
+        batch = self.prefill_batch if is_prefill else self.input_batch
+        sorted_ids = batch.sorted_requests_ids
+        # vLLM's scheduler indexes ``sampled_token_ids`` by dense row (0..n-1).
+        # ``get_unpadded_output_indices()`` maps physical batch slots and can assign
+        # index 1 when only one sampler row exists — IndexError in scheduler.
+        req_id_to_index = {rid: i for i, rid in enumerate(sorted_ids)}
         left_padding = {
-            req_id: self.requests[req_id].padding_blocks * self.block_size
-            for req_id in req_id_to_index
+            req_id: self.requests[req_id].padding_blocks * self.block_size for req_id in sorted_ids
         }
 
         return SpyreModelRunnerOutput(
-            req_ids=list(req_id_to_index.keys()),
+            req_ids=list(sorted_ids),
             req_id_to_index=req_id_to_index,
             sampled_token_ids=output.sampled_token_ids.tolist(),
             logprobs=(output.logprobs_tensors.tolists() if output.logprobs_tensors else None),

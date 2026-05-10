@@ -313,6 +313,20 @@ class SamplingInputBatch(BaseInputBatch[SamplingRequestState]):
         # This is updated each time the batch constituents change.
         self.sampling_metadata = self._make_sampling_metadata()
 
+    @property
+    def req_ids(self) -> list[str]:
+        """Active requests ordered by batch slot index (dense).
+
+        vLLM's ``apply_grammar_bitmask`` walks ``enumerate(input_batch.req_ids)``
+        assuming one entry per logits row. The base implementation returns the
+        padded slot array (including inactive ``None`` holes), which misaligns
+        grammar bitmasks with logits—breaking structured-output backends such as
+        outlines. Decode tensors are built from ``sorted_requests_ids``, so match
+        that here.
+        """
+
+        return self.sorted_requests_ids
+
     def req_id_to_dense_index(self, req_id) -> int:
         """
         This data structure has 3 types of references for data:

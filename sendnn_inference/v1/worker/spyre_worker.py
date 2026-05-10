@@ -2,6 +2,7 @@
 
 import contextlib
 import functools
+import importlib
 import json
 import os
 import platform
@@ -28,12 +29,6 @@ from vllm.v1.core.sched.output import CachedRequestData, NewRequestData, Schedul
 from vllm.v1.kv_cache_interface import KVCacheConfig, KVCacheSpec
 from vllm.v1.outputs import EMPTY_MODEL_RUNNER_OUTPUT, ModelRunnerOutput
 
-try:
-    from vllm.v1.worker.worker_base import CompilationTimes, WorkerBase
-except ImportError:
-    CompilationTimes = None  # type: ignore[assignment, misc]
-    from vllm.v1.worker.worker_base import WorkerBase
-
 import sendnn_inference.envs as envs_spyre
 import sendnn_inference.perf_metrics as perf_metrics
 import sendnn_inference.utils as utils_spyre
@@ -44,6 +39,10 @@ from sendnn_inference.v1.worker.spyre_model_runner import (
     SpyrePoolingModelRunner,
     SupportedTask,
 )
+
+_worker_base = importlib.import_module("vllm.v1.worker.worker_base")
+WorkerBase = _worker_base.WorkerBase
+CompilationTimes = getattr(_worker_base, "CompilationTimes", None)
 
 if TYPE_CHECKING:
     from vllm.v1.core.sched.output import GrammarOutput
@@ -549,6 +548,8 @@ class SpyreWorker(WorkerBase):
             finished_req_ids=set([r.req_id for r in request]),
             **_get_extra_args(),
         )
+        # No-work step (finished requests only) — runner returns an empty
+        # output directly from execute_model; no sampling needed.
         self.execute_model(scheduler_output)
         # satisfy mypy
         model_runner: ChunkedPrefillModelRunner = cast(ChunkedPrefillModelRunner, self.model_runner)
@@ -782,6 +783,10 @@ class SpyreWorker(WorkerBase):
         if self.profiler is not None:
             self.profiler.step()
         output = self.model_runner.execute_model(scheduler_output)
+        # Pass ``None`` through so the engine knows to call ``sample_tokens``
+        # next (sampling-mode runners defer the sample step). When the runner
+        # already produced a concrete output (empty / pooling / incomplete
+        # prefill paths) we return it directly on the driver worker only.
         if output is None:
             return None
         return output if self.is_driver_worker else None
@@ -790,13 +795,13 @@ class SpyreWorker(WorkerBase):
         self,
         scheduler_output: "SchedulerOutput",
     ) -> None:
-        """Drive a forward pass and (if needed) the sampling step.
+        """Drive ``execute_model`` then ``sample_tokens`` when sampling is deferred.
 
-        Used by warmup paths that invoke the worker directly without the
-        engine's two-call execute_model/sample_tokens orchestration. After
-        the chunked-prefill split, ``execute_model`` may return ``None`` to
-        defer sampling; this helper drains the deferred state so warmup
-        does not leave dangling ``_pending_sample`` between iterations.
+        Warmup and other non-engine paths must not call ``execute_model`` alone on
+        runners that stash logits for ``sample_tokens`` (see
+        ``ChunkedPrefillModelRunner._pending_sample``): always use this helper or
+        mirror its ``sample_tokens(None)`` drain. Subclasses that override
+        ``execute_model`` should keep this contract or duplicate the drain logic.
         """
         output = self.execute_model(scheduler_output)
         if output is None:

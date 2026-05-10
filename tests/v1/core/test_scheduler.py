@@ -22,8 +22,10 @@ from unittest.mock import Mock, patch
 
 from vllm import SamplingParams
 from vllm.v1.core.sched.request_queue import FCFSRequestQueue
+from vllm.v1.core.sched.async_scheduler import AsyncScheduler
 from vllm.v1.core.sched.output import CachedRequestData, SchedulerOutput
-from vllm.v1.request import Request
+from vllm.v1.core.sched.scheduler import Scheduler
+from vllm.v1.request import Request, RequestStatus
 
 from sendnn_inference.v1.core.async_scheduler import (
     AsyncChunkedPrefillSpyreScheduler,
@@ -588,9 +590,7 @@ class TestChunkedPrefillSpyreSchedulerUpdateFromOutput:
         # Inflight is decremented by chunk_1_n; chunk 2 is still in flight.
         assert async_scheduler._inflight_prefill_tokens["req1"] == chunk_2_n
 
-    def test_request_not_promoted_to_decode_while_last_chunk_in_flight(
-        self, async_scheduler
-    ):
+    def test_request_not_promoted_to_decode_while_last_chunk_in_flight(self, async_scheduler):
         """Regression test: a request must remain in ``ongoing_prefills``
         until its FINAL prefill chunk has been committed by
         ``update_from_output``. Otherwise the scheduler promotes it to
@@ -616,7 +616,9 @@ class TestChunkedPrefillSpyreSchedulerUpdateFromOutput:
         # Commit only chunk 1.
         sched_output = _make_scheduler_output(["req1"], tokens_per_req=chunk_1_n)
         model_output = _make_model_runner_output(
-            ["req1"], tkv=chunk_1_n, left_padding={"req1": 0},
+            ["req1"],
+            tkv=chunk_1_n,
+            left_padding={"req1": 0},
             prefix_cache_hit_len={"req1": 0},
         )
         with patch("vllm.v1.core.sched.scheduler.Scheduler.update_from_output"):
@@ -636,3 +638,40 @@ class TestChunkedPrefillSpyreSchedulerUpdateFromOutput:
             "Request must remain in ongoing_prefills until the final prefill "
             "chunk commits, otherwise _prepare_decode will assert."
         )
+
+
+def test_async_chunked_prefill_spyre_scheduler_mro_orders_async_before_scheduler():
+    """ChunkedPrefillSpyreScheduler.schedule must delegate to AsyncScheduler when async."""
+    mro = AsyncChunkedPrefillSpyreScheduler.__mro__
+    assert mro.index(AsyncScheduler) < mro.index(Scheduler)
+
+
+class TestChunkedPrefillFinishRequestsInflight:
+    """finish_requests clears _inflight_prefill_tokens for aborted / finished ids."""
+
+    @pytest.fixture
+    def sync_scheduler(self):
+        with _patch_init(ChunkedPrefillSpyreScheduler):
+            s = ChunkedPrefillSpyreScheduler()
+        _set_common_attrs(s, async_scheduling=False)
+        _set_chunked_prefill_attrs(s)
+        return s
+
+    def test_finish_requests_none_clears_all_inflight(self, sync_scheduler):
+        sync_scheduler._inflight_prefill_tokens = {"a": 1, "b": 2}
+        with patch(
+            "vllm.v1.core.sched.scheduler.Scheduler.finish_requests",
+            return_value=[],
+        ):
+            sync_scheduler.finish_requests(None, RequestStatus.FINISHED_ABORTED)
+        assert sync_scheduler._inflight_prefill_tokens == {}
+
+    def test_finish_requests_tuple_clears_matching_inflight(self, sync_scheduler):
+        sync_scheduler._inflight_prefill_tokens = {"a": 10, "b": 5}
+        with patch(
+            "vllm.v1.core.sched.scheduler.Scheduler.finish_requests",
+            return_value=[],
+        ):
+            sync_scheduler.finish_requests(("a",), RequestStatus.FINISHED_ABORTED)
+        assert "a" not in sync_scheduler._inflight_prefill_tokens
+        assert sync_scheduler._inflight_prefill_tokens["b"] == 5

@@ -17,7 +17,7 @@ import argparse
 import math
 import operator
 import os
-from typing import TYPE_CHECKING, cast, Literal
+from typing import TYPE_CHECKING, Any, cast, Literal
 
 import torch
 import huggingface_hub
@@ -29,17 +29,20 @@ from sendnn_inference.argparse_utils import ConditionalDefaultManager
 if TYPE_CHECKING:
     # NB: We can't eagerly import many things from vllm since vllm.config
     # will import this file. These would lead to circular imports
-    from vllm.config import ModelConfig, VllmConfig
+    from vllm.config import ModelConfig, SchedulerConfig, VllmConfig
     from vllm.pooling_params import PoolingParams
     from vllm.sampling_params import SamplingParams
     from vllm.inputs import EngineInput, TokensInput
+    from vllm.v1.core.sched.scheduler import Scheduler
 else:
     ModelConfig = None
+    SchedulerConfig = None
     VllmConfig = None
     SamplingParams = None
     PoolingParams = None
     EngineInput = None
     TokensInput = None
+    Scheduler = None
 from vllm.platforms import Platform, PlatformEnum
 
 import sendnn_inference.envs as envs_spyre
@@ -147,9 +150,9 @@ class SpyrePlatform(Platform):
     @classmethod
     def get_spyre_scheduler_cls(
         cls,
-        scheduler_config,
+        scheduler_config: "SchedulerConfig",
         is_pooling: bool,
-    ) -> type:
+    ) -> "type[Scheduler] | str":
         """Get the appropriate Spyre scheduler class.
 
         This follows the same pattern as vLLM's upstream
@@ -168,9 +171,23 @@ class SpyrePlatform(Platform):
         Returns:
             The scheduler class to use
         """
-        # If a custom scheduler is explicitly set, use it (str or class both fine)
-        if scheduler_config.scheduler_cls is not None:
-            return scheduler_config.scheduler_cls
+        custom = scheduler_config.scheduler_cls
+        if custom is not None:
+            if isinstance(custom, str):
+                return custom  # vLLM resolves dotted paths during engine init
+            if isinstance(custom, type):
+                from vllm.v1.core.sched.scheduler import Scheduler as VllmScheduler
+
+                if not issubclass(custom, VllmScheduler):
+                    raise TypeError(
+                        "scheduler_cls must be a vLLM Scheduler subclass or a dotted "
+                        f"import path string, got {custom!r}"
+                    )
+                return custom
+            raise TypeError(
+                "scheduler_cls must be a vLLM Scheduler subclass or a dotted import path "
+                f"string, got {custom!r}"
+            )
 
         if is_pooling:
             from sendnn_inference.v1.core.scheduler import PoolingSpyreScheduler
@@ -378,9 +395,14 @@ class SpyrePlatform(Platform):
                 envs_spyre.SENDNN_INFERENCE_DYNAMO_BACKEND,
             )
 
+        selected = scheduler_config.scheduler_cls
+        selected_display = (
+            selected if isinstance(selected, str) else getattr(selected, "__name__", repr(selected))
+        )
         logger.info(
-            "Spyre async scheduling is %s",
-            "enabled" if scheduler_config.async_scheduling else "disabled",
+            "Spyre scheduler class: %s (config async_scheduling=%s)",
+            selected_display,
+            scheduler_config.async_scheduling,
         )
 
         # To disable any paged attention ops in the base scheduler, we:
@@ -773,7 +795,7 @@ class SpyrePlatform(Platform):
         """
         import vllm.tokenizers.registry as tokenizer_registry
 
-        original_get_config = tokenizer_registry.get_config
+        original_get_config = cast(Any, tokenizer_registry).get_config
 
         def safe_get_config(*args, **kwargs):
             try:
