@@ -31,7 +31,7 @@ overrides = [
     { name = "setuptools", specifier = ">=82" },
     { name = "torch", specifier = "==2.11.0", index = "https://download.pytorch.org/whl/cpu" },
     { name = "triton", marker = "sys_platform == 'never'" },
-    { name = "vllm", marker = "platform_machine not in 's390x, ppc64le'", git = "https://github.com/vllm-project/vllm?rev=v0.20.1" },
+    { name = "vllm", marker = "platform_machine not in 's390x, ppc64le'", git = "https://github.com/vllm-project/vllm?rev=v0.20.2" },
 ]
 
 [[package]]
@@ -3994,7 +3994,7 @@ requires-dist = [
     { name = "ibm-fms", specifier = ">=1.9.0,<2" },
     { name = "torch", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torchvision", index = "https://download.pytorch.org/whl/cpu" },
-    { name = "vllm", git = "https://github.com/vllm-project/vllm?rev=v0.20.1" },
+    { name = "vllm", git = "https://github.com/vllm-project/vllm?rev=v0.20.2" },
 ]
 
 [package.metadata.requires-dev]
@@ -4682,8 +4682,8 @@ wheels = [
 
 [[package]]
 name = "vllm"
-version = "0.20.1+cpu"
-source = { git = "https://github.com/vllm-project/vllm?rev=v0.20.1#132765e3560659ff63ebd236203672e991b70e08" }
+version = "0.20.2+cpu"
+source = { git = "https://github.com/vllm-project/vllm?rev=v0.20.2#bc150f50299199599673614f80d12a196f377655" }
 dependencies = [
     { name = "aiohttp" },
     { name = "anthropic" },
