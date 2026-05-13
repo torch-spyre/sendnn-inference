@@ -24,14 +24,22 @@ The scheduler uses continuous batching: new requests are prefilled then join the
 
 **Max batch-tkv limit**: A hardware ceiling on the total KV-cache volume. The product `batch_size × max-tkv` must never exceed this limit at any point during execution.
 
+!!! info
+    The current max batch-tkv limit is **131,072**.
+
 ---
 
 ## Padding
 
 The padding strategy is designed to meet two constraints specific to Spyre:
 
-- **Decode alignment:** All sequences in the decode batch must occupy the same number of KV-cache blocks at every step. Shorter sequences are padded with full dummy blocks on the left. Block 0 is always used for padding, so the memory used for padding is a constant total of 64 bytes.
-- **Prefix caching:** Variable-length left-padding inside a block would corrupt hash-based block comparisons. By aligning prompts to block boundaries (using dummy block ids) we avoid left-padding inside any block, keeping block contents identical for equal token sequences.
+- **Rectangular Decode:** All sequences in the decode batch must occupy the same number of KV-cache blocks at every step, aka the tkv of each request should be in the same block. Shorter sequences are padded with full dummy blocks on the left. Block 0 is always used for padding, so the memory used for padding is a constant total of 64 bytes.
+
+- **Prefill Alignment:** The prefill (which can only be of batch size 1), needs to be chunk-aligned on the right: we cannot have empty blocks on the right. The last block should be at least partially occupied by the prompt.
+
+Additionally, prefix caching introduces a last padding constraint:
+
+- **Prefix caching:** Variable-length left-padding inside a block would corrupt hash-based block comparisons. Prompts are therefore left-aligned to block boundaries — full blocks on the left, padded to the next boundary on the right — so that equal token sequences always produce identical block contents.
 
 ### Prefill padding
 
@@ -70,7 +78,7 @@ In addition to full-block left-padding, we also pad the rightmost block of each 
 
 #### Per-request tkv
 
-Each request's tkv is its left-padding offset plus the number of tokens computed so far, plus one for the token being generated in the current step. The max-tkv for a step is therefore determined by the request with the largest left-padding offset relative to its decode progress.
+Each request's tkv is its left-padding offset plus the number of tokens computed so far, plus one for the token being generated in the current step. Since the decode table is rectangular, and all the tkv values reside in the same block, the max-tkv for a step is therefore determined by the request with the largest offset in the last block.
 
 #### tkv jumping
 
