@@ -2,7 +2,7 @@ import math
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Generic, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Generic, TypeVar, Union, cast
 
 import torch
 from transformers import AutoModel, AutoModelForSequenceClassification, AutoTokenizer
@@ -1573,6 +1573,21 @@ class ChunkedPrefillModelRunner(
             logits,
         )
 
+    def _discard_stale_pending_sample(self, context: str) -> None:
+        """If ``sample_tokens`` never ran after a deferred ``execute_model``, drop stashed logits.
+
+        Warmup cleanup and other **no-token** ``execute_model`` calls must not leave
+        ``_pending_sample`` set or the next real step can desync (silent wrong tokens /
+        shape errors). Call this on every early return that skips ``sample_tokens``.
+        """
+        if self._pending_sample is None:
+            return
+        logger.warning(
+            "Discarding stale _pending_sample (%s); deferred sample_tokens was not run.",
+            context,
+        )
+        self._pending_sample = None
+
     def execute_and_sample(
         self,
         scheduler_output: SchedulerOutput,
@@ -1599,6 +1614,9 @@ class ChunkedPrefillModelRunner(
         self.update_states(scheduler_output)
 
         if not scheduler_output.total_num_scheduled_tokens:
+            # No-work steps (e.g. warmup ``finished_req_ids`` cleanup) skip ``sample_tokens``;
+            # never leave a prior deferred sample stashed.
+            self._discard_stale_pending_sample("empty total_num_scheduled_tokens")
             # Return empty ModelRunnerOutput if there's no work to do.
             return self.get_empty_output()
 
@@ -1638,8 +1656,10 @@ class ChunkedPrefillModelRunner(
         if is_prefill and self.check_incomplete_prefill(scheduler_output):
             # Only return outputs from the driver worker
             if not self.is_driver_worker:
+                self._discard_stale_pending_sample("incomplete prefill non-driver")
                 return self.get_empty_output()
 
+            self._discard_stale_pending_sample("incomplete prefill prefill_output")
             t1 = time.time() - t0
             logger.debug("t_forward_pass: %.2fms [prefill single chunk][batch size 1]", (t1 * 1000))
             return self.prefill_output()
@@ -1665,12 +1685,18 @@ class ChunkedPrefillModelRunner(
         logits, is_prefill, scheduler_output, batch_size, t0 = self._pending_sample
         self._pending_sample = None
 
-        # Prefer grammar passed by the engine's ``sample_tokens`` call; fall back to
-        # ``SchedulerOutput._spyre_grammar_output`` (Spyre scheduler attachment)
-        # so masking matches pre-split behaviour when the argument is omitted.
-        grammar_for_mask = grammar_output or getattr(
-            scheduler_output, "_spyre_grammar_output", None
-        )
+        # Grammar for masking: (1) async/sync engine passes ``grammar_output`` into
+        # ``sample_tokens`` when the grammar future is ready; (2) if ``None``,
+        # ``ChunkedPrefillSpyreScheduler`` may have attached ``_spyre_grammar_output``
+        # on this ``SchedulerOutput`` (see ``scheduler.py``). We use ``hasattr`` so
+        # we never read a missing attribute silently—upstream ``SchedulerOutput`` has
+        # no such field.
+        if grammar_output is not None:
+            grammar_for_mask = grammar_output
+        elif hasattr(scheduler_output, "_spyre_grammar_output"):
+            grammar_for_mask = cast(Any, scheduler_output)._spyre_grammar_output
+        else:
+            grammar_for_mask = None
 
         # Apply grammar bitmask for structured output requests.
         self.apply_grammar_bitmask(
@@ -1737,9 +1763,12 @@ class ChunkedPrefillModelRunner(
     def sampled_output(self, output: SamplerOutput, is_prefill: bool) -> SpyreModelRunnerOutput:
         batch = self.prefill_batch if is_prefill else self.input_batch
         sorted_ids = batch.sorted_requests_ids
-        # vLLM's scheduler indexes ``sampled_token_ids`` by dense row (0..n-1).
-        # ``get_unpadded_output_indices()`` maps physical batch slots and can assign
-        # index 1 when only one sampler row exists — IndexError in scheduler.
+        # ``req_id_to_index`` must be **dense**: indices ``0 .. len(sorted_ids)-1`` with
+        # no gaps, matching one row per entry in ``output.sampled_token_ids`` (same
+        # order as ``sorted_ids``). vLLM's scheduler indexes ``sampled_token_ids[batch_index]``
+        # by that dense row id. A **sparse** map (e.g. physical slot indices with holes,
+        # or ``get_unpadded_output_indices()`` when it skips row 0) leaves batch_index
+        # out of range or mis-aligned tokens → IndexError or wrong request updates.
         req_id_to_index = {rid: i for i, rid in enumerate(sorted_ids)}
         left_padding = {
             req_id: self.requests[req_id].padding_blocks * self.block_size for req_id in sorted_ids

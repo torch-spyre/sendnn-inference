@@ -548,9 +548,10 @@ class SpyreWorker(WorkerBase):
             finished_req_ids=set([r.req_id for r in request]),
             **_get_extra_args(),
         )
-        # No-work step (finished requests only) — runner returns an empty
-        # output directly from execute_model; no sampling needed.
-        self.execute_model(scheduler_output)
+        # No-work step (finished requests only). Use ``_execute_and_sample`` so any
+        # stale ``ChunkedPrefillModelRunner._pending_sample`` is drained consistently
+        # with other warmup paths (``execute_model`` alone can skip ``sample_tokens``).
+        self._execute_and_sample(scheduler_output)
         # satisfy mypy
         model_runner: ChunkedPrefillModelRunner = cast(ChunkedPrefillModelRunner, self.model_runner)
         model_runner.tkv = 0
