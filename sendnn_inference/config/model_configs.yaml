@@ -265,16 +265,6 @@ models:
         max_num_seqs: 32
         device_config: *ministral3_14b_device_config
 
-# Granite Vision 3.3 2B
-  ibm-granite/granite-vision-3.3-2b:
-    architecture: *granite_vision_33_2b_architecture
-    continuous_batching_configs:
-      - tp_size: 1
-        max_model_len: 8192
-        max_num_seqs: 16
-      - tp_size: 2
-        max_model_len: 16384
-        max_num_seqs: 32
 
   # Embedding models (static batching only, no device configs needed)
   ibm-granite/granite-embedding-125m-english:
