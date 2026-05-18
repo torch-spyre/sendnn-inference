@@ -14,7 +14,7 @@ The recommended tool for performance benchmarking is the [vLLM bench CLI tool](h
 
     For multimodal models benchmarking, there are multiple approaches:
 
-    - `vllm bench serve` with a custom multimodal (`custom_mm`) or a random multimodal (`random_mm`) dataset — see [documentation](https://docs.vllm.ai/en/stable/cli/bench/serve/#-dataset-name)
+    - `vllm bench serve` with a custom multimodal (`custom_mm`) or a random multimodal (`random_mm`) dataset — more detailed information is given [below](#multimodal-considerations).
     - `vllm bench mm-processor` which specifically profiles the multimodal input processor pipeline in an offline fashion
 
 How to use `vllm bench serve`:
@@ -79,6 +79,41 @@ When running benchmarks, all requests typically use the same `max-tokens` value 
     1. The `max-tokens` value is the *exact* number of tokens that will be generated. This means measured performance is optimistic and does not reflect what you would observe when setting a larger `max-tokens` value across all requests, because the scheduler doesn't need to account for a worst-case scenario. See the [Max-output-tokens](#max-output-tokens) section in performance tuning below.
 
     2. The number of output tokens in the dataset may differ significantly from what the model would naturally produce if allowed to stop at EOS. Depending on model verbosity, the performance may be very different. This method evaluates the inference stack in isolation, independent of model behavior.
+
+### Multimodal Considerations
+
+Benchmarking multimodal models adds additional configuration complexity. In addition to parameters such as text prompt length and generated output length that also apply to text-only benchmarking, request concurrency, number of multimodal items per request, image-size distribution, and input/output length should all be held constant across runs in order to provide a valid comparison. Changing these parameters changes the amount of multimodal preprocessing, vision encoding, KV-cache pressure, and scheduling pressure, so results are not directly comparable unless these values are kept consistent.
+
+A typical online multimodal benchmark uses the OpenAI chat backend and the chat completions endpoint:
+
+```bash
+vllm bench serve \
+    --backend openai-chat \
+    --model {model} \
+    --endpoint /v1/chat/completions \
+    --dataset-name {custom-mm/random-mm...} \
+    --dataset-path {path to dataset (.json)} \
+    --random-input-len {input-len} \
+    --random-output-len {output-len} \
+    --num-prompts {num-prompts} \
+    --max-concurrency {num-concurrent-users} \
+    --random-mm-limit-mm-per-prompt '{"image": {num-images}, "video": 0}' \
+    --random-mm-bucket-config '{(256, 256, 1): 0.5, (720, 1280, 1): 0.5}'  # this is the current default in vllm
+```
+
+The dataset used will depend on your use case. Prefer a `custom_mm` with a representative request dataset (provided with the `--dataset-path` parameter) for production-like evaluation and the `random-mm` dataset when the goal is to benchmark the inference stack under a controlled synthetic vision workload. See [documentation](https://docs.vllm.ai/en/stable/cli/bench/serve/#-dataset-name) for more details.
+
+Some relevant flags for use with the `random-mm` dataset are:
+
+- **`--random-mm-limit-mm-per-prompt`**: Sets per-request modality limits to control the number of images or videos attached to each request
+
+- **`--random-mm-bucket-config`**: Maps `(height, width, num_frames)` buckets to sampling probabilities; a bucket with num_frames=1 represents an image
+
+See the [vllm documentation](https://docs.vllm.ai/en/stable/benchmarking/cli/#synthetic-random-images-random-mm) for more details on these and other flags.
+
+!!! note
+
+    The image bucket distribution can have a large impact on TTFT and throughput. Larger images generally increase multimodal preprocessing and prefill cost, while a distribution with mixed image sizes can introduce more request-to-request variability.
 
 ## Metrics Description
 
