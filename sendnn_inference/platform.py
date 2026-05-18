@@ -718,7 +718,6 @@ class SpyrePlatform(Platform):
         This creates a local reference, so we must patch the registry module's
         reference directly, not just the source module.
 
-        
         """
         import vllm.tokenizers.registry as tokenizer_registry
 
