@@ -49,6 +49,13 @@ _templates:
      num_hidden_layers: 27
      hidden_size: 1152
      num_attention_heads: 16
+
+  # device config for TP=4 Granite 8b models   
+  granite_vision_2b_device_config: &granite_vision_2b_device_config
+    env_vars:
+      VLLM_DT_MAX_BATCH_TKV_LIMIT: 131072  # 128k
+      FLEX_HDMA_P2PSIZE: 268435456  # 256MB
+      FLEX_HDMA_COLLSIZE: 33554432  # 32MB
      
   llama3_8b_architecture: &llama3_8b_architecture
     model_type: llama
@@ -238,8 +245,11 @@ models:
 
   # Granite Vision 3.3 2B
   ibm-granite/granite-vision-3.3-2b:
-    architecture: 
-      <<: *granite_vision_33_2b_architecture
+    architecture: *granite_vision_33_2b_architecture
+    continuous_batching_configs:
+      - tp_size: 1
+        max_model_len: 8192
+        max_num_seqs: 16
         
   # Mistral Small 3.2 24B Instruct
   mistralai/Mistral-Small-3.2-24B-Instruct-2506:
