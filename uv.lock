@@ -1361,7 +1361,7 @@ wheels = [
 
 [[package]]
 name = "ibm-fms"
-version = "1.10.1"
+version = "1.11.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "torch", version = "2.11.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "platform_machine != 'aarch64' and sys_platform == 'darwin'" },
@@ -1369,7 +1369,7 @@ dependencies = [
     { name = "transformers" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8f/67/5ed2883ad8541a4dcaf127d297b5ab85e15f9a84131fc306e33296e4cb05/ibm_fms-1.10.1-py3-none-any.whl", hash = "sha256:ff0a16f74649a461f8840a9355d84461f5e97563eca8f6bc3677755cfc5a9738", size = 245183 },
+    { url = "https://files.pythonhosted.org/packages/3f/bd/8e82be45a9906192ad396d978d3c8d5cbab6a2f8d398306a27cebf146d95/ibm_fms-1.11.0-py3-none-any.whl", hash = "sha256:9b949c94c91719bef560a06774a040f10366351ef1186283f34c5c50bb618e38", size = 250079 },
 ]
 
 [[package]]
