@@ -267,7 +267,8 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         - Increments the decode step counter
         - Validates state at the first decode step
         - Preempts 2nd and last request at decode step 100
-        - Restores preempted requests at decode step 200
+        - Restores first preempted request at decode step 200
+        - Restores second preempted request at decode step 230
         """
         self.total_decode_steps += 1
         logger.info("Total decode steps executed: %d", self.total_decode_steps)
@@ -288,8 +289,8 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             )
         
         # Preempt 2nd and last request at decode step 100
-        if self.total_decode_steps == 100 and len(self.running) >= 2:
-            assert len(self.running) == 4, f"Expecting four decoding requests at step 100"
+        if self.total_decode_steps == 100:
+            assert len(self.running) == 4, f"Expecting four decoding requests at step 100, got {len(self.running)}"
             
             # Store the 2nd request (index 1) and last request (index -1)
             second_request = self.running[1]
@@ -300,12 +301,23 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             logger.info("Decode step 100: Preempted 2nd and last request from running queue. "
                         f"Preempted request IDs: {[r.request_id for r in self.preempted_requests]}")
         
-        # Restore preempted requests at decode step 200
-        if self.total_decode_steps == 200 and self.preempted_requests:
-            self.running.extend(self.preempted_requests)
-            logger.info("Decode step 200: Restored preempted requests to running queue. "
-                      f"Restored request IDs: {[r.request_id for r in self.preempted_requests]}")
-            self.preempted_requests = []
+        # Restore first preempted request at decode step 200
+        if self.total_decode_steps == 200:
+            assert len(self.preempted_requests) == 2, f"Expecting two preempted requests at step 200, got {len(self.preempted_requests)}"
+            first_request = self.preempted_requests[0]
+            self.running.append(first_request)
+            logger.info("Decode step 200: Restored first preempted request to running queue. "
+                      f"Restored request ID: {first_request.request_id}")
+            self.preempted_requests = self.preempted_requests[1:]
+        
+        # Restore second preempted request at decode step 230
+        if self.total_decode_steps == 230:
+            assert len(self.preempted_requests) == 1, f"Expecting one preempted request at step 230, got {len(self.preempted_requests)}"
+            second_request = self.preempted_requests[0]
+            self.running.append(second_request)
+            logger.info("Decode step 230: Restored second preempted request to running queue. "
+                      f"Restored request ID: {second_request.request_id}")
+            self.preempted_requests = self.preempted_requests[1:]
 
     def schedule(self) -> "SchedulerOutput":
         """
