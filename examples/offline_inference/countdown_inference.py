@@ -3,13 +3,13 @@ This example shows how to run offline inference with countdown prompts.
 All parameters are hardcoded for the granite-3.3-8b-instruct model.
 """
 
+import argparse
 import os
 import platform
 import time
 
 import re
 
-os.environ["VLLM_LOGGING_LEVEL"] = "DEBUG"
 
 from vllm import LLM, SamplingParams
 
@@ -68,6 +68,19 @@ def validate_countdown(generated_text: str, prompt: str) -> dict:
     }
 
 if __name__ == "__main__":
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(
+        description="Run offline inference with countdown prompts"
+    )
+    parser.add_argument(
+        "--backend",
+        type=str,
+        choices=["eager", "sendnn"],
+        default="sendnn",
+        help="Backend to use for inference (default: sendnn)"
+    )
+    args = parser.parse_args()
+    
     # Hardcoded configuration
     MODEL = "ibm-granite/granite-3.3-8b-instruct"
     MAX_MODEL_LEN = 4096
@@ -76,7 +89,7 @@ if __name__ == "__main__":
     MAX_TOKENS = 300
     ENABLE_PREFIX_CACHING = True
     MAX_NUM_BATCHED_TOKENS = 512
-    BACKEND = "sendnn"
+    BACKEND = args.backend
 
     if platform.machine() == "arm64":
         print(
@@ -94,6 +107,8 @@ if __name__ == "__main__":
     os.environ["SENDNN_INFERENCE_DYNAMO_BACKEND"] = BACKEND
     os.environ["SENDNN_INFERENCE_CP_INTERLEAVE_STEPS"] = "0"
 
+    print(f"Backend: {BACKEND}")
+    
     # Create countdown prompts with actual countdown values
     prompts = [
         " ".join(str(i) for i in range(200, 180, -1)) + " ",
