@@ -106,6 +106,18 @@ jobs:
               hf_model_2_rev: "cf74d8acd4f198de950bf004b262e6accfed5d2c"
             os: "ubuntu-latest"
             python_version: "3.12"
+          - vllm_version:
+              name: "vLLM:0.20.2"
+              repo: "git+https://github.com/vllm-project/vllm --tag v0.20.2"
+            test_suite:
+              name: "backward compat"
+              markers: "compat or (cpu and basic and not quantized)"
+              flags: "--timeout=300"
+              hf_model_2: "sentence-transformers/all-roberta-large-v1"
+              hf_model_2_rev: "cf74d8acd4f198de950bf004b262e6accfed5d2c"
+            os: "ubuntu-latest"
+            python_version: "3.12"
+
 
         # Only run vllm:main jobs on PRs with `vllm:main` label
         exclude: >-

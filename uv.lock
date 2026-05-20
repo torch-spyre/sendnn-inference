@@ -30,7 +30,7 @@ overrides = [
     { name = "setuptools", specifier = ">=82" },
     { name = "torch", specifier = "==2.11.0", index = "https://download.pytorch.org/whl/cpu" },
     { name = "triton", marker = "sys_platform == 'never'" },
-    { name = "vllm", marker = "platform_machine not in 's390x, ppc64le'", git = "https://github.com/vllm-project/vllm?rev=v0.20.2" },
+    { name = "vllm", marker = "platform_machine not in 's390x, ppc64le'", git = "https://github.com/vllm-project/vllm?rev=v0.21.0" },
 ]
 
 [[package]]
@@ -1339,7 +1339,7 @@ wheels = [
 
 [[package]]
 name = "ibm-fms"
-version = "1.10.1"
+version = "1.11.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "torch", version = "2.11.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "platform_machine != 'aarch64' and sys_platform == 'darwin'" },
@@ -1347,7 +1347,7 @@ dependencies = [
     { name = "transformers" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8f/67/5ed2883ad8541a4dcaf127d297b5ab85e15f9a84131fc306e33296e4cb05/ibm_fms-1.10.1-py3-none-any.whl", hash = "sha256:ff0a16f74649a461f8840a9355d84461f5e97563eca8f6bc3677755cfc5a9738", size = 245183, upload-time = "2026-04-29T16:41:44.81Z" },
+    { url = "https://files.pythonhosted.org/packages/3f/bd/8e82be45a9906192ad396d978d3c8d5cbab6a2f8d398306a27cebf146d95/ibm_fms-1.11.0-py3-none-any.whl", hash = "sha256:9b949c94c91719bef560a06774a040f10366351ef1186283f34c5c50bb618e38", size = 250079, upload-time = "2026-05-20T14:20:31.472Z" },
 ]
 
 [[package]]
@@ -1798,7 +1798,7 @@ wheels = [
 
 [[package]]
 name = "mistral-common"
-version = "1.11.1"
+version = "1.11.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jsonschema" },
@@ -1810,9 +1810,9 @@ dependencies = [
     { name = "tiktoken" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7d/15/12076a58b9dde4ad486b6de4afd2dfe3e8226fd049ef44553892e62f2e92/mistral_common-1.11.1.tar.gz", hash = "sha256:b784e1f9141bbcb26ab1f61b724c709f08cd3543e81730cb7248721499491840", size = 6356869, upload-time = "2026-04-29T07:24:43.234Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c2/eb/12167a1bea9714582e5b4f539f9c019323363e314a499c72855ff0e5ad43/mistral_common-1.11.2.tar.gz", hash = "sha256:79f68fc2d1190f28637f40e053f919c8c2697e00b2aa679ddee562a95183f4ad", size = 6357845, upload-time = "2026-05-04T19:47:40.413Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c3/6d/ab384c8b772390426472b623b85135e9b5f159ab31a21d87a6d46819d386/mistral_common-1.11.1-py3-none-any.whl", hash = "sha256:797fded812139069d359fc08a1a66bf994555e10bb51b613941281b91ee07135", size = 6531421, upload-time = "2026-04-29T07:24:40.516Z" },
+    { url = "https://files.pythonhosted.org/packages/47/f0/6a5d604b972e442b9d36c117d01788feddad099e4965699e3516ee6fefc3/mistral_common-1.11.2-py3-none-any.whl", hash = "sha256:ebb42062cd705a0aa2bc69b4cde2b83d446ae58150b7e29322c90cb08fcfca6c", size = 6531968, upload-time = "2026-05-04T19:47:37.718Z" },
 ]
 
 [package.optional-dependencies]
@@ -3874,7 +3874,7 @@ requires-dist = [
     { name = "ibm-fms", specifier = ">=1.9.0,<2" },
     { name = "torch", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torchvision", index = "https://download.pytorch.org/whl/cpu" },
-    { name = "vllm", git = "https://github.com/vllm-project/vllm?rev=v0.20.2" },
+    { name = "vllm", git = "https://github.com/vllm-project/vllm?rev=v0.21.0" },
 ]
 
 [package.metadata.requires-dev]
@@ -4531,8 +4531,8 @@ wheels = [
 
 [[package]]
 name = "vllm"
-version = "0.20.2+empty"
-source = { git = "https://github.com/vllm-project/vllm?rev=v0.20.2#bc150f50299199599673614f80d12a196f377655" }
+version = "0.21.0+empty"
+source = { git = "https://github.com/vllm-project/vllm?rev=v0.21.0#ad7125a431e176d4161099480a66f0169609a690" }
 dependencies = [
     { name = "aiohttp" },
     { name = "anthropic" },
