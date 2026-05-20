@@ -1,6 +1,13 @@
 """
-This example shows how to run offline inference with countdown prompts.
-All parameters are hardcoded for the granite-3.3-8b-instruct model.
+This is a small script that runs inference with four prompts of decremented integers:
+
+1. "200 199 198 197 196... 181"
+2. "150 149 148 147 146... 130"
+3. "1000 1999 1998 1997... 980"
+4. "500 499 498 497 ... 480"
+
+because it is basically counting, this makes sure the output tokens are deterministic
+we check model correctness by checking if the counting (decrementation) is correct
 """
 
 import argparse
