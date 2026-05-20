@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, Callable
 import torch
 from vllm.logger import init_logger
 
-from sendnn_inference.utils import parse_cpu_mm_dtype
+from sendnn_inference.utils import parse_cpu_mm_dtype, parse_mm_device
 
 if TYPE_CHECKING:
     SENDNN_INFERENCE_DYNAMO_BACKEND: str = "sendnn"
@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     SENDNN_INFERENCE_REQUIRE_KNOWN_CONFIG: bool = False
     SENDNN_INFERENCE_MODEL_CONFIG_FILE: str | None = None
     SENDNN_INFERENCE_CPU_MM_DTYPE: torch.dtype = torch.float16
+    SENDNN_INFERENCE_MM_DEVICE: str = "auto"
 
 logger = init_logger(__name__)
 
@@ -151,6 +152,22 @@ environment_variables: dict[str, Callable[[], Any]] = {
             "SENDNN_INFERENCE_CPU_MM_DTYPE",
             _CPU_MM_DTYPE_PLATFORM_DEFAULTS.get(platform.machine(), "float16"),
         )
+    ),
+    # Device used to execute the multimodal vision_tower / multi_modal_projector.
+    # "auto" (default) routes the encoder to the Telum through the torch_nnpa
+    # privateuse1 backend when torch_nnpa is importable, and falls back silently
+    # to CPU otherwise. "cpu" forces CPU execution. "nnpa" forces NNPA and raises
+    # ImportError if torch_nnpa is missing. This setting only resolves intent;
+    # torch_nnpa is not imported here. The privateuse1 backend is registered
+    # lazily -- and only for multimodal models -- at vision-weight placement via
+    # utils.ensure_nnpa_registered(), which also registers the
+    # PrivateUse1HooksInterface that PyTorch autoload would normally provide (this
+    # plugin sets TORCH_DEVICE_BACKEND_AUTOLOAD=0 in __init__ to keep that
+    # autoload from crashing worker startup). If nnpa cannot be fully registered,
+    # the vision tower falls back to CPU. The LLM forward continues to run on
+    # Spyre via torch.compile(backend="sendnn") regardless.
+    "SENDNN_INFERENCE_MM_DEVICE": lambda: parse_mm_device(
+        os.getenv("SENDNN_INFERENCE_MM_DEVICE", "auto")
     ),
 }
 # --8<-- [end:env-vars-definition]
