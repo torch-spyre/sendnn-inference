@@ -253,15 +253,42 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         # Otherwise just account for the left padding
         return computed_tokens - left_padding
 
+    def get_required_blocks(self, request: Request) -> tuple[int, int, bool]:
+        assert request.prompt_token_ids is not None
+        assert (
+            request.sampling_params is not None and request.sampling_params.max_tokens is not None
+        )
+        max_tokens = len(request.prompt_token_ids) + request.sampling_params.max_tokens
+        max_tokens = min(self.max_model_len, max_tokens)
 
-    def get_blocks_required_for_decode_batch(self) -> int:
+        total_blocks = math.ceil(max_tokens / self.block_size)
+
+        block_ids_per_kv_cache_group = self.kv_cache_manager.get_block_ids(request.request_id)
+        assert len(block_ids_per_kv_cache_group) == 1
+        used_blocks = len(block_ids_per_kv_cache_group[0])
+
+        total_tokens = request.num_tokens
+        # the request will get a new block in the next iteration
+        needs_new_block_now = total_tokens < max_tokens and total_tokens % 64 == 0
+
+        return total_blocks, used_blocks, needs_new_block_now
+
+    def get_blocks_required_for_decode_batch(self, before_allocation: bool = True) -> int:
         """
         Returns the number of blocks that the current decode batch needs to
         finish all requests. Reducing the number of available blocks below
         this number will cause deadlocks.
         """
-        raise NotImplementedError()
-        
+        # Warning, depending on when this function is called, self.running
+        # might be out of sync with the worker's input_batch
+        required_blocks = 0
+        for request in self.running:
+            total_blocks, used_blocks, needs_new_block_now = self.get_required_blocks(request)
+            required_blocks += (
+                total_blocks - used_blocks + int(before_allocation and needs_new_block_now)
+            )
+
+        return required_blocks
 
     def schedule(self) -> "SchedulerOutput":
         """
