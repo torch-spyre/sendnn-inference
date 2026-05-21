@@ -1485,7 +1485,6 @@ class ChunkedPrefillModelRunner(
             )
             self.add_new_request(scheduler_output.scheduled_new_reqs[0])
 
-
     def apply_grammar_bitmask(
         self,
         scheduler_output: "SchedulerOutput",
