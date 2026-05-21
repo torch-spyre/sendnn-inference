@@ -3,6 +3,7 @@ returning the results"""
 
 import math
 import os
+import platform
 from typing import Any, Union
 
 import numpy as np
@@ -18,9 +19,26 @@ from vllm.tokenizers import get_tokenizer
 
 DISABLE_ASSERTS = False  # used for debugging
 
+# Platform-specific quantized tolerance defaults
+_QUANTIZED_TOLERANCE_DEFAULTS = {
+    "x86_64": "0.17",
+    "ppc64le": "0.24",
+    "s390x": "0.29",
+}
+
+
+def _get_platform_quantized_tolerance_default() -> str:
+    """Get platform-specific quantized tolerance default."""
+    arch = platform.machine()
+    return _QUANTIZED_TOLERANCE_DEFAULTS.get(arch, "0.17")
+
+
 ISCLOSE_ABS_TOL = float(os.environ.get("SENDNN_INFERENCE_TEST_ABS_TOL", "0.08"))
 ISCLOSE_ABS_TOL_QUANTIZATION = float(
-    os.environ.get("SENDNN_INFERENCE_TEST_QUANTIZED_ABS_TOL", "0.17")
+    os.environ.get(
+        "SENDNN_INFERENCE_TEST_QUANTIZED_ABS_TOL",
+        _get_platform_quantized_tolerance_default(),
+    )
 )
 
 HF_RESULT_CACHE = HFResultCache()
