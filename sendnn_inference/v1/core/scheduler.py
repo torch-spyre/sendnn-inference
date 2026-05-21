@@ -273,6 +273,11 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         while self.skipped_waiting:
             holdback_queue.append(self.skipped_waiting.pop_request())
 
+        # Sort by prompt length ascending so shorter requests are scheduled
+        # first, maximising homogeneous-batch opportunities (may starve long
+        # requests indefinitely — intentional for experimentation).
+        holdback_queue = deque(sorted(holdback_queue, key=lambda r: r.num_prompt_tokens))
+
         # Check if new requests can be scheduled for prefill
         while holdback_queue:
             if self.can_schedule_prefill(holdback_queue[0]):
