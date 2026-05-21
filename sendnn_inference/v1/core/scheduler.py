@@ -253,6 +253,16 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         # Otherwise just account for the left padding
         return computed_tokens - left_padding
 
+
+    def get_block_required_for_decode_batch(self) -> int:
+        """
+        Returns the number of blocks that the current decode batch needs to
+        finish all requests. Reducing the number of available blocks below
+        this number will cause deadlocks.
+        """
+        raise NotImplementedError()
+        
+
     def schedule(self) -> "SchedulerOutput":
         """
         The chunked prefill scheduling policy is enforced in this method, then
