@@ -254,7 +254,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         return computed_tokens - left_padding
 
 
-    def get_block_required_for_decode_batch(self) -> int:
+    def get_blocks_required_for_decode_batch(self) -> int:
         """
         Returns the number of blocks that the current decode batch needs to
         finish all requests. Reducing the number of available blocks below
