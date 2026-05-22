@@ -452,7 +452,6 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         in the decode batch, and if all the other spyre-related conditions
         are satisfied."""
         decoding_requests = [r for r in self.running if r not in self.ongoing_prefills]
-        max_context_len = self.model_config.max_model_len
 
         # check that there is space in the current decode batch
         num_running = len(decoding_requests)
@@ -467,33 +466,16 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         n_blocks = math.floor(max(self.tkv, prompt_len) / self.block_size)
         new_req_tkv = n_blocks * self.block_size + prompt_len % self.block_size
 
-        # check that the number of requested tokens can be served for the
-        # new sequence (optimal condition)
-        # note that the -1 comes from the token we generate during prefill
-        cond2 = request.max_tokens - 1 <= (max_context_len - new_req_tkv)
-        # check cond2 for all other sequences in the current decode batch
-        for req in decoding_requests:
-            # current tkv of the (left aligned) decode sequence
-            dec_req_tkv = n_blocks * self.block_size + req.num_computed_tokens % self.block_size
-            n_generated_output_tokens = req.num_computed_tokens - req.num_prompt_tokens
-            max_tokens_remaining = req.max_tokens - n_generated_output_tokens
-            # note that the -1 comes from the token we generate during prefill
-            cond2_current = max_tokens_remaining - 1 <= (max_context_len - dec_req_tkv)
-            cond2 = cond2 and cond2_current
-            # early exiting loop if violated 2nd condition
-            if not cond2:
-                return False
-
         # check that batch size x tkv is smaller than the max supported number
         # Note: using max_tkv is a conservative upper bound here. For the
         # optimal check we need model runner to return per sequence tkvs
-        cond3 = lambda: self.check_batch_tkv_limit_cp(
+        cond2 = lambda: self.check_batch_tkv_limit_cp(
             request=request,
             new_req_tkv=new_req_tkv,
             running=decoding_requests,
         )
 
-        return cond1 and cond2 and cond3()
+        return cond1 and cond2()
 
     def _has_scheduling_priority(self, request):
         decoding_requests = [r for r in self.running if r not in self.ongoing_prefills]
