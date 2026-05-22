@@ -25,6 +25,8 @@ if TYPE_CHECKING:
     SENDNN_INFERENCE_REQUIRE_KNOWN_CONFIG: bool = False
     SENDNN_INFERENCE_MODEL_CONFIG_FILE: str | None = None
     SENDNN_INFERENCE_CPU_MM_DTYPE: torch.dtype = torch.float16
+    SENDNN_INFERENCE_MAX_TKV_SHIFT_RATIO: float = 1.5
+    SENDNN_INFERENCE_MAX_SKIP_COUNT: int = 4
 
 logger = init_logger(__name__)
 
@@ -151,6 +153,21 @@ environment_variables: dict[str, Callable[[], Any]] = {
             "SENDNN_INFERENCE_CPU_MM_DTYPE",
             _CPU_MM_DTYPE_PLATFORM_DEFAULTS.get(platform.machine(), "float16"),
         )
+    ),
+    # Chunked-prefill scheduling: soft admission gate on decode-tkv shift.
+    # When a new prefill candidate would move the decode-batch tkv by more
+    # than this ratio (new_tkv / current_tkv), the candidate is skipped in
+    # favor of the next one in the waiting queue. Set to a large value
+    # (e.g. math.inf) to disable and restore strict FIFO admission.
+    "SENDNN_INFERENCE_MAX_TKV_SHIFT_RATIO": lambda: float(
+        os.getenv("SENDNN_INFERENCE_MAX_TKV_SHIFT_RATIO", "1.5")
+    ),
+    # Chunked-prefill scheduling: anti-starvation bound for the shift-ratio
+    # gate above. A waiting request that has been skipped this many
+    # scheduling cycles is force-admitted on the next prefill slot
+    # regardless of tkv shift.
+    "SENDNN_INFERENCE_MAX_SKIP_COUNT": lambda: int(
+        os.getenv("SENDNN_INFERENCE_MAX_SKIP_COUNT", "4")
     ),
 }
 # --8<-- [end:env-vars-definition]
