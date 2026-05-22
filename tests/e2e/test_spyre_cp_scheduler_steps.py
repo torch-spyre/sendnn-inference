@@ -33,12 +33,13 @@ def test_prefill_tkv_too_big(
     max_num_batched_tokens: int,
     available_blocks: int,
 ):
-    """Scenario where the requested prompt is too long for current tkv value
+    """Here we ensure that the tkv never goes beyond max_model_len, even in an
+    edge case.
 
-    Note that as we could prefill the prompt straight away, however,
-    in this test the max model length is decreased to a value where
-    the tkv of the decode batch would be shifted beyond the max model length,
-    we therefore have to wait with scheduling.
+    Edge case: due to a long-prompt joining the decode batch, the currently
+    decoding request needs to be left-padded, bringing the max-tokens beyond
+    max-model-len. We make sure the left-padding is removed on time when
+    expanding to a new block, keeping the tkv in acceptable range always.
 
     Configuration:
         * max_num_seqs: 2
