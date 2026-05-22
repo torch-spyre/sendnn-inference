@@ -7,7 +7,12 @@ Run `python -m pytest tests/e2e/test_spyre_cp_inference_steps.py`.
 """
 
 import pytest
-from scheduling_utils import check_scheduler_inference_steps
+from scheduling_utils import (
+    check_scheduler_inference_steps,
+    create_request_for_scheduler_test,
+    random_prompt,
+    validate_scheduler_steps,
+)
 from spyre_util import ModelInfo
 
 
@@ -38,13 +43,27 @@ def test_prefill_tkv_too_big(
     Configuration:
         * max_num_seqs: 2
         * number of prompts: 2
-            * 0: len = 49, max tokens = 17, step joining = 0
-            * 1: len = 70, max tokens = 17, step joining = 0
+            * 0: len = 60, max tokens = 10, step joining = 0
+            * 1: len = 111, max tokens = 17, step joining = 0
     """
 
-    seqs_max_tokens = [17, 17]
-    prompts_lengths = [49, 70]
-    steps_add_reqs = [0, 0]
+    request1 = create_request_for_scheduler_test(
+        model=model,
+        request_id=0,
+        add_step=0,
+        max_tokens=10,
+        prompt=random_prompt(model=model, seed=0, length=60),
+        use_golden_token_injection=True,
+    )
+
+    request2 = create_request_for_scheduler_test(
+        model=model,
+        request_id=1,
+        add_step=0,
+        max_tokens=17,
+        prompt=random_prompt(model=model, seed=0, length=111),
+        use_golden_token_injection=True,
+    )
 
     checked_steps = [
         {
@@ -57,66 +76,87 @@ def test_prefill_tkv_too_big(
         },
         {
             # Prefill sequence 0
-            # total blocks in use: 1
             "step": 1,
-            "tkv": 49,  # prompt len
+            "tkv": 60,
             "waiting": ["1"],
             "running": ["0"],
             "request_outputs": ["0"],
             "n_used_blocks": 1,
         },
-        # Here we cannot schedule sequence 1. By shifting sequence 0 by
-        # 1 block its max tkv would exceed the max model length
         {
             # Decode sequence 0
-            # total blocks in use: 1 (writing into right pads)
             "step": 2,
-            "tkv": 50,
+            "tkv": 61,
             "waiting": ["1"],
             "running": ["0"],
             "request_outputs": ["0"],
             "n_used_blocks": 1,
         },
         {
-            # Prefill sequence 1, tkv large enough to prefill w/o tkv shift
-            # total blocks in use: 1 + 2
-            "step": 17,
-            # add 64 to tkv of seq 0 (64) to have it in the same block as seq 1
-            "tkv": 128,
+            # Prefill sequence 1
+            # Due to left-padding of sequence 0, we now have tkv = 64 + 61
+            "step": 3,
+            "tkv": 125,
             "waiting": [],
             "running": ["1", "0"],
             "request_outputs": ["1"],
-            # 2 + 2 (prefill (2 block) + 17 decodes in the last block)
             "n_used_blocks": 3,
         },
         {
             # Decode sequences 0 and 1
+            "step": 4,
+            "tkv": 126,
+            "waiting": [],
+            "running": ["1", "0"],
+            "request_outputs": ["1", "0"],
+            "n_used_blocks": 3,
+        },
+        {
+            # Decode sequences 0 and 1
+            # Last step before tkv would overflow max_context_length
+            "step": 6,
+            "tkv": 128,
+            "waiting": [],
+            "running": ["1", "0"],
+            "request_outputs": ["1", "0"],
+            "n_used_blocks": 3,
+        },
+        {
+            # Decode sequences 0 and 1
+            # Sequence 0 now needs two blocks. Instead of adding one on the
+            # right (which would overflow the tkv), we remove it's left-padding
+            # block, bringing back the tkv to a satisfactory value
+            "step": 7,
+            "tkv": 115,  # corresponds now to tkv of request 1
+            "waiting": [],
+            "running": ["1", "0"],
+            "request_outputs": ["1", "0"],
+            "n_used_blocks": 4,
+        },
+        {
+            # Decode sequences 0 and 1
             # Sequence 0 finishes
-            "step": 18,
-            # remove left padding of seq 0, and keep its tkv in the same block
-            # as seq 1: 129 - 64 = 65
-            # tkv of seq 1 is now max
-            "tkv": 71,
+            "step": 11,
+            "tkv": 119,
             "waiting": [],
             "running": ["1"],
             "request_outputs": ["1", "0"],
             "finished_requests": ["0"],
-            "n_used_blocks": 2,  # seq 0 needs another block for the last token
+            "n_used_blocks": 2,
         },
         {
-            # Decode sequence 1
-            # total blocks in use: 4 - 2 = 2
-            "step": 19,
-            "tkv": 72,
+            # Decode sequences 1
+            "step": 12,
+            "tkv": 120,
             "waiting": [],
             "running": ["1"],
             "request_outputs": ["1"],
             "n_used_blocks": 2,
         },
         {
-            # Sequence 1 finishes at step 33
-            "step": 33,
-            "tkv": 86,
+            # Sequence 1 finishes
+            "step": 19,
+            "tkv": 127,
             "waiting": [],
             "running": [],
             "request_outputs": ["1"],
@@ -125,7 +165,7 @@ def test_prefill_tkv_too_big(
         },
         {
             # Tkv should be cleared one step later
-            "step": 34,
+            "step": 20,
             "tkv": 0,
             "waiting": [],
             "running": [],
@@ -134,13 +174,11 @@ def test_prefill_tkv_too_big(
         },
     ]
 
-    check_scheduler_inference_steps(
+    validate_scheduler_steps(
         model=model,
         backend=backend,
         monkeypatch=monkeypatch,
-        seqs_max_tokens=seqs_max_tokens,
-        prompts_lengths=prompts_lengths,
-        steps_add_reqs=steps_add_reqs,
+        requests=[request1, request2],
         checked_steps=checked_steps,
         max_num_seqs=max_num_seqs,
         max_model_len=max_model_len,
