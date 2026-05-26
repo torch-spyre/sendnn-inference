@@ -49,7 +49,18 @@ _templates:
      num_hidden_layers: 27
      hidden_size: 1152
      num_attention_heads: 16
-     
+
+  ggranite_vision_2b_tp2_device_config: &granite_vision_2b_tp2_device_config
+    env_vars:
+      VLLM_DT_MAX_BATCH_TKV_LIMIT: 131072  # 128k
+
+  granite_vision_2b_tp4_device_config: &granite_vision_2b_tp4_device_config
+    env_vars:
+      VLLM_DT_MAX_BATCH_TKV_LIMIT: 131072  # 128k
+      FLEX_HDMA_P2PSIZE: 268435456  # 256MB
+      FLEX_HDMA_COLLSIZE: 33554432  # 32MB
+    num_gpu_blocks_override: 8192
+
   llama3_8b_architecture: &llama3_8b_architecture
     model_type: llama
     num_hidden_layers: 32
@@ -246,6 +257,11 @@ models:
       - tp_size: 2
         max_model_len: 16382
         max_num_seqs: 16
+        device_config: *granite_vision_2b_tp2_device_config
+      - tp_size: 4
+        max_model_len: 32768
+        max_num_seqs: 32
+        device_config: *granite_vision_2b_tp4_device_config
         
   # Mistral Small 3.2 24B Instruct
   mistralai/Mistral-Small-3.2-24B-Instruct-2506:
