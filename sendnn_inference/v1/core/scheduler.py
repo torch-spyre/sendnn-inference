@@ -2,12 +2,14 @@
 
 import math
 from collections import deque
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Iterable, Union
 
 from vllm.logger import init_logger
 from vllm.v1.core.sched.scheduler import Scheduler
 from vllm.v1.metrics.stats import SchedulerStats
 from vllm.v1.request import Request, RequestStatus
+from vllm.v1.core.kv_cache_manager import KVCacheBlocks
 
 import sendnn_inference.envs as envs_spyre
 from sendnn_inference.platform import SpyrePlatform
@@ -141,6 +143,20 @@ class PoolingSpyreScheduler(SpyreScheduler):
         ]
 
 
+@dataclass
+class BlockAllocationParams:
+    """Parameters for block allocation. See KVCacheManager.allocate_slots()"""
+
+    original_request_computed_tokens: int
+    num_new_tokens: int
+    num_new_computed_tokens: int
+    new_computed_blocks: KVCacheBlocks | None
+    num_lookahead_tokens: int
+    num_external_computed_tokens: int
+    delay_cache_blocks: bool
+    num_encoder_tokens: int
+
+
 class ChunkedPrefillSpyreScheduler(SpyreScheduler):
     """
     Chunked-Prefill Scheduling policy
@@ -253,6 +269,121 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         # Otherwise just account for the left padding
         return computed_tokens - left_padding
 
+    def _get_block_params_for_request(
+        self, request: Request, max_output: bool = False
+    ) -> BlockAllocationParams:
+        """
+        Returns the block parameters for the given request.
+        """
+        # This basically replicates what the scheduler already does, but
+        # scattered all over the place in `schedule()`
+        if request.num_computed_tokens == 0:
+            new_computed_blocks, num_new_local_computed_tokens = (
+                self.kv_cache_manager.get_computed_blocks(request)
+            )
+            num_computed_tokens = num_new_local_computed_tokens
+        else:
+            new_computed_blocks = self.kv_cache_manager.empty_kv_cache_blocks
+            num_new_local_computed_tokens = 0
+            num_computed_tokens = request.num_computed_tokens
+
+        num_tokens = request.num_tokens
+        if max_output:
+            assert request.sampling_params is not None
+            assert request.sampling_params.max_tokens is not None
+            prompt_tokens = request.num_prompt_tokens
+            max_tokens = request.sampling_params.max_tokens
+            num_tokens = prompt_tokens + max_tokens
+
+        num_new_tokens = num_tokens - num_computed_tokens
+
+        num_encoder_tokens = 0
+        if self.is_encoder_decoder and request.has_encoder_inputs:
+            # Max: for now I think each request gets the full encoder budget
+            # since we don't prefill more than request at a time
+            encoder_compute_budget = self.max_num_encoder_input_tokens
+            token_budget = self.max_num_scheduled_tokens
+            num_new_prompt_tokens = request.num_tokens - num_computed_tokens
+            num_new_prompt_tokens = min(num_new_prompt_tokens, token_budget)
+            (
+                encoder_inputs_to_schedule,
+                updated_new_prompt_tokens,
+                new_encoder_compute_budget,
+                external_load_encoder_input,
+            ) = self._try_schedule_encoder_inputs(
+                request,
+                num_computed_tokens,
+                num_new_prompt_tokens,
+                encoder_compute_budget,
+                shift_computed_tokens=1 if self.use_eagle else 0,
+            )
+            if updated_new_prompt_tokens != num_new_prompt_tokens:
+                # TODO: improve handling of this case
+                raise ValueError("Encoder request cannot be scheduled")
+
+            if encoder_inputs_to_schedule:
+                num_encoder_tokens = sum(
+                    request.get_num_encoder_embeds(i) for i in encoder_inputs_to_schedule
+                )
+
+        return BlockAllocationParams(
+            original_request_computed_tokens=request.num_computed_tokens,
+            num_new_tokens=num_new_tokens,
+            num_new_computed_tokens=num_new_local_computed_tokens,
+            new_computed_blocks=new_computed_blocks,
+            num_lookahead_tokens=0,  # we don't support spec decoding
+            num_external_computed_tokens=0,  # we don't support KV cache transfers
+            delay_cache_blocks=False,  # we don't support KV cache loading
+            num_encoder_tokens=num_encoder_tokens,
+        )
+
+    def _are_blocks_available(self, request: Request, block_params: BlockAllocationParams) -> bool:
+        """
+        Checks if there are enough blocks for this request to run
+        until it's max-tokens are reached.
+        """
+        full_num_tokens = min(block_params.num_new_tokens, self.max_model_len)
+        num_local_computed_tokens = (
+            request.num_computed_tokens + block_params.num_new_computed_tokens
+        )
+        total_computed_tokens = min(num_local_computed_tokens, self.max_model_len)
+        num_blocks_to_allocate = self.kv_cache_manager.coordinator.get_num_blocks_to_allocate(
+            request_id=request.request_id,
+            num_tokens=full_num_tokens,
+            new_computed_blocks=block_params.new_computed_blocks.blocks,
+            num_encoder_tokens=block_params.num_encoder_tokens,
+            total_computed_tokens=total_computed_tokens,
+            num_tokens_main_model=full_num_tokens,
+            apply_admission_cap=True,
+        )
+        return num_blocks_to_allocate <= self.kv_cache_manager.block_pool.get_num_free_blocks()
+
+    def _preallocate_blocks(
+        self, request: Request, block_params: BlockAllocationParams, outputs: SchedulerOutput
+    ):
+        # here we need to temporarily undo the effect of _update_after_schedule
+        computed_tokens_copy = request.num_computed_tokens
+        request.num_computed_tokens = block_params.original_request_computed_tokens
+
+        new_blocks = self.kv_cache_manager.allocate_slots(
+            request,
+            # Total number of tokens excluding the already computed tokens
+            num_new_tokens=block_params.num_new_tokens,
+            # no other parameters are required here because we're
+            # not touching the pre-computed blocks
+        )
+        request.num_computed_tokens = computed_tokens_copy
+        assert new_blocks is not None
+
+        new_block_ids = tuple(
+            [block.block_id for block in block_list] for block_list in new_blocks.blocks
+        )
+
+        for new_request in outputs.scheduled_new_reqs:
+            if new_request.req_id == request.request_id:
+                for prefix, suffix in zip(new_request.block_ids, new_block_ids):
+                    prefix.extend(suffix)
+
     def schedule(self) -> "SchedulerOutput":
         """
         The chunked prefill scheduling policy is enforced in this method, then
@@ -273,9 +404,19 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         while self.skipped_waiting:
             holdback_queue.append(self.skipped_waiting.pop_request())
 
+        block_alloc_params = dict[str, BlockAllocationParams]()
+
         # Check if new requests can be scheduled for prefill
         while holdback_queue:
-            if self.can_schedule_prefill(holdback_queue[0]):
+            request = holdback_queue[0]
+
+            if self.can_schedule_prefill(request):
+                block_params = self._get_block_params_for_request(request)
+                block_alloc_params[request.request_id] = block_params
+                if not self._are_blocks_available(request, block_params):
+                    # can't schedule the request
+                    break
+
                 new_request = holdback_queue.popleft()
 
                 logger.debug(
@@ -363,7 +504,11 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         # scheduled (i.e., moved from waiting to running by the base
         # scheduler).
         if new_prefill_candidates:
-            self.ongoing_prefills.extend(r for r in new_prefill_candidates if r in self.running)
+            new_prefills = [r for r in new_prefill_candidates if r in self.running]
+            for prefill in new_prefills:
+                block_params = block_alloc_params[prefill.request_id]
+                self._preallocate_blocks(prefill, block_params, outputs)
+            self.ongoing_prefills.extend(new_prefills)
 
         # restore holdbacks after running the base scheduler
         self.running = self.running + running_holdback
