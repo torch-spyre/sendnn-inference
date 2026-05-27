@@ -489,7 +489,6 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         in the decode batch, and if all the other spyre-related conditions
         are satisfied."""
         decoding_requests = [r for r in self.running if r not in self.ongoing_prefills]
-        max_context_len = self.model_config.max_model_len
 
         # check that there is space in the current decode batch
         num_running = len(decoding_requests)
@@ -504,28 +503,16 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         n_blocks = math.floor(max(self.tkv, prompt_len) / self.block_size)
         new_req_tkv = n_blocks * self.block_size + prompt_len % self.block_size
 
-        # check that no tkv exceeds max_context_len (immediate constraint check)
-        cond2 = new_req_tkv <= max_context_len
-        # check cond2 for all other sequences in the current decode batch
-        for req in decoding_requests:
-            # current tkv of the (left aligned) decode sequence
-            dec_req_tkv = n_blocks * self.block_size + req.num_computed_tokens % self.block_size
-            cond2_current = dec_req_tkv <= max_context_len
-            cond2 = cond2 and cond2_current
-            # early exiting loop if violated 2nd condition
-            if not cond2:
-                return False
-
         # check that batch size x tkv is smaller than the max supported number
         # Note: using max_tkv is a conservative upper bound here. For the
         # optimal check we need model runner to return per sequence tkvs
-        cond3 = lambda: self.check_batch_tkv_limit(
+        cond2 = lambda: self.check_batch_tkv_limit(
             request=request,
             new_req_tkv=new_req_tkv,
             running=decoding_requests,
         )
 
-        return cond1 and cond2 and cond3()
+        return cond1 and cond2()
 
     def _has_scheduling_priority(self, request):
         decoding_requests = [r for r in self.running if r not in self.ongoing_prefills]
