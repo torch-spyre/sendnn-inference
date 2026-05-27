@@ -1400,7 +1400,7 @@ class ChunkedPrefillModelRunner(
         else:
             return self._prepare_decode(scheduler_output.scheduled_cached_reqs)
 
-    def get_empty_output(self):
+    def get_empty_output(self) -> SpyreModelRunnerOutput:
         return SpyreModelRunnerOutput(
             req_ids=[],
             req_id_to_index={},
@@ -1485,26 +1485,6 @@ class ChunkedPrefillModelRunner(
             )
             self.add_new_request(scheduler_output.scheduled_new_reqs[0])
 
-    def is_cached_chunk(self, scheduler_output: SchedulerOutput):
-        """Returns true iff this schedule is for one chunk of a prefill, and that chunk is fully
-        cached in the prefix cache."""
-        if len(scheduler_output.scheduled_new_reqs) == 1:
-            req_id = scheduler_output.scheduled_new_reqs[0].req_id
-        elif len(scheduler_output.scheduled_cached_reqs.req_ids) == 1:
-            req_id = scheduler_output.scheduled_cached_reqs.req_ids[0]
-        else:
-            # Not a prefill
-            return False
-
-        request = self.requests[req_id]
-        num_computed_tokens = request.num_computed_tokens
-        num_computed_blocks = exact_div(num_computed_tokens, self.block_size)
-
-        if request.usable_blocks > num_computed_blocks:
-            assert self.enable_prefix_caching, "Prefix caching must be enabled"
-            return True
-        return False
-
     def apply_grammar_bitmask(
         self,
         scheduler_output: "SchedulerOutput",
@@ -1513,7 +1493,7 @@ class ChunkedPrefillModelRunner(
     ) -> None:
         """Apply grammar bitmask in-place to constrain logits for structured
         output requests.
-        
+
         This method checks if grammar output has been pre-computed and attached
         to the scheduler_output. If not present, it will be computed synchronously
         for backward compatibility.
@@ -1536,21 +1516,31 @@ class ChunkedPrefillModelRunner(
         self,
         scheduler_output: SchedulerOutput,
         **kwargs,
-    ) -> ModelRunnerOutput | None:
+    ) -> ModelRunnerOutput:
         """
-        Execute the model forward pass only (no sampling).
-        
-        This method performs the model forward pass and stores the state needed
-        for sampling. The caller must call sample_tokens() separately to complete
-        the inference step.
-        
+        Execute the model forward pass and return data for sampling.
+
+        This method performs the model forward pass. The return value depends on the scenario:
+
+        1. Empty batch: Returns empty ModelRunnerOutput
+        2. Incomplete prefill: Returns ModelRunnerOutput with prefill metadata (no sampling)
+        3. Complete prefill or decode: Returns tuple (logits, is_prefill, model_input, t0)
+           for the worker to perform sampling with grammar constraints
+
+        The separation of forward pass and sampling enables async workflows where
+        grammar preparation can happen while the model runs.
+
         Args:
             scheduler_output: Scheduler output containing request info
             **kwargs: Additional arguments
-            
+
         Returns:
-            None - caller must call sample_tokens() to get the final output
-            For incomplete prefills, returns prefill_output() directly
+            ModelRunnerOutput for empty batches or incomplete prefills.
+            Tuple (logits, is_prefill, model_input, t0) when sampling is needed.
+
+        Note:
+            The tuple return is detected by the worker's execute_model() which then
+            calls sample_tokens() to complete the inference step.
         """
         t0 = time.time()
 

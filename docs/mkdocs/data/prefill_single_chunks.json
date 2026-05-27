@@ -1,0 +1,2 @@
+{"max_model_len": 512, "max_num_seqs": 4, "block_size": 64, "chunk_size": 128, "max_batch_tkv_limit": 1024, "interleave": true}
+{"step_type": "prefill", "waiting": [], "prefilling": {"id": "0", "prompt_len": 15, "max_tokens": 3, "chunks_total": 1, "chunks_done": 0, "chunk_prompt_token_start": 0, "chunk_prompt_token_end": 15, "left_padding": 64, "right_padding": 49}, "decoding": []}

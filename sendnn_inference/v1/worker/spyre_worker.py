@@ -8,7 +8,6 @@ import time
 import platform
 import signal
 import sys
-import time
 import math
 from datetime import timedelta
 from pathlib import Path
@@ -47,7 +46,7 @@ from sendnn_inference.v1.worker.spyre_model_runner import (
 )
 
 if TYPE_CHECKING:
-    from vllm.v1.core.sched.output import GrammarOutput
+    pass
 
 
 logger = init_logger(__name__)
@@ -779,7 +778,7 @@ class SpyreWorker(WorkerBase):
     ) -> None:
         """
         Update internal request states with sampled tokens.
-        
+
         Args:
             scheduler_output: Scheduler output containing request info
             sampler_output: Sampler output containing sampled tokens
@@ -800,11 +799,6 @@ class SpyreWorker(WorkerBase):
             req_state = self.model_runner.requests[req_id]  # type: ignore[attr-defined]
             req_state.append_output_token_ids(sampled_ids[i])
 
-    def sample_tokens(self, grammar_output: "GrammarOutput | None") -> ModelRunnerOutput:
-        from vllm.v1.outputs import EMPTY_MODEL_RUNNER_OUTPUT
-
-        return EMPTY_MODEL_RUNNER_OUTPUT
-
     @SpyrePlatform.inference_mode()
     def sample_tokens(
         self,
@@ -817,13 +811,13 @@ class SpyreWorker(WorkerBase):
     ) -> ModelRunnerOutput:
         """
         Sample tokens using pre-computed grammar bitmask.
-        
+
         This method is separated from execute_model to enable async workflows
         where grammar preparation happens while the model runs.
-        
+
         Note: This method is only called for generative models (ChunkedPrefillModelRunner),
         not for pooling models (SpyrePoolingModelRunner).
-        
+
         Args:
             scheduler_output: Scheduler output containing request info
             grammar_output: Pre-computed grammar bitmask from scheduler
@@ -831,14 +825,14 @@ class SpyreWorker(WorkerBase):
             is_prefill: Whether this is a prefill or decode step
             model_input: Model input metadata
             t0: Start time for timing
-            
+
         Returns:
             ModelRunnerOutput containing sampled tokens and metadata
         """
-        
+
         # Attach grammar output to scheduler_output for apply_grammar_bitmask
         scheduler_output._spyre_grammar_output = grammar_output  # type: ignore[attr-defined]
-        
+
         # Apply grammar bitmask for structured output requests
         self.model_runner.apply_grammar_bitmask(  # type: ignore[attr-defined]
             scheduler_output,
@@ -852,7 +846,7 @@ class SpyreWorker(WorkerBase):
             sampling_metadata=self.model_runner.get_sampling_metadata(is_prefill),  # type: ignore[attr-defined]
         )
         assert output is not None, "Expected sampler output"
-        
+
         t1 = time.time() - t0
         batch_size = model_input.input_tokens.shape[0]
         step_type = "[prefill last chunk]" if is_prefill else "[decode]"
@@ -860,7 +854,7 @@ class SpyreWorker(WorkerBase):
 
         # Update request states with sampled tokens
         self.update_request_states_with_samples(scheduler_output, output, is_prefill)  # type: ignore[attr-defined]
-        
+
         # Only return outputs from the driver worker
         if not self.is_driver_worker:
             return self.model_runner.get_empty_output()  # type: ignore[attr-defined]
@@ -873,21 +867,21 @@ class SpyreWorker(WorkerBase):
     ) -> ModelRunnerOutput | None:
         if self.profiler is not None:
             self.profiler.step()
-        
+
         # Execute model forward pass
         result = self.model_runner.execute_model(scheduler_output)
-        
+
         # Check if result is a tuple (logits, is_prefill, model_input, t0)
         # This means forward pass is done and sampling is needed
         if isinstance(result, tuple):
             logits, is_prefill, model_input, t0 = result
             # Complete sampling with grammar (can be None for non-structured requests)
-            grammar_output = getattr(scheduler_output, '_spyre_grammar_output', None)
+            grammar_output = getattr(scheduler_output, "_spyre_grammar_output", None)
             output = self.sample_tokens(
                 scheduler_output, grammar_output, logits, is_prefill, model_input, t0
             )
             return output if self.is_driver_worker else None
-        
+
         # Otherwise it's a ModelRunnerOutput (prefill or pooling/embedding model)
         # Return the result directly
         return result if self.is_driver_worker else None

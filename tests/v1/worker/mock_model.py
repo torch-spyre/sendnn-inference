@@ -141,7 +141,58 @@ class InstrumentedModelRunner(ChunkedPrefillModelRunner):
         self.model.last_is_prompt = None
         self.model.last_attn_metadata = None
 
-        return super().execute_model(scheduler_output, **kwargs)
+        result = super().execute_model(scheduler_output, **kwargs)
+
+        # Handle tuple return (logits, is_prefill, model_input, t0) from model runner
+        if isinstance(result, tuple):
+            logits, is_prefill, model_input, t0 = result
+
+            # Apply grammar bitmask if present
+            grammar_output = getattr(scheduler_output, "_spyre_grammar_output", None)
+            if grammar_output is not None:
+                scheduler_output._spyre_grammar_output = grammar_output
+                self.apply_grammar_bitmask(
+                    scheduler_output,
+                    logits,
+                    self.prefill_batch if is_prefill else self.input_batch,
+                )
+
+            # Sample tokens
+            output = self.model.sample(
+                logits=logits,
+                sampling_metadata=self.get_sampling_metadata(is_prefill),
+            )
+
+            # Update request states
+            self.update_request_states_with_samples(scheduler_output, output, is_prefill)
+
+            # Return formatted output
+            return self.sampled_output(output, is_prefill)
+
+        # Return result directly (prefill output or other)
+        return result
+
+    def update_request_states_with_samples(
+        self,
+        scheduler_output: SchedulerOutput,
+        sampler_output: SamplerOutput,
+        is_prefill: bool,
+    ) -> None:
+        """Update internal request states with sampled tokens."""
+        # Get the right batch
+        batch = self.prefill_batch if is_prefill else self.input_batch
+
+        # Add the sampled token(s) to the request cache
+        req_ids = (
+            [r.req_id for r in scheduler_output.scheduled_new_reqs]
+            if len(scheduler_output.scheduled_new_reqs) > 0
+            else batch.sorted_requests_ids
+        )
+        sampled_ids = sampler_output.sampled_token_ids.tolist()
+
+        for i, req_id in enumerate(req_ids):
+            req_state = self.requests[req_id]
+            req_state.append_output_token_ids(sampled_ids[i])
 
     def execute_new_request(self, request: Request) -> ModelRunnerOutput:
         scheduler_output = self._schedule_new_request(request)

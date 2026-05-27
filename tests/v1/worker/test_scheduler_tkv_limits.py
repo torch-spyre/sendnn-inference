@@ -10,6 +10,8 @@ from scheduling_utils import create_request_for_scheduler_test, random_prompt
 from v1.worker.mock_model import InstrumentedModelRunner
 from spyre_util import REFERENCE_MODELS
 from sendnn_inference.platform import SpyrePlatform
+from types import SimpleNamespace
+from sendnn_inference.v1.core.scheduler import SpyreScheduler
 
 
 @pytest.mark.cpu
@@ -183,3 +185,80 @@ def test_scheduler_tkv_limits_ongoing_batch(monkeypatch: pytest.MonkeyPatch):
         scheduler.update_from_output(sched_output, output)
         if len(scheduler.running) == 0:
             break
+
+
+@pytest.mark.cpu
+@pytest.mark.chunked_prefill
+def test_chunked_prefill_make_stats_zeros_mm_cache_hits(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """
+    Regression test: Spyre forces MM cache hit reporting to zero in make_stats().
+
+    Spyre does not support cross-request MM cache reuse today. This test
+    verifies that ChunkedPrefillSpyreScheduler.make_stats() forces
+    mm_cache_stats.hits to zero while still applying the existing
+    prefix-cache hit correction.
+    """
+    model_runner = InstrumentedModelRunner.build(
+        monkeypatch=monkeypatch,
+        max_num_batched_tokens=512,
+        max_num_seqs=32,
+        max_model_len=32768,
+        available_blocks=32768,
+    )
+    scheduler = model_runner.scheduler
+
+    fake_stats = SimpleNamespace(
+        prefix_cache_stats=SimpleNamespace(queries=256, hits=128),
+        mm_cache_stats=SimpleNamespace(hits=5),
+    )
+
+    monkeypatch.setattr(
+        SpyreScheduler,
+        "make_stats",
+        lambda self, *args, **kwargs: fake_stats,
+    )
+
+    stats = scheduler.make_stats()
+
+    assert stats is fake_stats
+    assert stats.mm_cache_stats.hits == 0
+    assert stats.prefix_cache_stats.hits == scheduler.adjust_hit(256, 128)
+
+
+@pytest.mark.cpu
+@pytest.mark.chunked_prefill
+def test_chunked_prefill_make_stats_without_mm_cache_stats(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """
+    Regression test: make_stats() handles stats objects without mm_cache_stats.
+
+    This verifies that the defensive getattr() guard avoids attribute errors
+    when the returned stats object does not expose mm_cache_stats, while the
+    existing prefix-cache correction still applies.
+    """
+    model_runner = InstrumentedModelRunner.build(
+        monkeypatch=monkeypatch,
+        max_num_batched_tokens=512,
+        max_num_seqs=32,
+        max_model_len=32768,
+        available_blocks=32768,
+    )
+    scheduler = model_runner.scheduler
+
+    fake_stats = SimpleNamespace(
+        prefix_cache_stats=SimpleNamespace(queries=256, hits=128),
+    )
+
+    monkeypatch.setattr(
+        SpyreScheduler,
+        "make_stats",
+        lambda self, *args, **kwargs: fake_stats,
+    )
+
+    stats = scheduler.make_stats()
+
+    assert stats is fake_stats
+    assert stats.prefix_cache_stats.hits == scheduler.adjust_hit(256, 128)

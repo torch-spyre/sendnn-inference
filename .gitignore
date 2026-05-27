@@ -141,6 +141,7 @@ venv.bak/
 # mkdocs documentation
 /site
 docs/examples
+docs/assets
 
 # mypy
 .mypy_cache/

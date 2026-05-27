@@ -1,0 +1,4 @@
+{"max_model_len": 2048, "block_size": 64, "chunk_size": 256, "max_num_seqs": 4, "max_batch_tkv_limit": 1024, "interleave": true}
+{"req1_id": "Cached Request", "common_prompt_tokens": 921, "req1_diff_prompt": 389, "prefix_output_tokens": 0, "req1_output": 86, "req2_id": "New Request", "req2_diff_prompt": 398, "req2_max_output": 500}
+{"step_type": "prefill", "waiting": [], "prefilling": {"id": "New Request", "cached_tokens": 832, "prompt_len": 1319, "chunks_total": 6, "chunks_done": 4, "chunk_prompt_token_start": 895, "chunk_prompt_token_end": 1088, "left_padding": 192, "right_padding": 25, "inner_padding": 64}, "decoding": []}
+{"step_type": "prefill", "waiting": [], "prefilling": {"id": "New Request", "cached_tokens": 832, "prompt_len": 1319, "chunks_total": 6, "chunks_done": 5, "chunk_prompt_token_start": 1088, "chunk_prompt_token_end": 1319, "left_padding": 192, "right_padding": 25, "inner_padding": 64}, "decoding": []}

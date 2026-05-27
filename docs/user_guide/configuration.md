@@ -97,6 +97,9 @@ Support for the vLLM v0 backend has been removed, only the vLLM v1 backend is su
 When running decoder models for text generation, SenDNN Inference uses dynamic batching with chunked prefill and automatic prefix caching.
 This looks and feels like running vllm on any other accelerator, with a few minor differences.
 
+!!! note
+    For a more detailed description on how chunked prefill and prefix caching is implemented in SenDNN Inference, see the scheduling and padding design [document](../contributing/scheduler.md).
+
 ### Chunked Prefill
 
 Chunked prefill is a technique that improves Inter-Token Latency (ITL) in continuous batching mode when large prompts need to be prefetched. Without it, these large prefills can negatively impact the performance of ongoing decodes. In essence, chunked prefill divides incoming prompts into smaller segments and processes them incrementally, allowing the system to balance prefill work with active decoding tasks.

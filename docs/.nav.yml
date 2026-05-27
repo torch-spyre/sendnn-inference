@@ -16,12 +16,15 @@ nav:
       - Environment Variables: user_guide/env_vars.md
       - Supported Features: user_guide/supported_features.md
       - Supported Models: user_guide/supported_models.md
+      - Performance Tuning: user_guide/performance.md
     - Developer Guide:
       - Contributing: contributing/README.md
       - Maintaining: contributing/maintaining.md
-      - Architecture: contributing/architecture.md
-      - MultiModal:
-        - Adding New Models: contributing/multimodal/adding_new_models.md
+      - Design Documents:
+        - Architecture: contributing/architecture.md
+        - Scheduling & Padding: contributing/scheduler.md
+        - MultiModal:
+          - Adding New Models: contributing/multimodal/adding_new_models.md
 
   - Getting Started:
     - Installation: getting_started/installation.md
@@ -34,7 +37,12 @@ nav:
     - Environment Variables: user_guide/env_vars.md
     - Supported Features: user_guide/supported_features.md
     - Supported Models: user_guide/supported_models.md
+    - Performance Tuning: user_guide/performance.md
   - Developer Guide:
     - Contributing: contributing/README.md
     - Maintaining: contributing/maintaining.md
-    - Architecture: contributing/architecture.md
+    - Design Documents:
+      - Architecture: contributing/architecture.md
+      - Scheduling & Padding: contributing/scheduler.md
+      - MultiModal:
+        - Adding New Models: contributing/multimodal/adding_new_models.md
