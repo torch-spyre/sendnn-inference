@@ -314,12 +314,13 @@ def test_single_cp_prefill(
         },
         {
             # Prefill sequence 0 chunk 0
+            # all 8 blocks are preallocated
             "step": 1,
             "tkv": 512,
             "waiting": [],
             "running": ["0"],
             "request_outputs": [],
-            "n_used_blocks": 2,
+            "n_used_blocks": 8,
         },
         {
             # Prefill sequence 0 chunk 1
@@ -328,21 +329,19 @@ def test_single_cp_prefill(
             "waiting": [],
             "running": ["0"],
             "request_outputs": [],
-            "n_used_blocks": 4,
+            "n_used_blocks": 8,
         },
         {
             # Prefill sequence 0 chunk 2
-            # total blocks in use: 6
             "step": 3,
             "tkv": 512,
             "waiting": [],
             "running": ["0"],
             "request_outputs": [],
-            "n_used_blocks": 6,
+            "n_used_blocks": 8,
         },
         {
             # Prefill sequence 0 chunk 3
-            # total blocks in use: 8
             "step": 4,
             "tkv": 512,
             "waiting": [],
@@ -441,7 +440,7 @@ def test_cp_prefill_interleave1(
         },
         {
             # Request 0 starts decoding.
-            # Request 1 can't be scheduled do to a restriction on
+            # Request 1 can't be scheduled due to a restriction on
             # consecutive prefills. Token 1 is generated
             "step": 2,
             "tkv": 11,
@@ -457,7 +456,7 @@ def test_cp_prefill_interleave1(
             "waiting": [],
             "running": ["1", "0"],
             "request_outputs": [],
-            "n_used_blocks": 3,
+            "n_used_blocks": 9,
         },
         {
             # Decode 2 of request 0.
@@ -466,7 +465,7 @@ def test_cp_prefill_interleave1(
             "waiting": [],
             "running": ["0", "1"],
             "request_outputs": ["0"],
-            "n_used_blocks": 3,
+            "n_used_blocks": 9,
         },
         {
             # Chunk 1 of request 1 prefill
@@ -476,7 +475,7 @@ def test_cp_prefill_interleave1(
             "waiting": [],
             "running": ["1", "0"],
             "request_outputs": [],
-            "n_used_blocks": 5,
+            "n_used_blocks": 9,
         },
         {
             # Decode 3 of request 0.
@@ -485,7 +484,7 @@ def test_cp_prefill_interleave1(
             "waiting": [],
             "running": ["0", "1"],
             "request_outputs": ["0"],
-            "n_used_blocks": 5,
+            "n_used_blocks": 9,
         },
         {
             # Chunk 2 of request 1 prefill
@@ -495,7 +494,7 @@ def test_cp_prefill_interleave1(
             "waiting": [],
             "running": ["1", "0"],
             "request_outputs": [],
-            "n_used_blocks": 7,
+            "n_used_blocks": 9,
         },
         {
             # Decode 4 of request 0.
@@ -504,7 +503,7 @@ def test_cp_prefill_interleave1(
             "waiting": [],
             "running": ["0", "1"],
             "request_outputs": ["0"],
-            "n_used_blocks": 7,
+            "n_used_blocks": 9,
         },
         {
             # Chunk 3 of request 1 prefill.
@@ -635,7 +634,7 @@ def test_cp_prefill_no_interleave(
             "waiting": [],
             "running": ["1", "0"],
             "request_outputs": [],
-            "n_used_blocks": 3,
+            "n_used_blocks": 9,
         },
         {
             # Chunk 1 of request 1 prefill
@@ -645,7 +644,7 @@ def test_cp_prefill_no_interleave(
             "waiting": [],
             "running": ["1", "0"],
             "request_outputs": [],
-            "n_used_blocks": 5,
+            "n_used_blocks": 9,
         },
         {
             # Chunk 2 of request 1 prefill
@@ -655,7 +654,7 @@ def test_cp_prefill_no_interleave(
             "waiting": [],
             "running": ["1", "0"],
             "request_outputs": [],
-            "n_used_blocks": 7,
+            "n_used_blocks": 9,
         },
         {
             # Chunk 3 of request 1 prefill.
@@ -836,7 +835,7 @@ def test_cp_prefill_interleave2(
             "waiting": [],
             "running": ["1", "0"],
             "request_outputs": [],
-            "n_used_blocks": 3,
+            "n_used_blocks": 9,
         },
         {
             # Decode 3 of request 0.
@@ -845,7 +844,7 @@ def test_cp_prefill_interleave2(
             "waiting": [],
             "running": ["0", "1"],
             "request_outputs": ["0"],
-            "n_used_blocks": 3,
+            "n_used_blocks": 9,
         },
         {
             # Chunk 1 of request 1 prefill
@@ -855,7 +854,7 @@ def test_cp_prefill_interleave2(
             "waiting": [],
             "running": ["1", "0"],
             "request_outputs": [],
-            "n_used_blocks": 5,
+            "n_used_blocks": 9,
         },
         {
             # Decode 4 of request 0.
@@ -864,7 +863,7 @@ def test_cp_prefill_interleave2(
             "waiting": [],
             "running": ["0", "1"],
             "request_outputs": ["0"],
-            "n_used_blocks": 5,
+            "n_used_blocks": 9,
         },
         {
             # Chunk 2 of request 1 prefill
@@ -874,7 +873,7 @@ def test_cp_prefill_interleave2(
             "waiting": [],
             "running": ["1", "0"],
             "request_outputs": [],
-            "n_used_blocks": 7,
+            "n_used_blocks": 9,
         },
         {
             # Decode 5 of request 0.
@@ -883,7 +882,7 @@ def test_cp_prefill_interleave2(
             "waiting": [],
             "running": ["0", "1"],
             "request_outputs": ["0"],
-            "n_used_blocks": 7,
+            "n_used_blocks": 9,
         },
         {
             # Chunk 3 of request 1 prefill.
