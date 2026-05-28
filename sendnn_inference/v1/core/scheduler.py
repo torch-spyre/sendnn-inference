@@ -561,6 +561,53 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         current_batch_tkv = batch_size * current_max_tkv
         return current_batch_tkv <= self.max_batch_tkv_limit
 
+    def predict_next_decode_tkv(self, running_requests: list[Request]) -> int:
+        """
+        Predicts the TKV after the next decode step for a given batch of running
+        requests.
+
+        This method replicates the TKV calculation logic from the model runner's
+        _prepare_decode method, accounting for:
+        - Block alignment (left-padding to make batch rectangular)
+        - The next token that will be generated (+1)
+        - Maximum TKV across all requests in the batch
+
+        Args:
+            running_requests: List of Request objects currently in the decode batch
+
+        Returns:
+            The predicted TKV value after the next decode step
+        """
+        if not running_requests:
+            return 0
+
+        # Step 1: Find the maximum number of blocks across all requests
+        max_n_blocks = 0
+        for request in running_requests:
+            block_ids_per_kv_cache_group = self.kv_cache_manager.get_block_ids(request.request_id)
+            assert len(block_ids_per_kv_cache_group) == 1
+            num_blocks = len(block_ids_per_kv_cache_group[0])
+            max_n_blocks = max(max_n_blocks, num_blocks)
+
+        # Step 2: Calculate TKV for each request and find the maximum
+        max_tkv = 0
+        for request in running_requests:
+            # Get the number of blocks for this request
+            block_ids_per_kv_cache_group = self.kv_cache_manager.get_block_ids(request.request_id)
+            num_blocks = len(block_ids_per_kv_cache_group[0])
+
+            # Calculate left padding blocks needed for alignment
+            left_pad_blocks_count = max_n_blocks - num_blocks
+            left_padding = left_pad_blocks_count * self.block_size
+
+            # Calculate TKV for this request (including the next token)
+            req_tkv = left_padding + request.num_computed_tokens + 1
+
+            # Track the maximum TKV
+            max_tkv = max(max_tkv, req_tkv)
+
+        return max_tkv
+
     def finish_requests(
         self,
         request_ids: Union[str, Iterable[str], None],
