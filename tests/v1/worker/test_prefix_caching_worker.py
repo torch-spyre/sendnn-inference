@@ -131,7 +131,7 @@ def test_multi_chunk_partial_match_misaligned(
         num_sampled_token_ids=0,
         tkv=384,
         # actual number of available blocks: 18 - 1 (padding block) = 17
-        n_free_blocks=15,  # 17 - 2 = 15
+        n_free_blocks=11,
         left_padding={"0": 0},
         prefix_cache_hit_len={"0": 0},
     )
@@ -147,7 +147,7 @@ def test_multi_chunk_partial_match_misaligned(
         req_ids=["0"],
         num_sampled_token_ids=0,
         tkv=384,
-        n_free_blocks=13,
+        n_free_blocks=11,
         left_padding={"0": 0},
         prefix_cache_hit_len={"0": 0},
     )
@@ -404,7 +404,7 @@ def test_middle_chunk_recomputation_with_padding(
         num_sampled_token_ids=0,
         tkv=512,
         # actual number of available blocks: 34 - 1 (padding block) = 33
-        n_free_blocks=29,
+        n_free_blocks=25,
         left_padding={"0": 0},
         prefix_cache_hit_len={"0": 0},
     )

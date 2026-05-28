@@ -5,6 +5,7 @@ from collections import deque
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Iterable, Union
 
+
 from vllm.logger import init_logger
 from vllm.v1.core.sched.scheduler import Scheduler
 from vllm.v1.metrics.stats import SchedulerStats
@@ -151,10 +152,6 @@ class BlockAllocationParams:
     num_new_tokens: int
     num_new_computed_tokens: int
     new_computed_blocks: KVCacheBlocks | None
-    num_lookahead_tokens: int
-    num_external_computed_tokens: int
-    delay_cache_blocks: bool
-    num_encoder_tokens: int
 
 
 class ChunkedPrefillSpyreScheduler(SpyreScheduler):
@@ -278,12 +275,15 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         # This basically replicates what the scheduler already does, but
         # scattered all over the place in `schedule()`
         if request.num_computed_tokens == 0:
+            old_log_stats = self.kv_cache_manager.log_stats
+            self.kv_cache_manager.log_stats = False
             new_computed_blocks, num_new_local_computed_tokens = (
                 self.kv_cache_manager.get_computed_blocks(request)
             )
+            self.kv_cache_manager.log_stats = old_log_stats
             num_computed_tokens = num_new_local_computed_tokens
         else:
-            new_computed_blocks = self.kv_cache_manager.empty_kv_cache_blocks
+            new_computed_blocks = self.kv_cache_manager.create_kv_cache_blocks(blocks=tuple())
             num_new_local_computed_tokens = 0
             num_computed_tokens = request.num_computed_tokens
 
@@ -297,44 +297,11 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
 
         num_new_tokens = num_tokens - num_computed_tokens
 
-        num_encoder_tokens = 0
-        if self.is_encoder_decoder and request.has_encoder_inputs:
-            # Max: for now I think each request gets the full encoder budget
-            # since we don't prefill more than request at a time
-            encoder_compute_budget = self.max_num_encoder_input_tokens
-            token_budget = self.max_num_scheduled_tokens
-            num_new_prompt_tokens = request.num_tokens - num_computed_tokens
-            num_new_prompt_tokens = min(num_new_prompt_tokens, token_budget)
-            (
-                encoder_inputs_to_schedule,
-                updated_new_prompt_tokens,
-                new_encoder_compute_budget,
-                external_load_encoder_input,
-            ) = self._try_schedule_encoder_inputs(
-                request,
-                num_computed_tokens,
-                num_new_prompt_tokens,
-                encoder_compute_budget,
-                shift_computed_tokens=1 if self.use_eagle else 0,
-            )
-            if updated_new_prompt_tokens != num_new_prompt_tokens:
-                # TODO: improve handling of this case
-                raise ValueError("Encoder request cannot be scheduled")
-
-            if encoder_inputs_to_schedule:
-                num_encoder_tokens = sum(
-                    request.get_num_encoder_embeds(i) for i in encoder_inputs_to_schedule
-                )
-
         return BlockAllocationParams(
             original_request_computed_tokens=request.num_computed_tokens,
             num_new_tokens=num_new_tokens,
             num_new_computed_tokens=num_new_local_computed_tokens,
             new_computed_blocks=new_computed_blocks,
-            num_lookahead_tokens=0,  # we don't support spec decoding
-            num_external_computed_tokens=0,  # we don't support KV cache transfers
-            delay_cache_blocks=False,  # we don't support KV cache loading
-            num_encoder_tokens=num_encoder_tokens,
         )
 
     def _are_blocks_available(self, request: Request, block_params: BlockAllocationParams) -> bool:
@@ -351,10 +318,9 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             request_id=request.request_id,
             num_tokens=full_num_tokens,
             new_computed_blocks=block_params.new_computed_blocks.blocks,
-            num_encoder_tokens=block_params.num_encoder_tokens,
+            num_encoder_tokens=0,
             total_computed_tokens=total_computed_tokens,
             num_tokens_main_model=full_num_tokens,
-            apply_admission_cap=True,
         )
         return num_blocks_to_allocate <= self.kv_cache_manager.block_pool.get_num_free_blocks()
 
@@ -369,6 +335,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             request,
             # Total number of tokens excluding the already computed tokens
             num_new_tokens=block_params.num_new_tokens,
+            delay_cache_blocks=True,  # no need to cache blocks here
             # no other parameters are required here because we're
             # not touching the pre-computed blocks
         )
