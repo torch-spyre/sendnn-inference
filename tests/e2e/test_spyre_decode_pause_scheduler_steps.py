@@ -26,7 +26,7 @@ from spyre_util import ModelInfo
 @pytest.mark.parametrize("max_model_len", [128])
 @pytest.mark.parametrize("max_num_batched_tokens", [256])
 @pytest.mark.parametrize("available_blocks", [None])
-def test_pausing_prefill_volumetric_ok(
+def test_volumetric_decode_pausing(
     model: ModelInfo,
     backend: str,
     monkeypatch: pytest.MonkeyPatch,
@@ -44,9 +44,9 @@ def test_pausing_prefill_volumetric_ok(
     Configuration:
         * max_num_seqs: 2
         * number of prompts: 2
-            * 0: len = 15, max tokens = 60, step joining = 0
-            * 1: len = 15, max tokens = 60, step joining = 0
-            * 1: len = 66, max tokens = 60, step joining = 0
+            * 0: len = 15, max tokens = 11, step joining = 0
+            * 1: len = 15, max tokens = 13, step joining = 0
+            * 2: len = 66, max tokens = 10, step joining = 0
     """
 
     # Volume right after prefill: 3 * 82 = 246 (should pass)
@@ -58,7 +58,7 @@ def test_pausing_prefill_volumetric_ok(
             model=model,
             request_id=0,
             add_step=0,
-            max_tokens=60,
+            max_tokens=11,
             prompt=random_prompt(model, seed=0, length=15),
             use_golden_token_injection=False,
             generate_hf_results=True,
@@ -67,7 +67,7 @@ def test_pausing_prefill_volumetric_ok(
             model=model,
             request_id=1,
             add_step=0,
-            max_tokens=60,
+            max_tokens=13,
             prompt=random_prompt(model, seed=1, length=15),
             use_golden_token_injection=False,
             generate_hf_results=True,
@@ -76,7 +76,7 @@ def test_pausing_prefill_volumetric_ok(
             model=model,
             request_id=2,
             add_step=0,
-            max_tokens=60,
+            max_tokens=10,
             prompt=random_prompt(model, seed=2, length=66),
             use_golden_token_injection=False,
             generate_hf_results=True,
@@ -159,15 +159,76 @@ def test_pausing_prefill_volumetric_ok(
             "n_used_blocks": 4,
         },
         {
-            # Decode sequences 0, 1, and 2
+            # Decode sequences 0 and 1
             # About to violate the volumetric constraint: 3 * 86 = 258 > 256
-            # Holdback activates TODO
+            # Holdback activates: request 2 gets paused
             "step": 10,
-            "tkv": 86,
+            "tkv": 22,  # tkv of request 0 without left-padding
             "waiting": [],
-            "running": ["2", "1", "0"],
-            "request_outputs": ["2", "1", "0"],
+            "running": ["1", "0"],
+            "request_outputs": ["1", "0"],
             "n_used_blocks": 4,
+        },
+        {
+            # Decode sequences 0 and 1
+            # Sequences 0 finishes
+            "step": 13,
+            "tkv": 25,
+            "waiting": [],
+            "running": ["1"],
+            "request_outputs": ["1", "0"],
+            "finished_requests": ["0"],
+            "n_used_blocks": 3,
+        },
+        {
+            # Decode sequences 1 and 2
+            # Sequence 2 can now resume
+            "step": 14,
+            "tkv": 89,  # 25 + 64 = tkv of request 1 with left-padding
+            "waiting": [],
+            "running": ["1", "2"],
+            "request_outputs": ["1", "2"],
+            "n_used_blocks": 3,
+        },
+        {
+            # Decode sequences 1 and 2
+            # Sequence 1 finishes
+            "step": 16,
+            "tkv": 91,
+            "waiting": [],
+            "running": ["2"],
+            "request_outputs": ["1", "2"],
+            "finished_requests": ["1"],
+            "n_used_blocks": 2,
+        },
+        {
+            # Decode sequence 2
+            "step": 17,
+            "tkv": 74,  # tkv of request 2
+            "waiting": [],
+            "running": ["2"],
+            "request_outputs": ["2"],
+            "n_used_blocks": 2,
+        },
+        {
+            # Sequence 2 finishes
+            "step": 18,
+            "tkv": 75,
+            "waiting": [],
+            "running": [],
+            "request_outputs": ["2"],
+            "finished_requests": ["2"],
+            "n_used_blocks": 0,
+        },
+        {
+            # tkv should be cleared one step later
+            "step": 19,
+            "tkv": 0,
+            "waiting": [],
+            "running": [],
+            "request_outputs": [],
+            "finished_requests": [],
+            "n_used_blocks": 0,
         },
     ]
 
@@ -191,7 +252,7 @@ def test_pausing_prefill_volumetric_ok(
 @pytest.mark.parametrize("max_model_len", [2048])
 @pytest.mark.parametrize("max_num_batched_tokens", [128])
 @pytest.mark.parametrize("available_blocks", [None])
-def test_pausing_prefill_volumetric_violated(
+def test_prefill_volumetric_violated(
     model: ModelInfo,
     backend: str,
     monkeypatch: pytest.MonkeyPatch,
@@ -201,7 +262,8 @@ def test_pausing_prefill_volumetric_violated(
     max_num_batched_tokens: int,
     available_blocks: int,
 ):
-    """Test that requests are blocked when prefill volumetric constraint is violated.
+    """Test that requests are blocked when the volumetric constraint is immediately
+    violated after prefill.
 
     Even with holdback, if prefill volume exceeds limit, request cannot be scheduled.
 
