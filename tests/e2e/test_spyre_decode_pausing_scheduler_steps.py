@@ -1,8 +1,8 @@
-"""Verification of the holdback feature in the chunked prefill scheduler.
+"""Verification of the decoding requests pausing feature in the chunked prefill scheduler.
 
 This tests the relaxed constraint checking where requests are scheduled if
 prefill constraints are satisfied (not future constraints). Requests that
-would violate constraints during decode will be held back at that time.
+would violate constraints during decode will be paused at that time.
 
 The two main constraints checked at prefill time are:
 1. Max-context constraint: current tkv <= max_context_len
@@ -26,7 +26,7 @@ from spyre_util import ModelInfo
 @pytest.mark.parametrize("max_model_len", [128])
 @pytest.mark.parametrize("max_num_batched_tokens", [256])
 @pytest.mark.parametrize("available_blocks", [None])
-def test_holdback_prefill_volumetric_ok(
+def test_pausing_prefill_volumetric_ok(
     model: ModelInfo,
     backend: str,
     monkeypatch: pytest.MonkeyPatch,
@@ -191,7 +191,7 @@ def test_holdback_prefill_volumetric_ok(
 @pytest.mark.parametrize("max_model_len", [2048])
 @pytest.mark.parametrize("max_num_batched_tokens", [128])
 @pytest.mark.parametrize("available_blocks", [None])
-def test_holdback_prefill_volumetric_violated(
+def test_pausing_prefill_volumetric_violated(
     model: ModelInfo,
     backend: str,
     monkeypatch: pytest.MonkeyPatch,

@@ -1454,21 +1454,21 @@ class ChunkedPrefillModelRunner(
         scheduled_req_ids = set(req_data.req_ids)
         current_batch_req_ids = set(self.input_batch.req_id_to_index.keys())
 
-        # Find requests that are in input_batch but not in scheduler output (held back)
+        # Find requests that are in input_batch but not in scheduler output (paused)
         paused_req_ids = current_batch_req_ids - scheduled_req_ids
         for req_id in paused_req_ids:
             # Only remove if it's not a finished request (finished requests are handled separately)
             if req_id not in (scheduler_output.finished_req_ids or []):
-                logger.info("Removing held back request %s from input_batch", req_id)
+                logger.info("Removing paused request %s from input_batch", req_id)
                 self.input_batch.remove_request(req_id)
 
         # Find requests that are in scheduler output but not in input_batch
         # (restore from pausing)
         restored_req_ids = scheduled_req_ids - current_batch_req_ids
         for req_id in restored_req_ids:
-            # Add back the request that was held back
+            # Add back the request that was paused
             if req_id in self.requests:
-                logger.info("Restoring held back request %s to input_batch", req_id)
+                logger.info("Restoring paused request %s to input_batch", req_id)
                 req_state = self.requests[req_id]
                 self.input_batch.add_request(req_state)
 
