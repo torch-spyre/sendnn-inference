@@ -298,6 +298,9 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         )
         return num_blocks_to_allocate
 
+    def _get_free_blocks(self) -> int:
+        return self.kv_cache_manager.block_pool.get_num_free_blocks()
+
     def schedule(self) -> "SchedulerOutput":
         """
         The chunked prefill scheduling policy is enforced in this method, then
@@ -324,9 +327,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         while holdback_queue:
             new_request = holdback_queue[0]
             blocks = self._get_required_blocks(new_request, True)
-            available_blocks = (
-                self.kv_cache_manager.block_pool.get_num_free_blocks() - self.total_reserved_blocks
-            )
+            available_blocks = self._get_free_blocks() - self.total_reserved_blocks
             if blocks > available_blocks:
                 break
 

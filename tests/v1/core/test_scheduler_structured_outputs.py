@@ -47,12 +47,19 @@ def mocked_scheduler():
     scheduler.block_size = 64
     scheduler.n_free_blocks = 100
     scheduler.max_batch_tkv_limit = "8192"
+    scheduler.available_blocks = 1
+    scheduler.total_reserved_blocks = 0
+    scheduler.reserved_blocks = dict[str, int]()
+    scheduler._get_required_blocks = lambda x, *args, **kwargs: 0
+    scheduler._get_free_blocks = lambda *args, **kwargs: 1
 
     # Mock the base scheduler's schedule method and can_schedule_prefill,
     # but ChunkedPrefillSpyreScheduler.schedule uses the code implementation
     mock_output = Mock()
     mock_output.has_structured_output_requests = False
     mock_output.num_scheduled_tokens = {}
+    mock_output.finished_req_ids = set()
+    mock_output.preempted_req_ids = set()
 
     with (
         patch.object(ChunkedPrefillSpyreScheduler, "can_schedule_prefill", return_value=True),
