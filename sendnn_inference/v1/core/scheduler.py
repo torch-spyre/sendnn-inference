@@ -193,6 +193,10 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         # keep a list to be able to batch prefills in the future.
         self.ongoing_prefills: list[Request] = []
 
+        # Track requests that were temporarily paused from decoding due to
+        # batch TKV constraint and moved back to waiting queue
+        self.paused_decoding_requests: list[Request] = []
+
         # Prefills interleaving: if the feature flag is set, prefill operations
         # are interleaved with a decode step. This allows to minimize currently
         # decoding requests
@@ -393,6 +397,9 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             self.previous_step_was_prefill = False
             running_holdback = []
 
+        if not self.previous_step_was_prefill:
+            self._handle_decode_requests_pausing()
+
         # delegate to super of SpyreScheduler: base V1 Scheduler
         outputs = super(SpyreScheduler, self).schedule()
 
@@ -560,6 +567,72 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         # Check immediate volume constraint
         current_batch_tkv = batch_size * current_max_tkv
         return current_batch_tkv <= self.max_batch_tkv_limit
+
+    def _can_decode_all_requests(self, decoding_requests: list[Request]) -> bool:
+        """
+        Check if all decoding requests can be decoded in the next step without
+        violating the max batch TKV limit.
+        """
+        if not decoding_requests:
+            return True
+
+        next_predicted_tkv = self.predict_next_decode_tkv(decoding_requests)
+
+        # the tkv should never get beyond max_model_len
+        assert next_predicted_tkv <= self.max_model_len
+
+        # check batch tkv limit: batch_size * predicted_tkv must not exceed limit
+        batch_size = len(decoding_requests)
+        predicted_batch_tkv = batch_size * next_predicted_tkv
+
+        return predicted_batch_tkv <= self.max_batch_tkv_limit
+
+    def _handle_decode_requests_pausing(self) -> None:
+        """
+        Manage pausing and resuming of decode requests based on batch TKV constraints.
+
+        This method:
+        1. Pauses requests with the fewest decoded tokens when batch TKV limit is exceeded
+        2. Resumes previously paused requests (oldest first) when capacity is available
+        """
+        decoding_requests = [r for r in self.running if r not in self.ongoing_prefills]
+
+        had_to_remove = False
+        initial_had_requests = len(decoding_requests) > 0
+
+        # If we can't decode all requests due to batch TKV limits, iteratively
+        # remove requests with the fewest decoded tokens and pause them until
+        # the remaining batch fits within constraints
+        while not self._can_decode_all_requests(decoding_requests):
+            had_to_remove = True
+            # Remove the request with the fewest decoded tokens
+            # Decoded tokens = num_computed_tokens - num_prompt_tokens
+            request_to_remove = min(
+                decoding_requests, key=lambda r: r.num_computed_tokens - r.num_prompt_tokens
+            )
+            decoding_requests.remove(request_to_remove)
+            self.running.remove(request_to_remove)
+            self.paused_decoding_requests.append(request_to_remove)
+
+        # It shouldn't be possible to remove all requests if we started with some
+        assert not initial_had_requests or len(decoding_requests) > 0
+
+        # If we didn't have to remove any requests, try to add back previously
+        # paused requests (oldest first) as long as they fit within constraints
+        if not had_to_remove:
+            while self.paused_decoding_requests:
+                # Try adding the oldest paused request (first in list)
+                request_to_add = self.paused_decoding_requests[0]
+                test_requests = decoding_requests + [request_to_add]
+
+                if self._can_decode_all_requests(test_requests):
+                    # Can add this request back
+                    self.paused_decoding_requests.pop(0)
+                    self.running.append(request_to_add)
+                    decoding_requests.append(request_to_add)
+                else:
+                    # Can't add any more requests
+                    break
 
     def predict_next_decode_tkv(self, running_requests: list[Request]) -> int:
         """
