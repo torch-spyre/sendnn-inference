@@ -39,6 +39,7 @@ def mocked_scheduler():
     scheduler.skipped_waiting = FCFSRequestQueue()
     scheduler.running = []
     scheduler.ongoing_prefills = []
+    scheduler.paused_decoding_requests = []
     scheduler.chunk_size = 128
     scheduler.do_interleaving = False
     scheduler.previous_step_was_prefill = False
