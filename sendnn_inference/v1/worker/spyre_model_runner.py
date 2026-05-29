@@ -154,6 +154,9 @@ class BaseSpyreModelRunner(ABC, Generic[InputBatchT, RequestStateT, ModelInputsT
         # Requests
         self.requests: dict[str, RequestStateT] = {}
 
+        # Track paused requests to ensure we only restore previously paused ones
+        self.paused_req_ids: set[str] = set()
+
     @abstractmethod
     def build_input_batch(self) -> InputBatchT:
         raise NotImplementedError
@@ -1461,16 +1464,20 @@ class ChunkedPrefillModelRunner(
             if req_id not in (scheduler_output.finished_req_ids or []):
                 logger.info("Removing paused request %s from input_batch", req_id)
                 self.input_batch.remove_request(req_id)
+                # Track that this request was paused
+                self.paused_req_ids.add(req_id)
 
         # Find requests that are in scheduler output but not in input_batch
         # (restore from pausing)
         restored_req_ids = scheduled_req_ids - current_batch_req_ids
         for req_id in restored_req_ids:
-            # Add back the request that was paused
-            if req_id in self.requests:
+            # Only restore requests that were previously paused
+            if req_id in self.paused_req_ids and req_id in self.requests:
                 logger.info("Restoring paused request %s to input_batch", req_id)
                 req_state = self.requests[req_id]
                 self.input_batch.add_request(req_state)
+                # Remove from paused tracking since it's now restored
+                self.paused_req_ids.discard(req_id)
 
         for i, req_id in enumerate(req_data.req_ids):
             req_state: SamplingRequestState = self.requests[req_id]
@@ -1487,6 +1494,8 @@ class ChunkedPrefillModelRunner(
         if scheduler_output.finished_req_ids:
             for req_id in scheduler_output.finished_req_ids:
                 self.input_batch.remove_request(req_id)
+                # Clean up paused tracking for finished requests
+                self.paused_req_ids.discard(req_id)
                 # TODO: Processing multiple removals at once can break alignment
                 # of logitprocs. Refactor so that we can batch removals to the
                 # `input_batch`
