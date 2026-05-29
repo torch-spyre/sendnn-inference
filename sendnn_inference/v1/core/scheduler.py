@@ -700,7 +700,10 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         request_ids: Union[str, Iterable[str], None],
         finished_status: RequestStatus,
     ) -> list[tuple[str, int]]:
-        """Handles removing finished requests from ongoing_prefills"""
+        """
+        Handles removing finished requests from ongoing_prefills and
+        paused_decoding_requests
+        """
         if isinstance(request_ids, str):
             request_ids = (request_ids,)
 
@@ -715,6 +718,13 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             []
             if request_ids is None
             else [r for r in self.ongoing_prefills if r.request_id not in request_ids]
+        )
+
+        # Also remove from paused_decoding_requests
+        self.paused_decoding_requests = (
+            []
+            if request_ids is None
+            else [r for r in self.paused_decoding_requests if r.request_id not in request_ids]
         )
 
         return aborted_requests
