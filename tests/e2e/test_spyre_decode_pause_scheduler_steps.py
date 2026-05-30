@@ -24,9 +24,9 @@ from spyre_util import ModelInfo
 @pytest.mark.full_model
 @pytest.mark.parametrize("max_num_seqs", [4])
 @pytest.mark.parametrize("max_model_len", [128])
-@pytest.mark.parametrize("max_num_batched_tokens", [256])
+@pytest.mark.parametrize("max_num_batched_tokens", [128])
 @pytest.mark.parametrize("available_blocks", [None])
-def test_volumetric_decode_pausing(
+def test_max_batch_tkv_decode_pausing(
     model: ModelInfo,
     backend: str,
     monkeypatch: pytest.MonkeyPatch,
@@ -36,10 +36,11 @@ def test_volumetric_decode_pausing(
     max_num_batched_tokens: int,
     available_blocks: int,
 ):
-    """Test that requests are scheduled when prefill volumetric constraint is satisfied.
+    """Test that requests are scheduled and removed on time before max batch tkv
+    exceeds the limit.
 
-    With holdback, we only check current_max_tkv * batch_size <= limit,
-    not future volumetric constraints.
+    With pausing, we only check current_max_tkv * batch_size <= limit,
+    not future max_batch_tkv values.
 
     Configuration:
         * max_num_seqs: 2
@@ -50,7 +51,6 @@ def test_volumetric_decode_pausing(
     """
 
     # Volume right after prefill: 3 * 82 = 246 (should pass)
-    # Old scheduler would check future: TODO (would fail)
     max_batch_tkv_limit = 256
 
     requests = [
@@ -132,7 +132,7 @@ def test_volumetric_decode_pausing(
             # Prefill sequence 2
             # With holdback: sequence 2 CAN be scheduled
             # Decode volume: 3 * 82 = 246 <= 256 (passes)
-            # Old scheduler would block: future volume 3 * TODO = 330 > 256
+            # Old scheduler would block: future volume 3 * 91 = 273 > 256
             "step": 5,
             "tkv": 66,
             "waiting": [],
@@ -249,10 +249,10 @@ def test_volumetric_decode_pausing(
 @pytest.mark.chunked_prefill
 @pytest.mark.full_model
 @pytest.mark.parametrize("max_num_seqs", [2])
-@pytest.mark.parametrize("max_model_len", [2048])
+@pytest.mark.parametrize("max_model_len", [128])
 @pytest.mark.parametrize("max_num_batched_tokens", [128])
 @pytest.mark.parametrize("available_blocks", [None])
-def test_prefill_volumetric_violated(
+def test_prefill_exceeds_max_batch_tkv(
     model: ModelInfo,
     backend: str,
     monkeypatch: pytest.MonkeyPatch,
@@ -265,14 +265,14 @@ def test_prefill_volumetric_violated(
     """Test that requests are blocked when the volumetric constraint is immediately
     violated after prefill.
 
-    Even with holdback, if prefill volume exceeds limit, request cannot be scheduled.
+    Even with pausing, if prefill volume exceeds limit, request cannot be scheduled.
 
     Configuration:
         * max_num_seqs: 2
         * number of prompts: 2
             * 0: len = 25, max tokens = 7, step joining = 0
             * 1: len = 25, max tokens = 6, step joining = 0
-            * 1: len = 66, max tokens = 3, step joining = 0
+            * 2: len = 66, max tokens = 3, step joining = 0
     """
 
     # Volume right after prefill: 3 * 89 = 267 (fails)

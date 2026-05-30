@@ -1007,6 +1007,9 @@ class ChunkedPrefillModelRunner(
         input_tokens = input_tokens.unsqueeze(0).clone()
         input_positions = input_positions.unsqueeze(0).clone()
 
+        # Set tkv to prompt length at each prefill step
+        self.tkv = prompt_len
+
         # NOTE(wallas): Looks like we need to use multiple of blocks for prefill
         # so, later we use model.n_pads_right to get right logits.
         # In my naive mind this would be the `request_tkv` below,
@@ -1287,15 +1290,9 @@ class ChunkedPrefillModelRunner(
         assert sampling_params is not None, "sampling_params are required for this model runner"
         assert prompt_token_ids is not None, "prompt token ids are required for this model runner"
 
-        is_new_batch = self.input_batch.num_reqs == 0
-        prompt_len = len(prompt_token_ids)
         mm_features = getattr(request, "mm_features", None)
 
         self.prefill_batch.clear_requests()
-
-        # set the new tkv to the prompt length if starting a new decode batch
-        if is_new_batch:
-            self.tkv = prompt_len
 
         block_ids_per_kv_cache_group = request.block_ids
         assert len(block_ids_per_kv_cache_group) == 1
@@ -1350,16 +1347,6 @@ class ChunkedPrefillModelRunner(
                 req_id,
             )
             request.cached_mm_embeddings = None
-
-        # Last prefill: we might need to update the tkv
-        req_n_blocks = math.ceil(prompt_len / self.block_size)
-        cur_n_blocks = math.ceil(self.tkv / self.block_size)
-        new_n_blocks = max(req_n_blocks, cur_n_blocks)
-        assert new_n_blocks > 0
-        base_n_tokens = (new_n_blocks - 1) * self.block_size
-        req_tkv_new_block = base_n_tokens + (prompt_len - 1) % self.block_size + 1
-        cur_tkv_new_block = base_n_tokens + (self.tkv - 1) % self.block_size + 1
-        self.tkv = max(req_tkv_new_block, cur_tkv_new_block)
 
         # Last prefill we need to setup the logitsprocessors to sampling
         prefill_index = self.input_batch.add_request(request)
