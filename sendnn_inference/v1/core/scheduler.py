@@ -378,7 +378,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             request = holdback_queue[0]
 
             if self.can_schedule_prefill(request):
-                block_params = self._get_block_params_for_request(request)
+                block_params = self._get_block_params_for_request(request, True)
                 block_alloc_params[request.request_id] = block_params
                 if not self._are_blocks_available(request, block_params):
                     # can't schedule the request

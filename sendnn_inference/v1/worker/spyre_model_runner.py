@@ -1142,7 +1142,9 @@ class ChunkedPrefillModelRunner(
         max_n_blocks = 0
 
         for req_id in req_ids:
-            max_n_blocks = max(max_n_blocks, len(self._get_blocks(req_id)))
+            req_state: SamplingRequestState = self.requests[req_id]
+            actual_blocks = math.ceil((req_state.num_computed_tokens + 1) / self.block_size)
+            max_n_blocks = max(max_n_blocks, actual_blocks)
 
         # We'll calculate tkv on the fly, it is the max num computed tokens
         # of a request since there is no tokens left padding, only for blocks
@@ -1153,8 +1155,16 @@ class ChunkedPrefillModelRunner(
 
             req_state = self.requests[req_id]
 
+            # input token and position of the token generated in the last step
+            generation_token = req_state.output_token_ids[-1]
+            input_tokens.append([generation_token])
+            input_positions.append([req_state.num_computed_tokens])
+            actual_blocks = math.ceil((req_state.num_computed_tokens + 1) / self.block_size)
+
             # filling block table with padding blocks to make it rectangular
             blocks = self._get_blocks(req_id)
+            # since we preallocate the block list can go beyond the current block
+            blocks = blocks[:actual_blocks]
             left_pad_blocks_count = max_n_blocks - len(blocks)
             block_ids = [0] * left_pad_blocks_count + blocks
             block_table.append(block_ids)
@@ -1166,11 +1176,6 @@ class ChunkedPrefillModelRunner(
             offset = req_state.num_computed_tokens % self.block_size
             slot = [start_slot + offset]
             slot_mapping.append(slot)
-
-            # input token and position of the token generated in the last step
-            generation_token = req_state.output_token_ids[-1]
-            input_tokens.append([generation_token])
-            input_positions.append([req_state.num_computed_tokens])
 
             # Calculate left padding on the fly
             left_padding = left_pad_blocks_count * self.block_size

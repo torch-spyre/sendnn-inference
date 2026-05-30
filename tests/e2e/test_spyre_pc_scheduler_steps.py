@@ -81,10 +81,10 @@ def test_prefix_hit_within_batch(
             "waiting": ["1"],
             "running": ["0"],
             "request_outputs": [],
-            "n_used_blocks": 3,
+            "n_used_blocks": 4,
             "n_prefix_hits": 0,
-            "block_tables": {"0": [1, 2, 3]},
-            "block_ref_count": {1: 1, 2: 1, 3: 1},
+            "block_tables": {"0": [1, 2, 3, 4]},
+            "block_ref_count": {1: 1, 2: 1, 3: 1, 4: 1},
         },
         {  # prefill chunk 2 seq 0
             "step": 2,
@@ -92,10 +92,10 @@ def test_prefix_hit_within_batch(
             "waiting": ["1"],
             "running": ["0"],
             "request_outputs": ["0"],
-            "n_used_blocks": 3,
+            "n_used_blocks": 4,
             "n_prefix_hits": 0,
-            "block_tables": {"0": [1, 2, 3]},
-            "block_ref_count": {1: 1, 2: 1, 3: 1},
+            "block_tables": {"0": [1, 2, 3, 4]},
+            "block_ref_count": {1: 1, 2: 1, 3: 1, 4: 1},
         },
         {  # prefill chunk 2 seq 1
             # prefix hit!
@@ -104,13 +104,13 @@ def test_prefix_hit_within_batch(
             "waiting": [],
             "running": ["1", "0"],
             "request_outputs": ["1"],
-            "n_used_blocks": 4,
+            "n_used_blocks": 5,
             "n_prefix_hits": 0,
             # each chunk has two blocks. Due to padding, the first chunk has
             # only one usable block
             "n_cached_blocks": 1,
-            "block_tables": {"0": [1, 2, 3], "1": [1, 2, 4]},
-            "block_ref_count": {1: 2, 2: 2, 3: 1, 4: 1},
+            "block_tables": {"0": [1, 2, 3, 4], "1": [1, 2, 5]},
+            "block_ref_count": {1: 2, 2: 2, 3: 1, 4: 1, 5: 1},
         },
         {
             # Decode 1 of request 0.
@@ -361,7 +361,7 @@ def test_prefix_hit_decoded_block_within_batch(
             "waiting": [],
             "running": ["0"],
             "request_outputs": ["0"],
-            "n_used_blocks": 2,
+            "n_used_blocks": 4,
             "n_prefix_hits": 0,
         },
         {
@@ -371,7 +371,7 @@ def test_prefix_hit_decoded_block_within_batch(
             "waiting": [],
             "running": ["0"],
             "request_outputs": ["0"],
-            "n_used_blocks": 2,
+            "n_used_blocks": 4,
         },
         {
             # Decode 3 of request 0.
@@ -381,7 +381,7 @@ def test_prefix_hit_decoded_block_within_batch(
             "waiting": [],
             "running": ["0"],
             "request_outputs": ["0"],
-            "n_used_blocks": 3,
+            "n_used_blocks": 4,
         },
         {
             # Decode 66 of request 0.
@@ -390,7 +390,7 @@ def test_prefix_hit_decoded_block_within_batch(
             "waiting": ["1"],
             "running": ["0"],
             "request_outputs": ["0"],
-            "n_used_blocks": 3,
+            "n_used_blocks": 4,
         },
         {  # prefill chunk 2 seq 1
             # no prefix hit, always recompute last chunk
@@ -401,12 +401,12 @@ def test_prefix_hit_decoded_block_within_batch(
             "waiting": [],
             "running": ["1", "0"],
             "request_outputs": ["1"],
-            "n_used_blocks": 5,
+            "n_used_blocks": 6,
             "n_prefix_hits": 0,
             "n_cached_blocks": 2,
             "block_tables": {
-                "0": [1, 2, 3],
-                "1": [1, 2, 4, 5],
+                "0": [1, 2, 3, 4],
+                "1": [1, 2, 5, 6],
                 # Note: new block id 4 instead of 3 here as vLLM does not
                 # currently deduplicate decoded blocks and so do we:
                 # https://github.com/vllm-project/vllm/blob/1166c31cc78073378a16509fbbbed4cb4f040a4d/vllm/v1/core/block_pool.py#L46
@@ -518,7 +518,7 @@ def test_prefix_hit_not_in_batch(
             "waiting": [],
             "running": ["0"],
             "request_outputs": [],
-            "n_used_blocks": 3,
+            "n_used_blocks": 4,
             "n_prefix_hits": 0,
         },
         {  # prefill chunk 2 seq 0
@@ -527,10 +527,10 @@ def test_prefix_hit_not_in_batch(
             "waiting": [],
             "running": ["0"],
             "request_outputs": ["0"],
-            "n_used_blocks": 3,
+            "n_used_blocks": 4,
             "n_prefix_hits": 0,
             "block_tables": {
-                "0": [1, 2, 3],
+                "0": [1, 2, 3, 4],
             },
         },
         {
@@ -673,7 +673,7 @@ def test_limit_blocks_no_prefix_hit(
             "waiting": [],
             "running": ["0"],
             "request_outputs": [],
-            "n_used_blocks": 3,
+            "n_used_blocks": 4,
             "n_prefix_hits": 0,
         },
         {  # prefill chunk 2 seq 0
@@ -682,7 +682,7 @@ def test_limit_blocks_no_prefix_hit(
             "waiting": [],
             "running": ["0"],
             "request_outputs": ["0"],
-            "n_used_blocks": 3,
+            "n_used_blocks": 4,
             "n_prefix_hits": 0,
         },
         {
@@ -702,7 +702,7 @@ def test_limit_blocks_no_prefix_hit(
             "waiting": [],
             "running": ["1"],
             "request_outputs": [],
-            "n_used_blocks": 3,
+            "n_used_blocks": 4,
             "n_prefix_hits": 0,
         },
         {  # prefill chunk 2 seq 1
@@ -711,7 +711,7 @@ def test_limit_blocks_no_prefix_hit(
             "waiting": [],
             "running": ["1"],
             "request_outputs": ["1"],
-            "n_used_blocks": 3,
+            "n_used_blocks": 4,
             "n_prefix_hits": 0,
         },
         {
@@ -732,7 +732,7 @@ def test_limit_blocks_no_prefix_hit(
             "waiting": [],
             "running": ["2"],
             "request_outputs": [],
-            "n_used_blocks": 3,
+            "n_used_blocks": 4,
             "n_prefix_hits": 0,
         },
         {  # prefill chunk 2 seq 2
@@ -741,7 +741,7 @@ def test_limit_blocks_no_prefix_hit(
             "waiting": [],
             "running": ["2"],
             "request_outputs": ["2"],
-            "n_used_blocks": 3,
+            "n_used_blocks": 4,
             "n_prefix_hits": 0,
         },
         {
@@ -867,10 +867,10 @@ def test_double_prefix_hit_within_batch(
             "waiting": ["1", "2", "3"],
             "running": ["0"],
             "request_outputs": [],
-            "n_used_blocks": 3,
+            "n_used_blocks": 4,
             "n_prefix_hits": 0,
-            "block_tables": {"0": [1, 2, 3]},
-            "block_ref_count": {1: 1, 2: 1, 3: 1},
+            "block_tables": {"0": [1, 2, 3, 4]},
+            "block_ref_count": {1: 1, 2: 1, 3: 1, 4: 1},
         },
         {  # prefill chunk 2 seq 0
             "step": 2,
@@ -878,10 +878,10 @@ def test_double_prefix_hit_within_batch(
             "waiting": ["1", "2", "3"],
             "running": ["0"],
             "request_outputs": ["0"],
-            "n_used_blocks": 3,
+            "n_used_blocks": 4,
             "n_prefix_hits": 0,
-            "block_tables": {"0": [1, 2, 3]},
-            "block_ref_count": {1: 1, 2: 1, 3: 1},
+            "block_tables": {"0": [1, 2, 3, 4]},
+            "block_ref_count": {1: 1, 2: 1, 3: 1, 4: 1},
         },
         {  # prefill chunk 2 seq 1
             # prefix hit!
@@ -891,11 +891,11 @@ def test_double_prefix_hit_within_batch(
             "waiting": ["2", "3"],
             "running": ["1", "0"],
             "request_outputs": ["1"],
-            "n_used_blocks": 4,
+            "n_used_blocks": 5,
             "n_prefix_hits": 0,
-            "block_tables": {"0": [1, 2, 3], "1": [1, 2, 4]},
-            "block_ref_count": {1: 2, 2: 2, 3: 1, 4: 1},
-            "prefill_slot_mappings": {"1": [0, 4]},  # Fully masked prefill
+            "block_tables": {"0": [1, 2, 3, 4], "1": [1, 2, 5]},
+            "block_ref_count": {1: 2, 2: 2, 3: 1, 4: 1, 5: 1},
+            "prefill_slot_mappings": {"1": [0, 5]},  # Fully masked prefill
         },
         {  # prefill chunk 1 seq 2
             "step": 4,
@@ -903,10 +903,10 @@ def test_double_prefix_hit_within_batch(
             "waiting": ["3"],
             "running": ["2", "1", "0"],
             "request_outputs": [],
-            "n_used_blocks": 7,
+            "n_used_blocks": 9,
             "n_prefix_hits": 0,
-            "block_tables": {"0": [1, 2, 3], "1": [1, 2, 4], "2": [5, 6, 7]},
-            "block_ref_count": {1: 2, 2: 2, 3: 1, 4: 1, 5: 1, 6: 1, 7: 1},
+            "block_tables": {"0": [1, 2, 3, 4], "1": [1, 2, 5], "2": [6, 7, 8, 9]},
+            "block_ref_count": {1: 2, 2: 2, 3: 1, 4: 1, 5: 1, 6: 1, 7: 1, 8: 1, 9: 1},
         },
         {  # prefill chunk 2 seq 2
             "step": 5,
@@ -914,10 +914,10 @@ def test_double_prefix_hit_within_batch(
             "waiting": ["3"],
             "running": ["2", "1", "0"],
             "request_outputs": ["2"],
-            "n_used_blocks": 7,
+            "n_used_blocks": 9,
             "n_prefix_hits": 0,
-            "block_tables": {"0": [1, 2, 3], "1": [1, 2, 4], "2": [5, 6, 7]},
-            "block_ref_count": {1: 2, 2: 2, 3: 1, 4: 1, 5: 1, 6: 1, 7: 1},
+            "block_tables": {"0": [1, 2, 3, 4], "1": [1, 2, 5], "2": [6, 7, 8, 9]},
+            "block_ref_count": {1: 2, 2: 2, 3: 1, 4: 1, 5: 1, 6: 1, 7: 1, 8: 1, 9: 1},
         },
         {  # prefill chunk 2 seq 3
             # prefix hit!
@@ -927,10 +927,10 @@ def test_double_prefix_hit_within_batch(
             "waiting": [],
             "running": ["3", "2", "1", "0"],
             "request_outputs": ["3"],
-            "n_used_blocks": 8,
+            "n_used_blocks": 10,
             "n_prefix_hits": 0,
-            "block_tables": {"0": [1, 2, 3], "1": [1, 2, 4], "2": [5, 6, 7], "3": [1, 2, 8]},
-            "block_ref_count": {1: 3, 2: 3, 3: 1, 4: 1, 5: 1, 6: 1, 7: 1, 8: 1},
+            "block_tables": {"0": [1, 2, 3, 4], "1": [1, 2, 5], "2": [6, 7, 8, 9], "3": [1, 2, 10]},
+            "block_ref_count": {1: 3, 2: 3, 3: 1, 4: 1, 5: 1, 6: 1, 7: 1, 8: 1, 9: 1, 10: 1},
         },
         {
             # Decode 1 of request 0, 1, 2, 3
@@ -1048,7 +1048,7 @@ def test_limit_blocks_prefix_hit(
             "waiting": [],
             "running": ["0"],
             "request_outputs": [],
-            "n_used_blocks": 3,
+            "n_used_blocks": 4,
             "n_prefix_hits": 0,
         },
         {  # prefill chunk 2 seq 0
@@ -1057,7 +1057,7 @@ def test_limit_blocks_prefix_hit(
             "waiting": [],
             "running": ["0"],
             "request_outputs": ["0"],
-            "n_used_blocks": 3,
+            "n_used_blocks": 4,
             "n_prefix_hits": 0,
         },
         {
@@ -1077,7 +1077,7 @@ def test_limit_blocks_prefix_hit(
             "waiting": [],
             "running": ["1"],
             "request_outputs": [],
-            "n_used_blocks": 3,
+            "n_used_blocks": 4,
             "n_prefix_hits": 0,
         },
         {  # prefill chunk 2 seq 1
@@ -1086,7 +1086,7 @@ def test_limit_blocks_prefix_hit(
             "waiting": [],
             "running": ["1"],
             "request_outputs": ["1"],
-            "n_used_blocks": 3,
+            "n_used_blocks": 4,
             "n_prefix_hits": 0,
         },
         {
@@ -1212,7 +1212,7 @@ def test_multi_chunk_full_match(
             "waiting": ["1"],
             "running": ["0"],
             "request_outputs": [],
-            "n_used_blocks": 6,
+            "n_used_blocks": 7,
             "n_prefix_hits": 0,
         },
         {  # prefill chunk 2 seq 0
@@ -1221,7 +1221,7 @@ def test_multi_chunk_full_match(
             "waiting": ["1"],
             "running": ["0"],
             "request_outputs": [],
-            "n_used_blocks": 6,
+            "n_used_blocks": 7,
             "n_prefix_hits": 0,
         },
         {  # prefill chunk 3 seq 0
@@ -1230,12 +1230,12 @@ def test_multi_chunk_full_match(
             "waiting": ["1"],
             "running": ["0"],
             "request_outputs": ["0"],
-            "n_used_blocks": 6,
+            "n_used_blocks": 7,
             "n_prefix_hits": 0,
             # up until this point nothing interesting happened
             # with the block table
-            "block_tables": {"0": [1, 2, 3, 4, 5, 6]},
-            "block_ref_count": {1: 1, 2: 1, 3: 1, 4: 1, 5: 1, 6: 1},
+            "block_tables": {"0": [1, 2, 3, 4, 5, 6, 7]},
+            "block_ref_count": {1: 1, 2: 1, 3: 1, 4: 1, 5: 1, 6: 1, 7: 1},
         },
         {  # prefill chunk 3 seq 1
             # prefix hit!
@@ -1245,14 +1245,14 @@ def test_multi_chunk_full_match(
             "waiting": [],
             "running": ["1", "0"],
             "request_outputs": ["1"],
-            "n_used_blocks": 7,
+            "n_used_blocks": 8,
             "n_prefix_hits": 0,
             # The number of cached blocks is determined up front
             "n_cached_blocks": 4,  # can reuse the first two chunk (4 blocks)
             # Now, although the last chunk has to be recomputed,
             # the blocks are still shared.
-            "block_tables": {"0": [1, 2, 3, 4, 5, 6], "1": [1, 2, 3, 4, 5, 7]},
-            "block_ref_count": {1: 2, 2: 2, 3: 2, 4: 2, 5: 2, 6: 1, 7: 1},
+            "block_tables": {"0": [1, 2, 3, 4, 5, 6, 7], "1": [1, 2, 3, 4, 5, 8]},
+            "block_ref_count": {1: 2, 2: 2, 3: 2, 4: 2, 5: 2, 6: 1, 7: 1, 8: 1},
         },
         {
             # Decode 1 of request 0.
@@ -1370,7 +1370,7 @@ def test_multi_chunk_partial_match_misaligned(
             "waiting": ["1"],
             "running": ["0"],
             "request_outputs": [],
-            "n_used_blocks": 6,
+            "n_used_blocks": 7,
             "n_prefix_hits": 0,
         },
         {  # prefill chunk 2 seq 0
@@ -1379,7 +1379,7 @@ def test_multi_chunk_partial_match_misaligned(
             "waiting": ["1"],
             "running": ["0"],
             "request_outputs": [],
-            "n_used_blocks": 6,
+            "n_used_blocks": 7,
             "n_prefix_hits": 0,
         },
         {  # prefill chunk 3 seq 0
@@ -1388,7 +1388,7 @@ def test_multi_chunk_partial_match_misaligned(
             "waiting": ["1"],
             "running": ["0"],
             "request_outputs": ["0"],
-            "n_used_blocks": 6,
+            "n_used_blocks": 7,
             "n_prefix_hits": 0,
         },
         {  # prefill chunk 2 seq 1
@@ -1399,7 +1399,7 @@ def test_multi_chunk_partial_match_misaligned(
             "waiting": [],
             "running": ["1", "0"],
             "request_outputs": [],
-            "n_used_blocks": 8,
+            "n_used_blocks": 9,
             "n_prefix_hits": 0,
             "n_cached_blocks": 2,
             "prefill_slot_mappings": {"1": [0, 4]},  # Block 3 (prefix hit) is masked out
@@ -1410,14 +1410,14 @@ def test_multi_chunk_partial_match_misaligned(
             "waiting": [],
             "running": ["1", "0"],
             "request_outputs": ["1"],
-            "n_used_blocks": 9,
+            "n_used_blocks": 10,
             "n_prefix_hits": 0,
             "n_cached_blocks": 2,
             "block_tables": {
-                "0": [1, 2, 3, 4, 5, 6],
-                "1": [1, 2, 3, 7, 8, 9],
+                "0": [1, 2, 3, 4, 5, 6, 7],
+                "1": [1, 2, 3, 8, 9, 10],
             },
-            "prefill_slot_mappings": {"1": [8, 9]},
+            "prefill_slot_mappings": {"1": [9, 10]},
         },
         {
             # Decode 1 of request 0.
@@ -1526,7 +1526,7 @@ def test_multi_chunk_partial_match_aligned(
             "waiting": ["1"],
             "running": ["0"],
             "request_outputs": [],
-            "n_used_blocks": 6,
+            "n_used_blocks": 7,
             "n_prefix_hits": 0,
         },
         {  # prefill chunk 2 seq 0
@@ -1535,7 +1535,7 @@ def test_multi_chunk_partial_match_aligned(
             "waiting": ["1"],
             "running": ["0"],
             "request_outputs": [],
-            "n_used_blocks": 6,
+            "n_used_blocks": 7,
             "n_prefix_hits": 0,
         },
         {  # prefill chunk 3 seq 0
@@ -1544,7 +1544,7 @@ def test_multi_chunk_partial_match_aligned(
             "waiting": ["1"],
             "running": ["0"],
             "request_outputs": ["0"],
-            "n_used_blocks": 6,
+            "n_used_blocks": 7,
             "n_prefix_hits": 0,
         },
         {  # prefill chunk 3 seq 1
@@ -1554,12 +1554,12 @@ def test_multi_chunk_partial_match_aligned(
             "waiting": [],
             "running": ["1", "0"],
             "request_outputs": ["1"],
-            "n_used_blocks": 8,
+            "n_used_blocks": 9,
             "n_prefix_hits": 0,
             "n_cached_blocks": 4,
             "block_tables": {
-                "0": [1, 2, 3, 4, 5, 6],
-                "1": [1, 2, 3, 4, 7, 8],
+                "0": [1, 2, 3, 4, 5, 6, 7],
+                "1": [1, 2, 3, 4, 8, 9],
             },
         },
         {
@@ -1669,9 +1669,9 @@ def test_first_chunk_partial_match(
             "waiting": ["1"],
             "running": ["0"],
             "request_outputs": ["0"],
-            "n_used_blocks": 1,
+            "n_used_blocks": 2,
             "n_prefix_hits": 0,
-            "block_tables": {"0": [1]},
+            "block_tables": {"0": [1, 2]},
         },
         {  # prefill seq 1. This step was crashing before
             "step": 2,
@@ -1679,11 +1679,11 @@ def test_first_chunk_partial_match(
             "waiting": [],
             "running": ["1", "0"],
             "request_outputs": [],
-            "n_used_blocks": 4,
+            "n_used_blocks": 6,
             "n_prefix_hits": 0,
-            "block_tables": {"0": [1], "1": [1, 2, 3, 4]},
+            "block_tables": {"0": [1, 2], "1": [1, 3, 4, 5, 6]},
             "prefill_slot_mappings": {
-                "1": [0, 0, 2]  # One mask for left padding, one mask for block `1` to not be
+                "1": [0, 0, 3]  # One mask for left padding, one mask for block `1` to not be
                 # overwritten since it hit cache
             },
         },
@@ -1693,10 +1693,10 @@ def test_first_chunk_partial_match(
             "waiting": [],
             "running": ["1", "0"],
             "request_outputs": ["1"],
-            "n_used_blocks": 5,
+            "n_used_blocks": 6,
             "n_prefix_hits": 0,
-            "block_tables": {"0": [1], "1": [1, 2, 3, 4, 5]},
-            "prefill_slot_mappings": {"1": [3, 4, 5]},
+            "block_tables": {"0": [1, 2], "1": [1, 3, 4, 5, 6]},
+            "prefill_slot_mappings": {"1": [4, 5, 6]},
         },
         {  # decode
             "step": 4,
