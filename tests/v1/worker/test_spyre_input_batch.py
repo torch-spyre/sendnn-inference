@@ -7,9 +7,18 @@ import torch
 from vllm.sampling_params import SamplingParams
 from vllm.utils.platform_utils import is_pin_memory_available
 from vllm.utils.torch_utils import make_tensor_with_pad
-from vllm.v1.sample.logits_processor import LogitsProcessors
+from vllm.v1.sample.logits_processor import (
+    BatchUpdate,
+    LogitsProcessor,
+    LogitsProcessors,
+    MoveDirectionality,
+)
 from vllm.v1.sample.metadata import SamplingMetadata
 
+from sendnn_inference.v1.sample.spyre_logits_processor import (
+    LogitProcessorWrapper,
+    SpyreBatchUpdate,
+)
 from sendnn_inference.v1.worker.spyre_input_batch import SamplingInputBatch, SamplingRequestState
 
 VOCAB_SIZE = 1024
@@ -280,3 +289,127 @@ def test_sampling_metadata_topk_edges():
 
     assert input_batch.top_k[0] == VOCAB_SIZE
     assert input_batch.top_k[1] == VOCAB_SIZE
+
+
+@pytest.mark.cpu
+@pytest.mark.worker
+def test_logitproc_wrapper_pause_resume():
+    """
+    Verifies that LogitProcessorWrapper saves and restores the exact logitproc
+    object across pause → (add new request) → resume, guaranteeing that:
+    - B's per-request state is not overwritten by the new request D.
+    - After resume, wrapper.logitprocs[dense_index] is the *same Python object*
+      that existed before the pause (identity check), so all accumulated state
+      (grammar progress, token counts, etc.) is intact.
+
+    The batch events used here are exactly what pause_request / resume_request
+    emit for a 4-slot batch with A(slot=0), B(slot=1), C(slot=2), D(slot=3):
+
+      pause B  → paused(1,"B"), UNIDIRECTIONAL(1,2), UNIDIRECTIONAL(2,3)
+      add D    → added(2, D_params)
+      resume B → added(3, B_params), SWAP(3,2), SWAP(2,1), resumed(1,"B")
+    """
+
+    class TrackingLogitsProcessor(LogitsProcessor):
+        """Minimal processor that records which request it belongs to."""
+
+        def __init__(self, vllm_config, device, is_pin_memory):
+            self.label: str | None = None
+
+        def is_argmax_invariant(self) -> bool:
+            return True
+
+        def update_state(self, batch_update: BatchUpdate | None) -> None:
+            if batch_update is None:
+                return
+            for _, params, _, _ in batch_update.added:
+                self.label = f"t{params.max_tokens}"
+            for _ in batch_update.removed:
+                self.label = None
+
+        def apply(self, logits: torch.Tensor) -> torch.Tensor:
+            return logits
+
+    wrapper = LogitProcessorWrapper(
+        logit_processor=TrackingLogitsProcessor,
+        vllm_config=None,
+        device=torch.device("cpu"),
+        is_pin_memory=False,
+        batch_size=4,
+    )
+
+    def p(max_tokens: int) -> SamplingParams:
+        return SamplingParams(max_tokens=max_tokens, temperature=0)
+
+    # ── Step 1: add A(dense=0), B(dense=1), C(dense=2) ──────────────────────
+    wrapper.update_state(
+        SpyreBatchUpdate(
+            batch_size=3,
+            added=[(0, p(5), [], []), (1, p(10), [], []), (2, p(7), [], [])],
+            removed=[],
+            moved=[],
+            paused=[],
+            resumed=[],
+        )
+    )
+    assert wrapper.logitprocs[0].label == "t5"
+    assert wrapper.logitprocs[1].label == "t10"
+    assert wrapper.logitprocs[2].label == "t7"
+
+    b_obj = wrapper.logitprocs[1]  # hold ref to B's original logitproc object
+
+    # ── Step 2: pause B (dense=1) ────────────────────────────────────────────
+    # pause_request emits: paused(1,"B"), UNIDIRECTIONAL(1,2), UNIDIRECTIONAL(2,3)
+    wrapper.update_state(
+        SpyreBatchUpdate(
+            batch_size=2,
+            added=[],
+            removed=[],
+            moved=[
+                (1, 2, MoveDirectionality.UNIDIRECTIONAL),
+                (2, 3, MoveDirectionality.UNIDIRECTIONAL),
+            ],
+            paused=[(1, "B")],
+            resumed=[],
+        )
+    )
+    assert wrapper._saved.get("B") is b_obj, "B's logitproc must be in _saved"
+    assert wrapper.logitprocs[0].label == "t5"  # A unchanged at dense=0
+    assert wrapper.logitprocs[1].label == "t7"  # C shifted to dense=1
+
+    # ── Step 3: add D (dense=2) while B is paused ────────────────────────────
+    # add_request(D) emits: added(2, D_params)  — no moves since 2 == tmp_dense
+    wrapper.update_state(
+        SpyreBatchUpdate(
+            batch_size=3,
+            added=[(2, p(3), [], [])],
+            removed=[],
+            moved=[],
+            paused=[],
+            resumed=[],
+        )
+    )
+    assert wrapper.logitprocs[2].label == "t3"  # D at dense=2
+    assert wrapper._saved.get("B") is b_obj, "B's state must survive D being added"
+
+    # ── Step 4: resume B (dense=1) ───────────────────────────────────────────
+    # resume_request emits: added(3,B_params), SWAP(3,2), SWAP(2,1), resumed(1,"B")
+    wrapper.update_state(
+        SpyreBatchUpdate(
+            batch_size=4,
+            added=[],
+            removed=[],
+            moved=[
+                (3, 2, MoveDirectionality.SWAP),
+                (2, 1, MoveDirectionality.SWAP),
+            ],
+            paused=[],
+            resumed=[(3, "B")],
+        )
+    )
+    assert wrapper.logitprocs[1] is b_obj, "B's exact logitproc object must be restored"
+    assert wrapper.logitprocs[0].label == "t5"  # A at dense=0
+    assert wrapper.logitprocs[1].label == "t10"  # B at dense=1 (saved state)
+    assert wrapper.logitprocs[2].label == "t7"  # C at dense=2
+    assert wrapper.logitprocs[3].label == "t3"  # D at dense=3
+    assert "B" not in wrapper._saved  # saved state consumed on resume

@@ -1447,12 +1447,12 @@ class ChunkedPrefillModelRunner(
         # Find requests that are in input_batch but not in scheduler output (paused)
         paused_req_ids = current_batch_req_ids - scheduled_req_ids
         for req_id in paused_req_ids:
-            # Only remove if it's not a finished request (finished requests are handled separately)
+            # Only pause if it's not a finished request (finished requests are handled separately)
             if req_id not in (scheduler_output.finished_req_ids or []):
-                logger.info("Removing paused request %s from input_batch", req_id)
-                self.input_batch.remove_request(req_id)
-                # Track that this request was paused
+                logger.info("Pausing request %s from input_batch", req_id)
+                self.input_batch.pause_request(req_id)
                 self.paused_req_ids.add(req_id)
+                self.input_batch.refresh_metadata()
 
         # Find requests that are in scheduler output but not in input_batch
         # (restore from pausing)
@@ -1462,9 +1462,9 @@ class ChunkedPrefillModelRunner(
             if req_id in self.paused_req_ids and req_id in self.requests:
                 logger.info("Restoring paused request %s to input_batch", req_id)
                 req_state = self.requests[req_id]
-                self.input_batch.add_request(req_state)
-                # Remove from paused tracking since it's now restored
+                self.input_batch.resume_request(req_id, req_state)
                 self.paused_req_ids.discard(req_id)
+                self.input_batch.refresh_metadata()
 
         for i, req_id in enumerate(req_data.req_ids):
             req_state: SamplingRequestState = self.requests[req_id]
