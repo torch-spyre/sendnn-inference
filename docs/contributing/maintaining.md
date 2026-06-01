@@ -11,6 +11,11 @@ When a new version of vLLM is released, the plugin usually needs to be updated t
 
 ### Updating vLLM version
 
+!!! tip
+    If you are using Claude Code, the `/update-vllm <version>` skill (project-level, defined in
+    `.claude/skills/update-vllm/`) walks through this entire procedure including the test sweep,
+    compat-shim cheat sheet, and PR template.
+
 To update the version of vLLM used by the plugin, the pyproject.toml needs to be updated in two places:
 
 1. [tool.uv.sources.vllm](https://github.com/torch-spyre/sendnn-inference/blob/v2.0.0-rc.1/pyproject.toml#L79)
