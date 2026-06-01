@@ -429,7 +429,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             self.ongoing_prefills.extend(new_prefills)
 
         for finished_request in outputs.finished_req_ids | (outputs.preempted_req_ids or set()):
-            blocks = self.reserved_blocks.pop(finished_request)
+            blocks = self.reserved_blocks.pop(finished_request, 0)
             self.total_reserved_blocks -= blocks
             assert self.total_reserved_blocks >= 0
 
