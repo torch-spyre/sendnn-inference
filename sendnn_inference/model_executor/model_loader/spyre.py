@@ -105,7 +105,7 @@ class SpyreCausalLM(nn.Module):
             self.parallel_config
         )
 
-        if self.config.model_type in {"llama", "granite", "granitemoehybrid", "granite_swa", "mistral"}:
+        if self.config.model_type in {"llama", "granite", "granitemoehybrid", "granite_swa"}:
             self.kv_cache_specs["num_layers"] = self.config.num_hidden_layers
             self.kv_cache_specs["head_dim"] = getattr(
                 self.fms_model.config,
@@ -210,16 +210,6 @@ class SpyreCausalLM(nn.Module):
                     trust_remote_code=model_config.trust_remote_code,
                     **model_kwargs,
                 )
-
-        # DEV HACK (mistral SWA): HF Mistral checkpoints lack a "sinks" key, so
-        # FMS's meta-tensor fixup leaves layer.attn.sinks at uninitialized memory.
-        # In practice CPython usually gives a freshly-zeroed page, but that's not
-        # guaranteed — explicitly zero so the SWA-with-sinks path is well-defined.
-        if self.config.model_type == "mistral":
-            for module in self.fms_model.modules():
-                if getattr(module, "has_sinks", False) and hasattr(module, "sinks"):
-                    with torch.no_grad():
-                        module.sinks.data.zero_()
 
         self.fms_model.eval()
         torch.set_grad_enabled(False)
