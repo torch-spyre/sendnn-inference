@@ -121,6 +121,12 @@ class FileStatLogger(StatLoggerBase):
             self.iso_format
         )[:-3]
 
+        if envs_spyre.SENDNN_INFERENCE_SIM_MODE:
+            # In sim mode, virtual timings are emitted directly from the engine
+            # process to sim_metrics.jsonl. The wall-clock fields here are ~0
+            # and would be misleading; skip writing.
+            return
+
         records_to_write: list[str] = []
         for r in iteration_stats.finished_requests:
             # Calculate some estimates to add to the engine stats

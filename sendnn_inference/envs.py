@@ -152,6 +152,21 @@ environment_variables: dict[str, Callable[[], Any]] = {
             _CPU_MM_DTYPE_PLATFORM_DEFAULTS.get(platform.machine(), "float16"),
         )
     ),
+    # Sim-mode: replace the real Spyre forward with a no-op model and substitute
+    # virtual durations into request_metrics.jsonl. Lets us exercise scheduler /
+    # runner / batching logic on a laptop without AIU hardware. Use with
+    # DYNAMO_BACKEND=eager.
+    "SENDNN_INFERENCE_SIM_MODE": lambda: bool(int(os.getenv("SENDNN_INFERENCE_SIM_MODE", "0"))),
+    # Virtual duration (ms) charged for each prefill forward step in sim mode.
+    # Operator-supplied; default 0 means no virtual time accumulates.
+    "SENDNN_INFERENCE_SIM_PREFILL_MS": lambda: float(
+        os.getenv("SENDNN_INFERENCE_SIM_PREFILL_MS", "0")
+    ),
+    # Virtual duration (ms) charged for each decode forward step in sim mode.
+    # Operator-supplied; default 0 means no virtual time accumulates.
+    "SENDNN_INFERENCE_SIM_DECODE_MS": lambda: float(
+        os.getenv("SENDNN_INFERENCE_SIM_DECODE_MS", "0")
+    ),
 }
 # --8<-- [end:env-vars-definition]
 
