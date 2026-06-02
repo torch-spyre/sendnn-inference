@@ -271,7 +271,7 @@ jobs:
           # onnx/, openvino/, or duplicate framework weights). The GHA cache
           # has a 10 GB total limit; keep individual model caches well under
           # that so multiple matrix entries can coexist.
-          MAX_BYTES=$((2 * 1024 * 1024 * 1024))  # 2 GiB
+          MAX_BYTES=$((3 * 1024 * 1024 * 1024))  # 3 GiB (uncompressed; caches are compressed before upload)
           status=0
           for path in "${{ env.model_path }}" "${{ env.model_2_path }}"; do
             if [[ -n "$path" && -d "$path" ]]; then
@@ -279,7 +279,7 @@ jobs:
               human=$(du -sh "$path" | cut -f1)
               echo "Model cache $path: $human ($size bytes)"
               if (( size > MAX_BYTES )); then
-                echo "::error::Model cache at $path is $human, exceeding the 2 GiB limit. Update tools/download_model.py to exclude unused artifacts (onnx/, openvino/, duplicate framework weights, etc)."
+                echo "::error::Model cache at $path is $human, exceeding the 3 GiB limit. Update tools/download_model.py to exclude unused artifacts (onnx/, openvino/, duplicate framework weights, etc)."
                 status=1
               fi
             fi
