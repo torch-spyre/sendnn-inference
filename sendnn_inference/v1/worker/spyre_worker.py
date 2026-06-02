@@ -383,29 +383,25 @@ class SpyreWorker(WorkerBase):
     def load_model(self, *, load_dummy_weights: bool = False) -> None:
         assert self._env_initialized
 
-        # DEV HACK: granite41 sentinel — no real HF repo, skip config.json fetch.
-        if self.model_config.model == "granite41":
-            self.restricted_tokens = []
+        is_local = os.path.isdir(self.model_config.model)
+        if is_local:
+            cf_file = os.path.join(self.model_config.model, "config.json")
         else:
-            is_local = os.path.isdir(self.model_config.model)
-            if is_local:
-                cf_file = os.path.join(self.model_config.model, "config.json")
-            else:
-                cf_file = hf_hub_download(
-                    repo_id=self.model_config.model,
-                    revision=self.model_config.revision,
-                    filename="config.json",
-                )
-            with open(cf_file, "rb") as f:
-                config = json.load(f)
+            cf_file = hf_hub_download(
+                repo_id=self.model_config.model,
+                revision=self.model_config.revision,
+                filename="config.json",
+            )
+        with open(cf_file, "rb") as f:
+            config = json.load(f)
 
-            restricted_tokens = []
-            if tok := config.get("bos_token_id") is not None:
-                restricted_tokens.append(int(tok))
-            if tok := config.get("eos_token_id") is not None:
-                restricted_tokens.append(int(tok))
+        restricted_tokens = []
+        if tok := config.get("bos_token_id") is not None:
+            restricted_tokens.append(int(tok))
+        if tok := config.get("eos_token_id") is not None:
+            restricted_tokens.append(int(tok))
 
-            self.restricted_tokens = restricted_tokens
+        self.restricted_tokens = restricted_tokens
 
         logger.info("load model...")
         # TODO: check additionally if the Spyre card has enough memory

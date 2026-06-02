@@ -105,7 +105,7 @@ class SpyreCausalLM(nn.Module):
             self.parallel_config
         )
 
-        if self.config.model_type in {"llama", "granite", "granitemoehybrid", "granite41", "mistral"}:
+        if self.config.model_type in {"llama", "granite", "granitemoehybrid", "granite_swa", "mistral"}:
             self.kv_cache_specs["num_layers"] = self.config.num_hidden_layers
             self.kv_cache_specs["head_dim"] = getattr(
                 self.fms_model.config,
@@ -152,28 +152,6 @@ class SpyreCausalLM(nn.Module):
         logger.debug("Loading model weights for model %s", model_config.model)
         logger.debug("Model config has dtype: %s", model_config.dtype)
 
-        # DEV HACK: granite41 SWA sentinel — use FMS-native factory with random weights,
-        # skipping HF download / hf_pretrained dispatch.
-        if model_config.model == "granite41":
-            # Re-seed immediately before the factory call so random weights are
-            # reproducible against an out-of-process FMS reference run that does
-            # the same. (vLLM's worker.set_random_seed runs much earlier and the
-            # init code in between consumes random state.) Pass data_type and
-            # device_type explicitly so weight sampling matches the reference.
-            torch.manual_seed(model_config.seed or 0)
-            self.fms_model = get_model(
-                architecture="granite41",
-                variant="8b",
-                device_type="cpu",
-                data_type=self.dtype,
-                distributed_strategy=distributed_strategy,
-                group=dist.group.WORLD,
-                fused_weights=False,
-            )
-            self.fms_model.eval()
-            torch.set_grad_enabled(False)
-            return
-
         # When using quantized models, we might not be using the
         # model_config's dtype, hence we don't log the msg below
         # since it might confuse the user
@@ -209,15 +187,29 @@ class SpyreCausalLM(nn.Module):
             kwargs["world_size"],
             kwargs["rank"],
         ):
-            self.fms_model = get_model(
-                architecture="hf_pretrained",
-                model_path=model_path,
-                distributed_strategy=distributed_strategy,
-                group=dist.group.WORLD,
-                fused_weights=False,
-                trust_remote_code=model_config.trust_remote_code,
-                **model_kwargs,
-            )
+            if self.config.model_type == "granite_swa":
+                # AutoConfig.from_pretrained remaps architectures to GraniteForCausalLM
+                # for vLLM compatibility, so hf_pretrained auto-detection would route
+                # to the wrong FMS model class. Use the explicit architecture instead.
+                self.fms_model = get_model(
+                    architecture="granite_swa",
+                    variant="8b",
+                    model_path=model_path,
+                    source="hf",
+                    distributed_strategy=distributed_strategy,
+                    group=dist.group.WORLD,
+                    fused_weights=False,
+                )
+            else:
+                self.fms_model = get_model(
+                    architecture="hf_pretrained",
+                    model_path=model_path,
+                    distributed_strategy=distributed_strategy,
+                    group=dist.group.WORLD,
+                    fused_weights=False,
+                    trust_remote_code=model_config.trust_remote_code,
+                    **model_kwargs,
+                )
 
         # DEV HACK (mistral SWA): HF Mistral checkpoints lack a "sinks" key, so
         # FMS's meta-tensor fixup leaves layer.attn.sinks at uninitialized memory.
