@@ -164,6 +164,11 @@ ignore = [
     "B905",
 ]
 
+[tool.typos.default.extend-words]
+# `*.ot` is the file extension for HuggingFace Rust framework model weights
+# (rust_model.ot), referenced in tools/download_model.py.
+ot = "ot"
+
 [tool.codespell]
 ignore-words-list = "dout, te, indicies, subtile, ElementE"
 skip = "*.svg,./tests/hf_cache.json"

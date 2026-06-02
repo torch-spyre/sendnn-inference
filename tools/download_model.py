@@ -23,6 +23,15 @@ def main():
         snapshot_download(
             repo_id=args.model,
             revision=args.revision,
+            ignore_patterns=[
+                "onnx/*",
+                "openvino/*",
+                "*.msgpack",
+                "*.h5",
+                "*.ot",
+                "pytorch_model.bin",
+                "pytorch_model.bin.index.json",
+            ],
         )
     else:
         logging.error("Need to provide a HuggingFace model ID.")

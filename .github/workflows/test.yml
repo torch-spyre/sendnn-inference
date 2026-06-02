@@ -264,6 +264,28 @@ jobs:
 
           wait
 
+      - name: "Check HF model cache sizes"
+        if: steps.changed-src-files.outputs.any_changed == 'true'
+        run: |
+          # Guard against accidentally caching multi-GB model artifacts (e.g.
+          # onnx/, openvino/, or duplicate framework weights). The GHA cache
+          # has a 10 GB total limit; keep individual model caches well under
+          # that so multiple matrix entries can coexist.
+          MAX_BYTES=$((2 * 1024 * 1024 * 1024))  # 2 GiB
+          status=0
+          for path in "${{ env.model_path }}" "${{ env.model_2_path }}"; do
+            if [[ -n "$path" && -d "$path" ]]; then
+              size=$(du -sb "$path" | cut -f1)
+              human=$(du -sh "$path" | cut -f1)
+              echo "Model cache $path: $human ($size bytes)"
+              if (( size > MAX_BYTES )); then
+                echo "::error::Model cache at $path is $human, exceeding the 2 GiB limit. Update tools/download_model.py to exclude unused artifacts (onnx/, openvino/, duplicate framework weights, etc)."
+                status=1
+              fi
+            fi
+          done
+          exit $status
+
       - name: "Save HF models cache"
         if: ( steps.changed-src-files.outputs.any_changed == 'true' && github.event_name != 'pull_request' && steps.cache_restore.outputs.cache-hit != 'true' )
         uses: actions/cache/save@v4
