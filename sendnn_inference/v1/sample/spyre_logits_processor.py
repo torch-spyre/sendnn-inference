@@ -19,7 +19,7 @@ logger = init_logger(__name__)
 
 @dataclass(frozen=True)
 class SpyreBatchUpdate(BatchUpdate):
-    """Extends BatchUpdate with pause/resume events for chunked-prefill holdback."""
+    """Extends BatchUpdate with pause/resume lifecycle events."""
 
     # (dense_index, req_id) pairs — request was temporarily removed from the
     # active batch; its logitproc state should be saved and not destroyed.
@@ -27,6 +27,9 @@ class SpyreBatchUpdate(BatchUpdate):
     # (dense_index, req_id) pairs — request is returning to the active batch;
     # its previously saved logitproc state should be restored at dense_index.
     resumed: list[tuple[int, str]] = field(default_factory=list)
+    # req_ids for requests that finished while paused and whose saved state
+    # should be discarded without being restored to an active slot.
+    finished_paused: list[str] = field(default_factory=list)
 
 
 class SpyreBatchUpdateBuilder(BatchUpdateBuilder):
@@ -36,6 +39,7 @@ class SpyreBatchUpdateBuilder(BatchUpdateBuilder):
         super().__init__()
         self._paused: list[tuple[int, str]] = []
         self._resumed: list[tuple[int, str]] = []
+        self._finished_paused: list[str] = []
 
     def pause_append(self, dense_index: int, req_id: str) -> None:
         self._paused.append((dense_index, req_id))
@@ -43,11 +47,15 @@ class SpyreBatchUpdateBuilder(BatchUpdateBuilder):
     def resume_append(self, dense_index: int, req_id: str) -> None:
         self._resumed.append((dense_index, req_id))
 
+    def finished_paused_append(self, req_id: str) -> None:
+        self._finished_paused.append(req_id)
+
     def get_and_reset(self, batch_size: int) -> SpyreBatchUpdate | None:
         paused, self._paused = self._paused, []
         resumed, self._resumed = self._resumed, []
+        finished_paused, self._finished_paused = self._finished_paused, []
         base = super().get_and_reset(batch_size)
-        if base is None and not paused and not resumed:
+        if base is None and not paused and not resumed and not finished_paused:
             return None
         if base is None:
             return SpyreBatchUpdate(
@@ -57,6 +65,7 @@ class SpyreBatchUpdateBuilder(BatchUpdateBuilder):
                 moved=[],
                 paused=paused,
                 resumed=resumed,
+                finished_paused=finished_paused,
             )
         return SpyreBatchUpdate(
             batch_size=base.batch_size,
@@ -65,6 +74,7 @@ class SpyreBatchUpdateBuilder(BatchUpdateBuilder):
             moved=base.moved,
             paused=paused,
             resumed=resumed,
+            finished_paused=finished_paused,
         )
 
 
@@ -152,6 +162,10 @@ class LogitProcessorWrapper(LogitsProcessor):
             for index, req_id in getattr(batch_update, "paused", []):
                 self._saved[req_id] = self.logitprocs[index]
                 self.logitprocs[index] = None
+
+            for req_id in getattr(batch_update, "finished_paused", []):
+                assert req_id in self._saved
+                self._saved.pop(req_id)
 
             for adx, bdx, _ in batch_update.moved:
                 update_called[adx], update_called[bdx] = update_called[bdx], update_called[adx]

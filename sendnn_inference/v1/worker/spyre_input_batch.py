@@ -493,6 +493,10 @@ class SamplingInputBatch(BaseInputBatch[SamplingRequestState]):
         For the continuous batching, the removed request indices can be
         overwritten by new requests
         """
+        req_index = self.req_id_to_index.get(req_id)
+        if req_index is None:
+            self.batch_update_builder.finished_paused_append(req_id)
+            return
 
         req_index = super().remove_request(req_id)
         if req_index is None:
