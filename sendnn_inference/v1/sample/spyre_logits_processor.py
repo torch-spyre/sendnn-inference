@@ -146,18 +146,19 @@ class LogitProcessorWrapper(LogitsProcessor):
                 )
 
             for index, req_id in getattr(batch_update, "resumed", []):
-                if req_id in self._saved:
-                    self.logitprocs[index] = self._saved.pop(req_id)
+                assert req_id in self._saved
+                self.logitprocs[index] = self._saved.pop(req_id)
 
             for index, req_id in getattr(batch_update, "paused", []):
                 self._saved[req_id] = self.logitprocs[index]
                 self.logitprocs[index] = None
 
             for adx, bdx, _ in batch_update.moved:
-                update_called[adx], update_called[bdx] = update_called[bdx], update_called[adx] = (
-                    self.logitprocs[adx],
+                update_called[adx], update_called[bdx] = update_called[bdx], update_called[adx]
+                self.logitprocs[adx], self.logitprocs[bdx] = (
                     self.logitprocs[bdx],
-                ) = self.logitprocs[bdx], self.logitprocs[adx]
+                    self.logitprocs[adx],
+                )
 
         for index, called in update_called.items():
             if not called and self.logitprocs[index] is not None:

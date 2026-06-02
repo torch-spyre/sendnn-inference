@@ -1443,6 +1443,7 @@ class ChunkedPrefillModelRunner(
         # requests where scheduler temporarily removes them from running queue
         scheduled_req_ids = set(req_data.req_ids)
         current_batch_req_ids = set(self.input_batch.req_id_to_index.keys())
+        need_metadata_refresh = True
 
         # Find requests that are in input_batch but not in scheduler output (paused)
         paused_req_ids = current_batch_req_ids - scheduled_req_ids
@@ -1453,6 +1454,7 @@ class ChunkedPrefillModelRunner(
                 self.input_batch.pause_request(req_id)
                 self.paused_req_ids.add(req_id)
                 self.input_batch.refresh_metadata()
+                need_metadata_refresh = False
 
         # Find requests that are in scheduler output but not in input_batch
         # (restore from pausing)
@@ -1465,6 +1467,7 @@ class ChunkedPrefillModelRunner(
                 self.input_batch.resume_request(req_id, req_state)
                 self.paused_req_ids.discard(req_id)
                 self.input_batch.refresh_metadata()
+                need_metadata_refresh = False
 
         for i, req_id in enumerate(req_data.req_ids):
             req_state: SamplingRequestState = self.requests[req_id]
@@ -1487,7 +1490,8 @@ class ChunkedPrefillModelRunner(
                 # of logitprocs. Refactor so that we can batch removals to the
                 # `input_batch`
                 self.input_batch.refresh_metadata()
-        else:
+                need_metadata_refresh = False
+        if need_metadata_refresh:
             # Due to logits processor we need to refresh metadata at each step
             self.input_batch.refresh_metadata()
 

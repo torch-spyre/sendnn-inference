@@ -395,11 +395,11 @@ def test_logits_processor_advanced(
         return cached
 
     # Add first request: req 0
-    req1 = make_new_req_data("req1", 50, 5)
+    req0 = make_new_req_data("req0", 50, 5)
     sched_out = SchedulerOutput(
-        scheduled_new_reqs=[req1],
+        scheduled_new_reqs=[req0],
         scheduled_cached_reqs=CachedRequestData.make_empty(),
-        num_scheduled_tokens={"req1": 50},
+        num_scheduled_tokens={"req0": 50},
         total_num_scheduled_tokens=50,
         finished_req_ids=set(),
         kv_connector_metadata=None,
@@ -411,11 +411,11 @@ def test_logits_processor_advanced(
     runner.execute_model(sched_out)
 
     # Decode request 0
-    cached = make_cached_req_data({"req1": (50, [])})
+    cached = make_cached_req_data({"req0": (50, [])})
     sched_out = SchedulerOutput(
         scheduled_new_reqs=[],
         scheduled_cached_reqs=cached,
-        num_scheduled_tokens={"req1": 1},
+        num_scheduled_tokens={"req0": 1},
         total_num_scheduled_tokens=1,
         finished_req_ids=set(),
         kv_connector_metadata=None,
@@ -427,12 +427,12 @@ def test_logits_processor_advanced(
     runner.execute_model(sched_out)
 
     # Add second request (long one, needs three chunks)
-    # Chunked-prefill 1/3 of request 2
-    req2 = make_new_req_data("req2", 266, 10)
+    # Chunked-prefill 1/3 of request 1
+    req1 = make_new_req_data("req1", 266, 10)
     sched_out = SchedulerOutput(
-        scheduled_new_reqs=[req2],
+        scheduled_new_reqs=[req1],
         scheduled_cached_reqs=CachedRequestData.make_empty(),
-        num_scheduled_tokens={"req2": 128},
+        num_scheduled_tokens={"req1": 128},
         total_num_scheduled_tokens=128,
         finished_req_ids=set(),
         kv_connector_metadata=None,
@@ -444,11 +444,11 @@ def test_logits_processor_advanced(
     runner.execute_model(sched_out)
 
     # Decode request 0
-    cached = make_cached_req_data({"req1": (51, [])})
+    cached = make_cached_req_data({"req0": (51, [])})
     sched_out = SchedulerOutput(
         scheduled_new_reqs=[],
         scheduled_cached_reqs=cached,
-        num_scheduled_tokens={"req1": 1},
+        num_scheduled_tokens={"req0": 1},
         total_num_scheduled_tokens=1,
         finished_req_ids=set(),
         kv_connector_metadata=None,
@@ -459,12 +459,12 @@ def test_logits_processor_advanced(
     )
     runner.execute_model(sched_out)
 
-    # Chunked-prefill 2/3 of request 2
-    cached = make_cached_req_data({"req2": (128, [])})
+    # Chunked-prefill 2/3 of request 1
+    cached = make_cached_req_data({"req1": (128, [])})
     sched_out = SchedulerOutput(
         scheduled_new_reqs=[],
         scheduled_cached_reqs=cached,
-        num_scheduled_tokens={"req2": 128},
+        num_scheduled_tokens={"req1": 128},
         total_num_scheduled_tokens=128,
         finished_req_ids=set(),
         kv_connector_metadata=None,
@@ -476,11 +476,11 @@ def test_logits_processor_advanced(
     runner.execute_model(sched_out)
 
     # Decode request 0
-    cached = make_cached_req_data({"req1": (52, [])})
+    cached = make_cached_req_data({"req0": (52, [])})
     sched_out = SchedulerOutput(
         scheduled_new_reqs=[],
         scheduled_cached_reqs=cached,
-        num_scheduled_tokens={"req1": 1},
+        num_scheduled_tokens={"req0": 1},
         total_num_scheduled_tokens=1,
         finished_req_ids=set(),
         kv_connector_metadata=None,
@@ -491,12 +491,12 @@ def test_logits_processor_advanced(
     )
     runner.execute_model(sched_out)
 
-    # Chunked-prefill 3/3 of request 2
-    cached = make_cached_req_data({"req2": (256, [])})
+    # Chunked-prefill 3/3 of request 1
+    cached = make_cached_req_data({"req1": (256, [])})
     sched_out = SchedulerOutput(
         scheduled_new_reqs=[],
         scheduled_cached_reqs=cached,
-        num_scheduled_tokens={"req2": 138},
+        num_scheduled_tokens={"req1": 138},
         total_num_scheduled_tokens=138,
         finished_req_ids=set(),
         kv_connector_metadata=None,
@@ -507,12 +507,12 @@ def test_logits_processor_advanced(
     )
     runner.execute_model(sched_out)
 
-    # Decode requests 1 and 2
-    cached = make_cached_req_data({"req1": (53, []), "req2": (266, [])})
+    # Decode requests 0 and 1
+    cached = make_cached_req_data({"req0": (53, []), "req1": (266, [])})
     sched_out = SchedulerOutput(
         scheduled_new_reqs=[],
         scheduled_cached_reqs=cached,
-        num_scheduled_tokens={"req1": 1, "req2": 1},
+        num_scheduled_tokens={"req0": 1, "req1": 1},
         total_num_scheduled_tokens=2,
         finished_req_ids=set(),
         kv_connector_metadata=None,
@@ -523,12 +523,28 @@ def test_logits_processor_advanced(
     )
     runner.execute_model(sched_out)
 
-    # Now finish req1 and add req3 in the same step
-    req3 = make_new_req_data("req3", 50, 7)
+    # Decode request 0, pause request 1
+    cached = make_cached_req_data({"req0": (54, [])})
     sched_out = SchedulerOutput(
-        scheduled_new_reqs=[req3],
+        scheduled_new_reqs=[],
+        scheduled_cached_reqs=cached,
+        num_scheduled_tokens={"req0": 1},
+        total_num_scheduled_tokens=1,
+        finished_req_ids=set(),
+        kv_connector_metadata=None,
+        scheduled_spec_decode_tokens={},
+        scheduled_encoder_inputs={},
+        num_common_prefix_blocks=[],
+        free_encoder_mm_hashes=[],
+    )
+    runner.execute_model(sched_out)
+
+    # Now finish req1, pause req0, and add req2
+    req2 = make_new_req_data("req2", 50, 7)
+    sched_out = SchedulerOutput(
+        scheduled_new_reqs=[req2],
         scheduled_cached_reqs=CachedRequestData.make_empty(),
-        num_scheduled_tokens={"req3": 50},
+        num_scheduled_tokens={"req2": 50},
         total_num_scheduled_tokens=50,
         finished_req_ids={"req1"},
         kv_connector_metadata=None,
@@ -546,14 +562,13 @@ def test_logits_processor_advanced(
                 f"Overwrite detected at step {step['step']}: {op}"
             )
 
-    # Clean up
-    cached = make_cached_req_data({"req2": (267, []), "req3": (51, [])})
+    # Clean up: finish remaining requests
     sched_out = SchedulerOutput(
         scheduled_new_reqs=[],
-        scheduled_cached_reqs=cached,
+        scheduled_cached_reqs=CachedRequestData.make_empty(),
         num_scheduled_tokens={},
         total_num_scheduled_tokens=0,
-        finished_req_ids={"req2", "req3"},
+        finished_req_ids={"req1", "req2"},
         kv_connector_metadata=None,
         scheduled_spec_decode_tokens={},
         scheduled_encoder_inputs={},
@@ -562,8 +577,40 @@ def test_logits_processor_advanced(
     )
     runner.execute_model(sched_out)
 
-    # Start fresh with req4
-    req4 = make_new_req_data("req4", 50, 8)
+    # Start fresh with req3
+    req3 = make_new_req_data("req3", 50, 8)
+    sched_out = SchedulerOutput(
+        scheduled_new_reqs=[req3],
+        scheduled_cached_reqs=CachedRequestData.make_empty(),
+        num_scheduled_tokens={"req3": 50},
+        total_num_scheduled_tokens=50,
+        finished_req_ids=set(),
+        kv_connector_metadata=None,
+        scheduled_spec_decode_tokens={},
+        scheduled_encoder_inputs={},
+        num_common_prefix_blocks=[],
+        free_encoder_mm_hashes=[],
+    )
+    runner.execute_model(sched_out)
+
+    # Decode request 3
+    cached = make_cached_req_data({"req3": (50, [])})
+    sched_out = SchedulerOutput(
+        scheduled_new_reqs=[],
+        scheduled_cached_reqs=cached,
+        num_scheduled_tokens={"req3": 1},
+        total_num_scheduled_tokens=1,
+        finished_req_ids=set(),
+        kv_connector_metadata=None,
+        scheduled_spec_decode_tokens={},
+        scheduled_encoder_inputs={},
+        num_common_prefix_blocks=[],
+        free_encoder_mm_hashes=[],
+    )
+    runner.execute_model(sched_out)
+
+    # Prefill request 4
+    req4 = make_new_req_data("req4", 50, 12)
     sched_out = SchedulerOutput(
         scheduled_new_reqs=[req4],
         scheduled_cached_reqs=CachedRequestData.make_empty(),
@@ -578,7 +625,8 @@ def test_logits_processor_advanced(
     )
     runner.execute_model(sched_out)
 
-    # Decode request 4
+    # Simulate pause of req3 (scheduler removes it temporarily)
+    # In real scenario, scheduler would not include req3 in cached_reqs
     cached = make_cached_req_data({"req4": (50, [])})
     sched_out = SchedulerOutput(
         scheduled_new_reqs=[],
@@ -594,47 +642,14 @@ def test_logits_processor_advanced(
     )
     runner.execute_model(sched_out)
 
-    # Prefill request 5
-    req5 = make_new_req_data("req5", 50, 12)
-    sched_out = SchedulerOutput(
-        scheduled_new_reqs=[req5],
-        scheduled_cached_reqs=CachedRequestData.make_empty(),
-        num_scheduled_tokens={"req5": 50},
-        total_num_scheduled_tokens=50,
-        finished_req_ids=set(),
-        kv_connector_metadata=None,
-        scheduled_spec_decode_tokens={},
-        scheduled_encoder_inputs={},
-        num_common_prefix_blocks=[],
-        free_encoder_mm_hashes=[],
-    )
-    runner.execute_model(sched_out)
-
-    # Simulate pause of req4 (scheduler removes it temporarily)
-    # In real scenario, scheduler would not include req4 in cached_reqs
-    cached = make_cached_req_data({"req5": (50, [])})
+    # Resume req3 and finish req4 simultaneously
+    cached = make_cached_req_data({"req3": (51, [])})
     sched_out = SchedulerOutput(
         scheduled_new_reqs=[],
         scheduled_cached_reqs=cached,
-        num_scheduled_tokens={"req5": 1},
+        num_scheduled_tokens={"req3": 1},
         total_num_scheduled_tokens=1,
-        finished_req_ids=set(),
-        kv_connector_metadata=None,
-        scheduled_spec_decode_tokens={},
-        scheduled_encoder_inputs={},
-        num_common_prefix_blocks=[],
-        free_encoder_mm_hashes=[],
-    )
-    runner.execute_model(sched_out)
-
-    # Resume req4 and finish req5 simultaneously
-    cached = make_cached_req_data({"req4": (51, []), "req5": (51, [])})
-    sched_out = SchedulerOutput(
-        scheduled_new_reqs=[],
-        scheduled_cached_reqs=cached,
-        num_scheduled_tokens={"req4": 1, "req5": 1},
-        total_num_scheduled_tokens=2,
-        finished_req_ids={"req5"},
+        finished_req_ids={"req4"},
         kv_connector_metadata=None,
         scheduled_spec_decode_tokens={},
         scheduled_encoder_inputs={},
