@@ -13,23 +13,31 @@ The companion doc at `docs/contributing/maintaining.md` is the source of truth f
 ## Phase 0 — Preflight
 
 1. Verify the upstream tag exists. If this returns 404, stop — the user has the version wrong:
+
    ```bash
    curl -fsS https://api.github.com/repos/vllm-project/vllm/git/refs/tags/v$ARGUMENTS
    ```
+
 2. Detect hardware mode:
+
    ```bash
    echo "AIU_WORLD_SIZE=${AIU_WORLD_SIZE:-<unset>}"
    ```
+
    - **Unset** → CPU/eager mode. All test invocations must use `-m "cpu"` (and source `_local_envs_for_test.sh`). Spyre-marked tests are deferred to the post-PR `bot:test` validation suite.
    - **Set** → hardware available. After CPU tests pass, optionally also run `-m "spyre"` markers.
 3. Branch from `main` if not already on a `vllm-$ARGUMENTS` branch:
+
    ```bash
    git checkout -b vllm-$ARGUMENTS main
    ```
+
 4. Read the upstream release notes and skim for breaking-change candidates:
+
    ```bash
    gh api repos/vllm-project/vllm/releases/tags/v$ARGUMENTS --jq '.body' | head -200
    ```
+
    High-impact areas to flag for this plugin:
    - **Worker / model runner V2** (`vllm.v1.worker.worker_base.WorkerBase`, `compile_or_warm_up_model` return type, `KVCacheConfig`, `KVCacheSpec`)
    - **Scheduler / engine core** (`SchedulerOutput`, `CachedRequestData`, `NewRequestData`, MRv2 changes, KV connectors)
@@ -43,17 +51,21 @@ The companion doc at `docs/contributing/maintaining.md` is the source of truth f
 ## Phase 1 — Bump the pin
 
 Edit `pyproject.toml`:
+
 1. `[project.dependencies]`: bump the upper bound to `<X.Y.(Z+1)` (e.g., 0.22.0 → `<0.22.1`). Keep the existing lower bound unless explicitly raising it.
 2. `[tool.uv.sources.vllm].rev`: set to `vX.Y.Z`.
 3. **Audit `[tool.uv].override-dependencies`**:
    - Re-fetch upstream `requirements/common.txt` and check whether each override is still load-bearing:
+
      ```bash
      curl -fsS https://raw.githubusercontent.com/vllm-project/vllm/v$ARGUMENTS/requirements/common.txt | grep -E "llguidance|torch|transformers"
      ```
+
    - If vLLM bumped torch, update the `torch==X.Y.Z` override to match. (vLLM 0.20.0 bumped 2.10→2.11, for example.)
    - If a forced floor (e.g., `llguidance>=1.7.3`) is now within vLLM's own range, the override may be relaxable — but only remove it if the original reason (CVE, arch fix) is genuinely resolved upstream.
 
 Then regenerate the lockfile and reinstall:
+
 ```bash
 source .venv/bin/activate    # if not already active
 uv sync --active --inexact
@@ -71,7 +83,7 @@ source _local_envs_for_test.sh
 Run the suites in this order (cheapest → most expensive). Stop and fix on the first failure:
 
 | # | Command | What it covers |
-|---|---|---|
+| --- | --- | --- |
 | 1 | `pytest -m "cpu and basic and not quantized" --timeout=300 -x` | Smoke — fastest signal |
 | 2 | `pytest -m "compat or (cpu and basic and not quantized)" --timeout=300` | Existing compat shims still work |
 | 3 | `pytest -m "cpu and decoder and not quantized and not multimodal" --timeout=300` | Chunked prefill + prefix caching |
@@ -87,7 +99,7 @@ If everything passes here with no source changes, this is a clean upgrade — sk
 Use `sendnn_inference/compat_utils.py` helpers (`has_argument`, `dataclass_fields`) plus the patterns below. **For every shim added, add a corresponding test in `tests/utils/test_upstream_compatibility.py`** that fails when `VLLM_VERSION == "vLLM:lowest"` no longer needs it. The existing `test_compilation_times_compat` is the template.
 
 | Symptom | Fix |
-|---|---|
+| --- | --- |
 | `ImportError` for moved/removed symbol | `try: from new import X; except ImportError: X = None` (or `from old import X` in the except branch). Branch on `X is None` at call sites. See `spyre_worker.py` `CompilationTimes` shim. |
 | Method gained or lost a kwarg | `kwargs = {"k": v} if has_argument(func, "k") else {}; func(..., **kwargs)` |
 | Dataclass added/removed a field | `if "field" in dataclass_fields(Cls): ...` |
@@ -109,6 +121,7 @@ In `.github/workflows/test.yml`, add a new entry under `include:` for the **prev
    - **Huge** (~3000+ lines) → vLLM minor release reshuffled transitives. Expected.
    - **Medium** (50–500 lines) → look closely. Make sure unrelated packages didn't drift in surprising ways.
 3. Verify only expected files changed:
+
    ```bash
    git status
    # Expected: pyproject.toml, uv.lock, .github/workflows/test.yml,
@@ -120,6 +133,7 @@ In `.github/workflows/test.yml`, add a new entry under `include:` for the **prev
 Title: `chore: bumps vllm to v$ARGUMENTS`
 
 Body skeleton:
+
 ```markdown
 ## Description
 - Bumps vllm support to v$ARGUMENTS (release notes: https://github.com/vllm-project/vllm/releases/tag/v$ARGUMENTS)
@@ -139,7 +153,8 @@ Body skeleton:
 ```
 
 After the PR is open, request hardware validation by commenting:
-```
+
+```text
 bot:test
 MARKERS="spyre and not quantized"
 ```
