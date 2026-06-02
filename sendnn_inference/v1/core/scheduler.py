@@ -240,7 +240,15 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         ]
 
         self.tkv = model_runner_output.tkv
-        return super(SpyreScheduler, self).update_from_output(scheduler_output, model_runner_output)
+        result = super(SpyreScheduler, self).update_from_output(
+            scheduler_output, model_runner_output
+        )
+
+        for finished_request in self.finished_req_ids:
+            blocks = self.reserved_blocks.pop(finished_request, 0)
+            self.total_reserved_blocks -= blocks
+            assert self.total_reserved_blocks >= 0
+        return result
 
     def adjust_computed_tokens(
         self, computed_tokens: int, left_padding: int, prefix_cache_len: int
@@ -427,11 +435,6 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
                 self.reserved_blocks[prefill.request_id] = blocks
                 assert self.total_reserved_blocks <= self.available_blocks
             self.ongoing_prefills.extend(new_prefills)
-
-        for finished_request in outputs.finished_req_ids | (outputs.preempted_req_ids or set()):
-            blocks = self.reserved_blocks.pop(finished_request, 0)
-            self.total_reserved_blocks -= blocks
-            assert self.total_reserved_blocks >= 0
 
         # restore holdbacks after running the base scheduler
         self.running = self.running + running_holdback
