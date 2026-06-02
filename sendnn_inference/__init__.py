@@ -11,14 +11,8 @@ __version__ = importlib.metadata.version("sendnn_inference")
 
 def register():
     """Register the Spyre platform."""
-    # Patch AutoConfig.from_pretrained to remap architectures for granite_swa
-    # checkpoints. vLLM uses architectures[0] to pick a model runner class, but
-    # sendnn-inference overrides that anyway. We swap "GraniteSWAForCausalLM"
-    # (unknown to vLLM v0.19.1) → "GraniteForCausalLM" (known) so the validation
-    # passes. model_type stays "granite_swa" for sendnn-inference routing.
-    # FMS loading in spyre.py uses architecture="granite_swa" explicitly so it is
-    # not affected by this remapping.
-    # Done in register() (not at module level) to avoid circular imports.
+    # vLLM v0.19.1 doesn't know GraniteSWAForCausalLM, so remap it to GraniteForCausalLM.
+    # model_type stays "granite_swa" for routing. FMS loading bypasses this via explicit arch.
     try:
         from transformers import AutoConfig
 

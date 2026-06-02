@@ -188,12 +188,12 @@ class SpyreCausalLM(nn.Module):
             kwargs["rank"],
         ):
             if self.config.model_type == "granite_swa":
-                # AutoConfig.from_pretrained remaps architectures to GraniteForCausalLM
-                # for vLLM compatibility, so hf_pretrained auto-detection would route
-                # to the wrong FMS model class. Use the explicit architecture instead.
+                # Hack: Use explicit architecture: register() patches AutoConfig to show GraniteForCausalLM
+                # to vLLM (which doesn't yet support GraniteSWAForCausalLM). However, to FMS we pass
+                # granite_swa (which resolves to GraniteSWAForCausalLM)
                 self.fms_model = get_model(
                     architecture="granite_swa",
-                    variant="8b",
+                    variant="8b",  # FMS registers the 3B config under "8b" — naming error in the FMS branch
                     model_path=model_path,
                     source="hf",
                     distributed_strategy=distributed_strategy,
