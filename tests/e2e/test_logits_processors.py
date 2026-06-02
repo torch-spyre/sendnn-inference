@@ -3,7 +3,6 @@ from llm_cache import patch_environment
 from llm_cache_util import force_engine_shutdown
 from logits_processor_utils import (
     DummyLogitsProcessor,
-    NoOpLogitsProcessor,
     SpyLogitsProcessor,
     StateTrackingLogitsProcessorWrapper,
     execute_step,
@@ -118,12 +117,15 @@ def test_logits_processor_advanced(
     - Pausing and resuming requests
     - Verifying correct index management
     - Ensuring no state overwrites occur
+    - Verifying that the spy logits processor produces correct tokens
 
     This test simulates various scheduler scenarios where requests can be:
     1. Added and finished in the same step
     2. Paused and resumed
     3. Resumed while others finish
     4. Multiple operations happening simultaneously
+
+    Uses SpyLogitsProcessor as the inner processor to verify token generation.
     """
     from tests.v1.worker.mock_model import InstrumentedModelRunner
     from vllm.v1.sample.logits_processor.state import LogitsProcessors
@@ -132,6 +134,12 @@ def test_logits_processor_advanced(
 
     # Track all state transitions and verify correctness
     state_log: list[dict] = []
+
+    # Track spy outputs to verify token generation
+    spy_outputs: dict[int, list[int]] = {}
+
+    # Track actual generated outputs from model runner
+    actual_outputs: dict[str, list[int]] = {}
 
     patch_environment(
         backend=backend,
@@ -148,9 +156,13 @@ def test_logits_processor_advanced(
         max_num_batched_tokens=128,
     )
 
-    # Replace logits processors with our tracking wrapper
+    # Create a SpyLogitsProcessor factory that uses our spy_outputs dict
+    def create_spy_processor(vllm_config, device, is_pin_memory):
+        return SpyLogitsProcessor(vllm_config, device, is_pin_memory, spy_outputs)
+
+    # Replace logits processors with our tracking wrapper that wraps SpyLogitsProcessor
     tracking_wrapper = StateTrackingLogitsProcessorWrapper(
-        NoOpLogitsProcessor,
+        create_spy_processor,
         runner.vllm_config,
         runner.device,
         runner.pin_memory,
@@ -166,10 +178,11 @@ def test_logits_processor_advanced(
     execute_step(
         runner,
         processor,
-        new_reqs=[("req0", 50, 5)],
+        new_reqs=[("req0", 50, 10)],
         num_scheduled_tokens={"req0": 50},
         expected_active={0: ("req0", 1)},
         expected_paused=set(),
+        actual_outputs=actual_outputs,
     )
 
     # Decode request 0
@@ -180,6 +193,7 @@ def test_logits_processor_advanced(
         num_scheduled_tokens={"req0": 1},
         expected_active={0: ("req0", 2)},
         expected_paused=set(),
+        actual_outputs=actual_outputs,
     )
 
     # Add request 1 (long one, needs three chunks)
@@ -188,10 +202,11 @@ def test_logits_processor_advanced(
     execute_step(
         runner,
         processor,
-        new_reqs=[("req1", 266, 10)],
+        new_reqs=[("req1", 266, 11)],
         num_scheduled_tokens={"req1": 128},
         expected_active={},
         expected_paused={"req0"},
+        actual_outputs=actual_outputs,
     )
 
     # Decode request 0
@@ -202,6 +217,7 @@ def test_logits_processor_advanced(
         num_scheduled_tokens={"req0": 1},
         expected_active={0: ("req0", 3)},
         expected_paused=set(),
+        actual_outputs=actual_outputs,
     )
 
     # Chunked-prefill 2/3 of request 1
@@ -212,6 +228,7 @@ def test_logits_processor_advanced(
         num_scheduled_tokens={"req1": 128},
         expected_active={},
         expected_paused={"req0"},
+        actual_outputs=actual_outputs,
     )
 
     # Decode request 0
@@ -222,6 +239,7 @@ def test_logits_processor_advanced(
         num_scheduled_tokens={"req0": 1},
         expected_active={0: ("req0", 4)},
         expected_paused=set(),
+        actual_outputs=actual_outputs,
     )
 
     # Chunked-prefill 3/3 of request 1
@@ -232,6 +250,7 @@ def test_logits_processor_advanced(
         num_scheduled_tokens={"req1": 138},
         expected_active={0: ("req1", 1)},
         expected_paused={"req0"},
+        actual_outputs=actual_outputs,
     )
 
     # Decode requests 0 and 1
@@ -242,6 +261,7 @@ def test_logits_processor_advanced(
         num_scheduled_tokens={"req0": 1, "req1": 1},
         expected_active={0: ("req1", 2), 1: ("req0", 5)},
         expected_paused=set(),
+        actual_outputs=actual_outputs,
     )
 
     # Decode request 0, pause request 1
@@ -252,17 +272,19 @@ def test_logits_processor_advanced(
         num_scheduled_tokens={"req0": 1},
         expected_active={0: ("req0", 6)},
         expected_paused={"req1"},
+        actual_outputs=actual_outputs,
     )
 
     # Finish req1, pause req0, and add req2
     execute_step(
         runner,
         processor,
-        new_reqs=[("req2", 50, 7)],
+        new_reqs=[("req2", 50, 12)],
         num_scheduled_tokens={"req2": 50},
         finished_req_ids={"req1"},
         expected_active={0: ("req2", 1)},
         expected_paused={"req0"},
+        actual_outputs=actual_outputs,
     )
 
     # Clean up: finish remaining requests
@@ -272,26 +294,29 @@ def test_logits_processor_advanced(
         finished_req_ids={"req0", "req2"},
         expected_active={},
         expected_paused=set(),
+        actual_outputs=actual_outputs,
     )
 
     # Start fresh with req3
     execute_step(
         runner,
         processor,
-        new_reqs=[("req3", 50, 8)],
+        new_reqs=[("req3", 50, 13)],
         num_scheduled_tokens={"req3": 50},
         expected_active={0: ("req3", 1)},
         expected_paused=set(),
+        actual_outputs=actual_outputs,
     )
 
     # Prefill request 4
     execute_step(
         runner,
         processor,
-        new_reqs=[("req4", 50, 12)],
+        new_reqs=[("req4", 50, 14)],
         num_scheduled_tokens={"req4": 50},
         expected_active={0: ("req4", 1)},
         expected_paused={"req3"},
+        actual_outputs=actual_outputs,
     )
 
     # Decode request 4, keep request 3 paused
@@ -302,6 +327,7 @@ def test_logits_processor_advanced(
         num_scheduled_tokens={"req4": 1},
         expected_active={0: ("req4", 2)},
         expected_paused={"req3"},
+        actual_outputs=actual_outputs,
     )
 
     # Resume req3 and finish req4 simultaneously
@@ -313,6 +339,7 @@ def test_logits_processor_advanced(
         finished_req_ids={"req4"},
         expected_active={0: ("req3", 2)},
         expected_paused=set(),
+        actual_outputs=actual_outputs,
     )
 
     # Finish request 3
@@ -322,4 +349,48 @@ def test_logits_processor_advanced(
         finished_req_ids={"req3"},
         expected_active={},
         expected_paused=set(),
+        actual_outputs=actual_outputs,
+    )
+
+    # Verify that actual outputs match spy outputs for each request
+    # req0: max_tokens=10, req1: max_tokens=11, req2: max_tokens=12,
+    # req3: max_tokens=13, req4: max_tokens=14
+    assert "req0" in actual_outputs, "Expected actual_outputs to contain tokens for req0"
+    assert len(actual_outputs["req0"]) == 6, (
+        f"Expected 6 tokens for req0, got {len(actual_outputs['req0'])}"
+    )
+    assert actual_outputs["req0"] == spy_outputs[10], (
+        f"Token mismatch for req0: {actual_outputs['req0']} != {spy_outputs[10]}"
+    )
+
+    assert "req1" in actual_outputs, "Expected actual_outputs to contain tokens for req1"
+    assert len(actual_outputs["req1"]) == 2, (
+        f"Expected 2 tokens for req1, got {len(actual_outputs['req1'])}"
+    )
+    assert actual_outputs["req1"] == spy_outputs[11], (
+        f"Token mismatch for req1: {actual_outputs['req1']} != {spy_outputs[11]}"
+    )
+
+    assert "req2" in actual_outputs, "Expected actual_outputs to contain tokens for req2"
+    assert len(actual_outputs["req2"]) == 1, (
+        f"Expected 1 tokens for req2, got {len(actual_outputs['req2'])}"
+    )
+    assert actual_outputs["req2"] == spy_outputs[12], (
+        f"Token mismatch for req2: {actual_outputs['req2']} != {spy_outputs[12]}"
+    )
+
+    assert "req3" in actual_outputs, "Expected actual_outputs to contain tokens for req3"
+    assert len(actual_outputs["req3"]) == 2, (
+        f"Expected 2 tokens for req3, got {len(actual_outputs['req3'])}"
+    )
+    assert actual_outputs["req3"] == spy_outputs[13], (
+        f"Token mismatch for req3: {actual_outputs['req3']} != {spy_outputs[13]}"
+    )
+
+    assert "req4" in actual_outputs, "Expected actual_outputs to contain tokens for req4"
+    assert len(actual_outputs["req4"]) == 2, (
+        f"Expected 2 tokens for req4, got {len(actual_outputs['req4'])}"
+    )
+    assert actual_outputs["req4"] == spy_outputs[14], (
+        f"Token mismatch for req4: {actual_outputs['req4']} != {spy_outputs[14]}"
     )

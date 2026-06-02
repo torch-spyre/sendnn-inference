@@ -314,6 +314,7 @@ def execute_step(
     finished_req_ids: set[str] | None = None,
     expected_active: dict[int, tuple[str, int]] | None = None,
     expected_paused: set[str] | None = None,
+    actual_outputs: dict[str, list[int]] | None = None,
 ):
     """
     Execute a scheduler step and verify the resulting state.
@@ -327,6 +328,7 @@ def execute_step(
         finished_req_ids: Set of request IDs that finished in this step
         expected_active: Expected active requests mapping dense_index to (req_id, token_count)
         expected_paused: Expected set of paused request IDs
+        actual_outputs: Optional dict to collect generated tokens, keyed by request_id
     """
     # Build new request data
     scheduled_new_reqs = []
@@ -356,7 +358,23 @@ def execute_step(
     )
 
     # Execute the step
-    runner.execute_model(sched_out)
+    output = runner.execute_model(sched_out)
+
+    # Collect generated tokens into actual_outputs if provided
+    if actual_outputs is not None and output.sampled_token_ids:
+        # Map dense indices to request IDs and collect tokens
+        for dense_idx, token_ids in enumerate(output.sampled_token_ids):
+            if dense_idx in processor.active_requests:
+                req_id, token_count = processor.active_requests[dense_idx]
+                # Extract the actual token (first element of token_ids list)
+                actual_token = token_ids[0] if isinstance(token_ids, list) else token_ids
+
+                # Initialize list for this request if not exists
+                if req_id not in actual_outputs:
+                    actual_outputs[req_id] = []
+
+                # Append the generated token
+                actual_outputs[req_id].append(actual_token)
 
     # Verify expected state if provided
     if expected_active is not None:
@@ -381,3 +399,5 @@ def execute_step(
         assert actual_paused == expected_paused, (
             f"Expected paused requests {expected_paused}, got {actual_paused}"
         )
+
+    return output
