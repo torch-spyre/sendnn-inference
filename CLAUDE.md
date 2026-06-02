@@ -91,6 +91,7 @@ Models are registered in `sendnn_inference/config/model_configs.yaml` with archi
 ## Linting and Type Checking
 
 Pre-commit hooks (run via `bash format.sh` / `uvx prek`):
+
 - **ruff** — linting + formatting (line length 100)
 - **typos** — spell checking
 - **ty** — type checking (`sendnn_inference/` only, version pinned in `.pre-commit-config.yaml`)
@@ -99,5 +100,6 @@ Pre-commit hooks (run via `bash format.sh` / `uvx prek`):
 ## vLLM Compatibility
 
 The codebase maintains backwards compatibility using `compat_utils.py`:
+
 - `has_argument(func, "arg")` — conditionally pass arguments based on vLLM version
 - Add tests that fail when backwards compatibility is no longer needed (so compat shims get cleaned up)
