@@ -13,6 +13,7 @@ from vllm import SamplingParams
 from vllm.sampling_params import StructuredOutputsParams
 from vllm.v1.core.sched.request_queue import FCFSRequestQueue
 from vllm.v1.request import Request, RequestStatus
+from vllm.v1.core.sched.output import CachedRequestData
 from sendnn_inference.v1.core.scheduler import ChunkedPrefillSpyreScheduler
 
 pytestmark = pytest.mark.skip_global_cleanup
@@ -50,7 +51,7 @@ def mocked_scheduler():
     scheduler.available_blocks = 1
     scheduler.total_reserved_blocks = 0
     scheduler.reserved_blocks = dict[str, int]()
-    scheduler._get_required_blocks = lambda x, *args, **kwargs: 0
+    scheduler._get_required_blocks = lambda x, *args, **kwargs: (0, 0)
     scheduler._get_free_blocks = lambda *args, **kwargs: 1
 
     # Mock the base scheduler's schedule method and can_schedule_prefill,
@@ -58,6 +59,10 @@ def mocked_scheduler():
     mock_output = Mock()
     mock_output.has_structured_output_requests = False
     mock_output.num_scheduled_tokens = {}
+    mock_output.scheduled_new_reqs = []
+    mock_output.scheduled_cached_reqs = CachedRequestData.make_empty()
+    # mock_output.total_num_scheduled_tokens = 0
+    # mock_output.finished_req_ids = set()
 
     with (
         patch.object(ChunkedPrefillSpyreScheduler, "can_schedule_prefill", return_value=True),
