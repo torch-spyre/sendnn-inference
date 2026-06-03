@@ -12,7 +12,7 @@ from vllm.v1.kv_cache_interface import KVCacheGroupSpec, KVCacheConfig
 from vllm.v1.structured_output import StructuredOutputManager
 
 from sendnn_inference.platform import SpyrePlatform
-from sendnn_inference.v1.worker.sim_model import MockSpyreCausalLM
+from sendnn_inference.v1.sim import MockSpyreCausalLM
 from sendnn_inference.v1.worker.spyre_model_runner import (
     ChunkedPrefillModelRunner,
     ChunkedPrefillPlan,

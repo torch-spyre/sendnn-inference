@@ -725,7 +725,7 @@ class ChunkedPrefillModelRunner(
 
     def load_model(self) -> None:
         if envs_spyre.SENDNN_INFERENCE_SIM_MODE:
-            from sendnn_inference.v1.worker.sim_model import MockSpyreCausalLM
+            from sendnn_inference.v1.sim import MockSpyreCausalLM
 
             logger.info("SENDNN_INFERENCE_SIM_MODE=1: loading MockSpyreCausalLM (no-op forward)")
             self._model = MockSpyreCausalLM(vllm_config=self.vllm_config)  # ty: ignore[invalid-assignment]
@@ -1468,7 +1468,7 @@ class ChunkedPrefillModelRunner(
         if scheduler_output.finished_req_ids:
             sim = None
             if envs_spyre.SENDNN_INFERENCE_SIM_MODE:
-                from sendnn_inference.v1.sim_state import get_sim_state
+                from sendnn_inference.v1.sim import get_sim_state
 
                 sim = get_sim_state()
             for req_id in scheduler_output.finished_req_ids:
@@ -1571,7 +1571,7 @@ class ChunkedPrefillModelRunner(
             )
 
         if envs_spyre.SENDNN_INFERENCE_SIM_MODE:
-            from sendnn_inference.v1.sim_state import get_sim_state
+            from sendnn_inference.v1.sim import get_sim_state
 
             get_sim_state().record_step(
                 is_prompt=model_input.is_prompt,
