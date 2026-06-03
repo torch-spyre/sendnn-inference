@@ -272,12 +272,13 @@ class SpyreCausalLM(nn.Module):
         logger.debug("Model weights loaded successfully.")
 
     def _cast_params_for_spyre(self):
-        """Cast the LLM to fp16 for Spyre, then place the multimodal submodules (vision_tower)
-        onto SENDNN_INFERENCE_MM_DEVICE with SENDNN_INFERENCE_CPU_MM_DTYPE.
+        """Downcast the LLM's bf16 params to fp16 for Spyre, then place the multimodal
+        submodules (vision_tower) onto SENDNN_INFERENCE_MM_DEVICE with
+        SENDNN_INFERENCE_CPU_MM_DTYPE.
 
-        NOTE: the whole-model cast converts every floating-point param/buffer to
-        fp16, including the float8 weights of quantized models. This path is only
-        intended for non-quantized (bf16) models.
+        Only bf16 params are downcast; fp32 params/buffers and quantized (fp8)
+        weights are left untouched (matching the non-mm behaviour of the original
+        loader).
         """
         cpu_mm_dtype = envs_spyre.SENDNN_INFERENCE_CPU_MM_DTYPE
         mm_device = envs_spyre.SENDNN_INFERENCE_MM_DEVICE
@@ -293,12 +294,14 @@ class SpyreCausalLM(nn.Module):
             )
         self.mm_device = mm_device
 
-        # Cast the whole model to fp16 for Spyre. This also casts the multimodal
-        # submodules, which are immediately overridden
-        # below to their configured device/dtype, so it must run before the mm
-        # placement loop (to(dtype=...) changes dtype only, not device, and
-        # recurses into every submodule).
-        self.fms_model.to(dtype=torch.float16)
+        # Cast only the non-mm (LLM) bf16 params to fp16. fp32 params/buffers and
+        # quantized (fp8) weights are left untouched. mm params are handled by
+        # the placement loop below.
+        for name, param in self.fms_model.named_parameters():
+            if name.startswith(mm_prefixes):
+                continue
+            if param.dtype == torch.bfloat16:
+                param.data = param.data.to(dtype=torch.float16)
 
         # Move the multimodal submodules whole. We must use Module.to(...) here
         # rather than mutating param.data, because nn.Parameter.set_data refuses

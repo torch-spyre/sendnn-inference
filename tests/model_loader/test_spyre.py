@@ -182,9 +182,7 @@ def test_nnpa_text_only_model_never_registers_or_errors(monkeypatch):
     _force_nnpa_detected(monkeypatch, True)
     _set_mm_device(monkeypatch, "nnpa")
     calls = []
-    monkeypatch.setattr(
-        utils, "ensure_nnpa_registered", lambda: calls.append(True) or False
-    )
+    monkeypatch.setattr(utils, "ensure_nnpa_registered", lambda: calls.append(True) or False)
     fms = _FakeFmsModel([("decoder.layers.0.weight", torch.bfloat16)])
     ns = _cast_returning_self(fms, None)
     assert calls == []  # registration never attempted (short-circuited)
