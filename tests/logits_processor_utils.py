@@ -89,22 +89,6 @@ class SpyLogitsProcessor(LogitsProcessor):
         return logits
 
 
-class NoOpLogitsProcessor(LogitsProcessor):
-    """A no-op logits processor that does nothing."""
-
-    def __init__(self, vllm_config: VllmConfig, device: torch.device, is_pin_memory: bool):
-        pass
-
-    def is_argmax_invariant(self) -> bool:
-        return False
-
-    def update_state(self, batch_update: BatchUpdate | None):
-        pass
-
-    def apply(self, logits: torch.Tensor) -> torch.Tensor:
-        return logits
-
-
 class StateTrackingLogitsProcessorWrapper(LogitProcessorWrapper):
     """
     Extends LogitProcessorWrapper to track batch-level state for testing.
