@@ -16,11 +16,11 @@ pytestmark = pytest.mark.cpu
 class _FakeFmsModel(torch.nn.Module):
     """Minimal real nn.Module stand-in built from dotted parameter paths.
 
-    _cast_params_for_spyre now casts the whole model with Module.to(...) and
-    places the multimodal submodules via named_modules(), so the fake has to be a
-    genuine module tree (supporting .to() and named_modules()), not just a
-    named_parameters() shim. A spec entry "vision_tower.weight" creates a
-    submodule "vision_tower" holding a parameter "weight".
+    _cast_params_for_spyre places the multimodal submodules via named_modules() +
+    Module.to(...), so the fake has to be a genuine module tree (supporting
+    named_modules() and .to() on submodules), not just a named_parameters() shim.
+    A spec entry "vision_tower.weight" creates a submodule "vision_tower" holding
+    a parameter "weight".
     """
 
     def __init__(self, specs):
