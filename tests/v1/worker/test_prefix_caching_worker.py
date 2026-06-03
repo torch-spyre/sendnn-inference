@@ -77,7 +77,7 @@ def test_multi_chunk_partial_match_misaligned(
     Configuration:
         * max_num_seqs: 2
         * number of prompts: 2
-            * 0: len = 384,  max tokens = 2, step joining = 0
+            * 0: len = 384, max tokens = 2, step joining = 0
             * 1: len = 384, max tokens = 2, step joining = 0
     """
     monkeypatch.setenv("SENDNN_INFERENCE_CP_INTERLEAVE_STEPS", "0")

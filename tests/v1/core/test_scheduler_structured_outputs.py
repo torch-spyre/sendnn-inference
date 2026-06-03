@@ -58,8 +58,6 @@ def mocked_scheduler():
     mock_output = Mock()
     mock_output.has_structured_output_requests = False
     mock_output.num_scheduled_tokens = {}
-    mock_output.finished_req_ids = set()
-    mock_output.preempted_req_ids = set()
 
     with (
         patch.object(ChunkedPrefillSpyreScheduler, "can_schedule_prefill", return_value=True),
