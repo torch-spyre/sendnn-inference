@@ -161,11 +161,13 @@ class LogitProcessorWrapper(LogitsProcessor):
 
             for index, req_id in getattr(batch_update, "paused", []):
                 self._saved[req_id] = self.logitprocs[index]
-                self.logitprocs[index] = None
+                self.logitprocs[index] = self._factory()
 
             for req_id in getattr(batch_update, "finished_paused", []):
-                assert req_id in self._saved
-                self._saved.pop(req_id)
+                # Max: I think we can't assume that the request will
+                # be here because it could be a cancelled request that
+                # never made it into the batch.
+                self._saved.pop(req_id, 0)
 
             for adx, bdx, _ in batch_update.moved:
                 update_called[adx], update_called[bdx] = update_called[bdx], update_called[adx]

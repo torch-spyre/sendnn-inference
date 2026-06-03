@@ -1484,6 +1484,7 @@ class ChunkedPrefillModelRunner(
         if scheduler_output.finished_req_ids:
             for req_id in scheduler_output.finished_req_ids:
                 self.input_batch.remove_request(req_id)
+                self.requests.pop(req_id, None)
                 # Clean up paused tracking for finished requests
                 self.paused_req_ids.discard(req_id)
                 # TODO: Processing multiple removals at once can break alignment
