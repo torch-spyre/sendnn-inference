@@ -77,9 +77,9 @@ class SpyreCausalLM(nn.Module):
         # Wrappers for utils for multimodal
         self.mm_model_utils: spyre_mm.MMUtilsBase | None = None
         self.is_multimodal = False
-        # Effective device the multimodal vision tower ended up on. Resolved in
-        # _cast_params_for_spyre (may fall back from "nnpa" to "cpu"); defaults
-        # to "cpu" for text-only models and when no cast happens.
+        # Effective device the multimodal vision tower ended up on ("cpu" or
+        # "nnpa"). Resolved in _cast_params_for_spyre; defaults to "cpu" for
+        # text-only models and when no cast happens.
         self.mm_device = "cpu"
 
         BLOCK_SIZE = SpyrePlatform.get_block_size()
@@ -285,11 +285,12 @@ class SpyreCausalLM(nn.Module):
         mm_module_names = {p.rstrip(".") for p in mm_prefixes}
 
         if mm_device == "nnpa" and mm_module_names and not utils_spyre.ensure_nnpa_registered():
-            logger.warning(
-                "Falling back to CPU for the multimodal vision tower because "
-                "the nnpa device could not be initialized."
+            raise RuntimeError(
+                "SENDNN_INFERENCE_MM_DEVICE resolved to nnpa (torch_nnpa is installed) "
+                "but the nnpa device could not be initialized. Refusing to fall back to "
+                "CPU; a broken nnpa backend must not be silently masked. Set "
+                "SENDNN_INFERENCE_MM_DEVICE=cpu to run the vision tower on CPU."
             )
-            mm_device = "cpu"
         self.mm_device = mm_device
 
         # Cast the whole model to fp16 for Spyre. This also casts the multimodal

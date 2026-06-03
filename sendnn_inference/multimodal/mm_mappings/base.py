@@ -103,10 +103,9 @@ class MMUtilsBase(ABC):
         architecture. Produced tensors should be of shape
         [bsz, seq_len, emb_dim].
 
-        ``mm_device`` is the device the vision_tower weights actually ended up on
-        ("cpu" or "nnpa"); pixel_values must be placed there before the encoder
-        forward. It is resolved at load time and may differ from the configured
-        SENDNN_INFERENCE_MM_DEVICE when nnpa was requested but fell back to CPU.
+        ``mm_device`` is the device the vision_tower weights ended up on ("cpu"
+        or "nnpa"); pixel_values must be placed there before the encoder forward.
+        It is resolved at load time from SENDNN_INFERENCE_MM_DEVICE.
         """
         pass
 

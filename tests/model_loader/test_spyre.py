@@ -1,12 +1,14 @@
 """Tests for SpyreCausalLM._cast_params_for_spyre dtype casting."""
 
+import importlib.util
 from types import SimpleNamespace
 
 import pytest
 import torch
 
-from sendnn_inference import envs
+from sendnn_inference import envs, utils
 from sendnn_inference.model_executor.model_loader.spyre import SpyreCausalLM
+from sendnn_inference.utils import parse_mm_device
 
 pytestmark = pytest.mark.cpu
 
@@ -88,13 +90,11 @@ def test_no_mm_utils_still_casts_bf16_decoder_params(monkeypatch):
     assert _dtype_of(fms, "decoder.layers.0.weight") == torch.float16
 
 
-def test_non_bf16_non_mm_param_cast_to_fp16(monkeypatch):
-    # The whole-model fp16 cast now downcasts non-mm fp32 params too (spyre cards
-    # don't support bf16; this path is for non-quantized models only).
+def test_non_bf16_non_mm_param__untouched(monkeypatch):
     _set_cpu_mm_dtype(monkeypatch, "float32")
     fms = _FakeFmsModel([("decoder.layers.0.weight", torch.float32)])
     _cast(fms, _FakeMMUtils(("vision_tower.",)))
-    assert _dtype_of(fms, "decoder.layers.0.weight") == torch.float16
+    assert _dtype_of(fms, "decoder.layers.0.weight") == torch.float32
 
 
 def test_mixed_params_all_branches(monkeypatch):
@@ -117,3 +117,76 @@ def test_mixed_params_all_branches(monkeypatch):
         "decoder.layers.0.weight": torch.float16,
         "decoder.layers.0.bias": torch.float16,
     }
+
+
+def _force_nnpa_detected(monkeypatch, detected):
+    """Make parse_mm_device see torch_nnpa as present/absent without installing
+    it, by stubbing the find_spec it uses. Leaves other imports untouched."""
+    real_find_spec = importlib.util.find_spec
+
+    def fake_find_spec(name, *args, **kwargs):
+        if name == "torch_nnpa":
+            return object() if detected else None
+        return real_find_spec(name, *args, **kwargs)
+
+    monkeypatch.setattr(importlib.util, "find_spec", fake_find_spec)
+
+
+def _set_mm_device(monkeypatch, value):
+    monkeypatch.setenv("SENDNN_INFERENCE_CPU_MM_DTYPE", "float16")
+    monkeypatch.setenv("SENDNN_INFERENCE_MM_DEVICE", value)
+    envs.clear_env_cache()
+
+
+def _cast_returning_self(fms_model, mm_model_utils):
+    ns = SimpleNamespace(fms_model=fms_model, mm_model_utils=mm_model_utils)
+    SpyreCausalLM._cast_params_for_spyre(ns)
+    return ns
+
+
+def test_parse_mm_device_cpu(monkeypatch):
+    _force_nnpa_detected(monkeypatch, False)
+    assert parse_mm_device("cpu") == "cpu"
+
+
+def test_parse_mm_device_auto_without_nnpa_resolves_cpu(monkeypatch):
+    _force_nnpa_detected(monkeypatch, False)
+    assert parse_mm_device("auto") == "cpu"
+
+
+def test_parse_mm_device_auto_with_nnpa_resolves_nnpa(monkeypatch):
+    _force_nnpa_detected(monkeypatch, True)
+    assert parse_mm_device("auto") == "nnpa"
+
+
+def test_parse_mm_device_explicit_nnpa_missing_raises(monkeypatch):
+    _force_nnpa_detected(monkeypatch, False)
+    with pytest.raises(ImportError):
+        parse_mm_device("nnpa")
+
+
+def test_nnpa_registration_failure_raises(monkeypatch):
+    # torch_nnpa is importable (detected) so MM_DEVICE resolves to "nnpa", but
+    # the device can't be initialized -> hard error, no silent CPU fallback.
+    _force_nnpa_detected(monkeypatch, True)
+    _set_mm_device(monkeypatch, "nnpa")
+    monkeypatch.setattr(utils, "ensure_nnpa_registered", lambda: False)
+    fms = _FakeFmsModel([("vision_tower.weight", torch.bfloat16)])
+    with pytest.raises(RuntimeError, match="nnpa device could not be initialized"):
+        _cast(fms, _FakeMMUtils(("vision_tower.",)))
+
+
+def test_nnpa_text_only_model_never_registers_or_errors(monkeypatch):
+    # A text-only model (no mm submodules) must not attempt nnpa registration
+    # and must not error even when MM_DEVICE resolves to "nnpa".
+    _force_nnpa_detected(monkeypatch, True)
+    _set_mm_device(monkeypatch, "nnpa")
+    calls = []
+    monkeypatch.setattr(
+        utils, "ensure_nnpa_registered", lambda: calls.append(True) or False
+    )
+    fms = _FakeFmsModel([("decoder.layers.0.weight", torch.bfloat16)])
+    ns = _cast_returning_self(fms, None)
+    assert calls == []  # registration never attempted (short-circuited)
+    assert ns.mm_device == "nnpa"
+    assert _dtype_of(fms, "decoder.layers.0.weight") == torch.float16

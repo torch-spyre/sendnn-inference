@@ -156,16 +156,18 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # Device used to execute the multimodal vision_tower / multi_modal_projector.
     # "auto" (default) routes the encoder to the Telum through the torch_nnpa
     # privateuse1 backend when torch_nnpa is importable, and falls back silently
-    # to CPU otherwise. "cpu" forces CPU execution. "nnpa" forces NNPA and raises
-    # ImportError if torch_nnpa is missing. This setting only resolves intent;
-    # torch_nnpa is not imported here. The privateuse1 backend is registered
-    # lazily -- and only for multimodal models -- at vision-weight placement via
-    # utils.ensure_nnpa_registered(), which also registers the
-    # PrivateUse1HooksInterface that PyTorch autoload would normally provide (this
-    # plugin sets TORCH_DEVICE_BACKEND_AUTOLOAD=0 in __init__ to keep that
-    # autoload from crashing worker startup). If nnpa cannot be fully registered,
-    # the vision tower falls back to CPU. The LLM forward continues to run on
-    # Spyre via torch.compile(backend="sendnn") regardless.
+    # to CPU only when torch_nnpa is *absent*. "cpu" forces CPU execution. "nnpa"
+    # additionally raises ImportError at startup if torch_nnpa is missing. This
+    # setting only resolves intent; torch_nnpa is not imported here. The
+    # privateuse1 backend is registered lazily -- and only for multimodal models
+    # -- at vision-weight placement via utils.ensure_nnpa_registered(), which
+    # also registers the PrivateUse1HooksInterface that PyTorch autoload would
+    # normally provide (this plugin sets TORCH_DEVICE_BACKEND_AUTOLOAD=0 in
+    # __init__ to keep that autoload from crashing worker startup). If torch_nnpa
+    # is present but the nnpa device cannot be initialized, vLLM fails to start
+    # (no silent CPU fallback) -- set this to "cpu" to run the vision tower on
+    # CPU. The LLM forward continues to run on Spyre via
+    # torch.compile(backend="sendnn") regardless.
     "SENDNN_INFERENCE_MM_DEVICE": lambda: parse_mm_device(
         os.getenv("SENDNN_INFERENCE_MM_DEVICE", "auto")
     ),
