@@ -406,78 +406,8 @@ class SamplingInputBatch(BaseInputBatch[SamplingRequestState]):
         end_idx = start_idx + len(request.output_token_ids)
         self.token_ids_cpu[req_index, start_idx:end_idx] = request.output_token_ids
 
-        sampling_params = request.sampling_params
-        if sampling_params.sampling_type == SamplingType.GREEDY:
-            # Avoid later division by zero.
-            self.temperature_cpu[req_index] = -1.0
-            self.greedy_reqs.add(req_id)
-        else:
-            self.temperature_cpu[req_index] = sampling_params.temperature
-            self.random_reqs.add(req_id)
-
-        self.top_p_cpu[req_index] = sampling_params.top_p
-        if sampling_params.top_p < 1:
-            self.top_p_reqs.add(req_id)
-        top_k = sampling_params.top_k
-        if 0 < top_k < self.vocab_size:
-            self.top_k_reqs.add(req_id)
-        else:
-            top_k = self.vocab_size
-        self.top_k_cpu[req_index] = top_k
-        self.frequency_penalties_cpu[req_index] = sampling_params.frequency_penalty
-        if sampling_params.frequency_penalty != 0.0:
-            self.frequency_penalties_reqs.add(req_id)
-        self.presence_penalties_cpu[req_index] = sampling_params.presence_penalty
-        if sampling_params.presence_penalty != 0.0:
-            self.presence_penalties_reqs.add(req_id)
-        self.repetition_penalties_cpu[req_index] = sampling_params.repetition_penalty
-        if sampling_params.repetition_penalty != 1.0:
-            self.repetition_penalties_reqs.add(req_id)
-
-        # NOTE(woosuk): self.generators should not include the requests that
-        # do not have their own generator.
-        if request.generator is not None:
-            self.generators[req_index] = request.generator
-
-        if sampling_params.logprobs is not None:
-            self.num_logprobs[req_id] = sampling_params.logprobs
-
-        if sampling_params.allowed_token_ids:
-            self.has_allowed_token_ids.add(req_id)
-            if self.allowed_token_ids_mask is None:
-                # Lazy allocation for this tensor, which can be large.
-                self.allowed_token_ids_mask = torch.zeros(
-                    self.max_num_reqs, self.vocab_size, dtype=torch.bool, device=self.device
-                )
-            self.allowed_token_ids_mask[req_index][sampling_params.allowed_token_ids] = True
-
-        if sampling_params.bad_words_token_ids:
-            self.bad_words_token_ids[req_index] = sampling_params.bad_words_token_ids
+        self._register_sampling_params(req_id, req_index, request)
         return req_index
-
-    def clear_requests(self):
-        """
-        Clear the batch, mostly used by static batching
-        """
-        super().clear_requests()
-        self.req_indices_mask.fill_(False)
-        self.req_output_token_ids = []
-
-        self.greedy_reqs = set()
-        self.random_reqs = set()
-        self.top_p_reqs = set()
-        self.top_k_reqs = set()
-        self.frequency_penalties_reqs = set()
-        self.presence_penalties_reqs = set()
-        self.repetition_penalties_reqs = set()
-        self.generators = {}
-        self.num_logprobs = {}
-
-        self.has_allowed_token_ids = set()
-        if self.allowed_token_ids_mask is not None:
-            self.allowed_token_ids_mask.fill_(False)
-
-        self.batch_update_builder.get_and_reset(0)
 
     def remove_request(self, req_id: str):
         """
@@ -518,26 +448,8 @@ class SamplingInputBatch(BaseInputBatch[SamplingRequestState]):
                 (tmp_dense, tmp_dense + 1, MoveDirectionality.UNIDIRECTIONAL)
             )
 
-        # Remove the references
         self.req_output_token_ids.pop(dense_index)
-
-        self.greedy_reqs.discard(req_id)
-        self.random_reqs.discard(req_id)
-        self.top_p_reqs.discard(req_id)
-        self.top_k_reqs.discard(req_id)
-
-        self.frequency_penalties_reqs.discard(req_id)
-        self.presence_penalties_reqs.discard(req_id)
-        self.repetition_penalties_reqs.discard(req_id)
-        self.generators.pop(req_index, None)
-        self.num_logprobs.pop(req_id, None)
-
-        self.has_allowed_token_ids.discard(req_id)
-
-        if self.allowed_token_ids_mask is not None:
-            self.allowed_token_ids_mask[req_index].fill_(False)
-
-        self.bad_words_token_ids.pop(req_index, None)
+        self._unregister_sampling_params(req_id, req_index)
 
     def pause_request(self, req_id: str) -> None:
         """Temporarily remove a request from the active batch.
@@ -572,24 +484,7 @@ class SamplingInputBatch(BaseInputBatch[SamplingRequestState]):
             )
 
         self.req_output_token_ids.pop(dense_index)
-
-        self.greedy_reqs.discard(req_id)
-        self.random_reqs.discard(req_id)
-        self.top_p_reqs.discard(req_id)
-        self.top_k_reqs.discard(req_id)
-
-        self.frequency_penalties_reqs.discard(req_id)
-        self.presence_penalties_reqs.discard(req_id)
-        self.repetition_penalties_reqs.discard(req_id)
-        self.generators.pop(req_index, None)
-        self.num_logprobs.pop(req_id, None)
-
-        self.has_allowed_token_ids.discard(req_id)
-
-        if self.allowed_token_ids_mask is not None:
-            self.allowed_token_ids_mask[req_index].fill_(False)
-
-        self.bad_words_token_ids.pop(req_index, None)
+        self._unregister_sampling_params(req_id, req_index)
 
     def resume_request(self, req_id: str, request: "SamplingRequestState") -> None:
         """Restore a previously paused request to the active batch.
@@ -635,6 +530,12 @@ class SamplingInputBatch(BaseInputBatch[SamplingRequestState]):
             )
             tmp_dense -= 1
 
+        self._register_sampling_params(req_id, req_index, request)
+
+    def _register_sampling_params(
+        self, req_id: str, req_index: int, request: "SamplingRequestState"
+    ) -> None:
+        """Write all sampling parameter fields for a newly-occupied slot."""
         sampling_params = request.sampling_params
         if sampling_params.sampling_type == SamplingType.GREEDY:
             self.temperature_cpu[req_index] = -1.0
@@ -678,6 +579,46 @@ class SamplingInputBatch(BaseInputBatch[SamplingRequestState]):
 
         if sampling_params.bad_words_token_ids:
             self.bad_words_token_ids[req_index] = sampling_params.bad_words_token_ids
+
+    def _unregister_sampling_params(self, req_id: str, req_index: int) -> None:
+        """Clear all per-request fields when vacating a slot."""
+        self.greedy_reqs.discard(req_id)
+        self.random_reqs.discard(req_id)
+        self.top_p_reqs.discard(req_id)
+        self.top_k_reqs.discard(req_id)
+        self.frequency_penalties_reqs.discard(req_id)
+        self.presence_penalties_reqs.discard(req_id)
+        self.repetition_penalties_reqs.discard(req_id)
+        self.generators.pop(req_index, None)
+        self.num_logprobs.pop(req_id, None)
+        self.has_allowed_token_ids.discard(req_id)
+        if self.allowed_token_ids_mask is not None:
+            self.allowed_token_ids_mask[req_index].fill_(False)
+        self.bad_words_token_ids.pop(req_index, None)
+
+    def clear_requests(self):
+        """
+        Clear the batch, mostly used by static batching
+        """
+        super().clear_requests()
+        self.req_indices_mask.fill_(False)
+        self.req_output_token_ids = []
+
+        self.greedy_reqs = set()
+        self.random_reqs = set()
+        self.top_p_reqs = set()
+        self.top_k_reqs = set()
+        self.frequency_penalties_reqs = set()
+        self.presence_penalties_reqs = set()
+        self.repetition_penalties_reqs = set()
+        self.generators = {}
+        self.num_logprobs = {}
+
+        self.has_allowed_token_ids = set()
+        if self.allowed_token_ids_mask is not None:
+            self.allowed_token_ids_mask.fill_(False)
+
+        self.batch_update_builder.get_and_reset(0)
 
     def refresh_metadata(self):
         """Apply batch updates, reset input batch at end of step
