@@ -272,13 +272,13 @@ class SpyreCausalLM(nn.Module):
         logger.debug("Model weights loaded successfully.")
 
     def _cast_params_for_spyre(self):
-        """Downcast the LLM's bf16 params to fp16 for Spyre, then place the multimodal
-        submodules (vision_tower) onto SENDNN_INFERENCE_MM_DEVICE with
-        SENDNN_INFERENCE_CPU_MM_DTYPE.
+        """Cast the LLM to fp16 for Spyre, then place the multimodal submodules
+        (vision_tower / multi_modal_projector) onto SENDNN_INFERENCE_MM_DEVICE
+        with SENDNN_INFERENCE_CPU_MM_DTYPE.
 
-        Only bf16 params are downcast; fp32 params/buffers and quantized (fp8)
-        weights are left untouched (matching the non-mm behaviour of the original
-        loader).
+        NOTE: the whole non-mm model is cast to fp16, including any fp32
+        params/buffers and the float8 weights of quantized models. This path is
+        only intended for non-quantized (bf16) models.
         """
         cpu_mm_dtype = envs_spyre.SENDNN_INFERENCE_CPU_MM_DTYPE
         mm_device = envs_spyre.SENDNN_INFERENCE_MM_DEVICE
@@ -294,21 +294,14 @@ class SpyreCausalLM(nn.Module):
             )
         self.mm_device = mm_device
 
-        # Cast only the non-mm (LLM) bf16 params to fp16. fp32 params/buffers and
-        # quantized (fp8) weights are left untouched. mm params are handled by
-        # the placement loop below.
-        for name, param in self.fms_model.named_parameters():
-            if name.startswith(mm_prefixes):
-                continue
-            if param.dtype == torch.bfloat16:
-                param.data = param.data.to(dtype=torch.float16)
-
-        # Move the multimodal submodules whole. We must use Module.to(...) here
-        # rather than mutating param.data, because nn.Parameter.set_data refuses
-        # to swap tensor types when the backend changes (e.g. CPU TensorImpl ->
-        # NnpaTensorImpl). Module._apply rebuilds Parameter objects correctly
-        # in that case. As a bonus this also moves any buffers under the
-        # submodule.
+        # Cast the whole (non-mm) model to fp16 for Spyre, and place the
+        # multimodal submodules on their configured device/dtype. The mm
+        # submodules are moved wholesale with Module.to(...) (required because
+        # nn.Parameter.set_data can't swap the CPU->nnpa backend; Module._apply
+        # rebuilds the Parameters, and buffers move too). Their descendants must
+        # be skipped so the else branch doesn't re-cast them back to fp16 after
+        # placement (named_modules yields parents before children).
+        mm_prefixes_tuple = tuple(mm_prefixes)
         for module_name, module in self.fms_model.named_modules():
             if module_name in mm_module_names:
                 logger.debug(
@@ -318,6 +311,11 @@ class SpyreCausalLM(nn.Module):
                     cpu_mm_dtype,
                 )
                 module.to(device=mm_device, dtype=cpu_mm_dtype)
+            elif module_name.startswith(mm_prefixes_tuple):
+                # Descendant of an mm submodule; already placed with its ancestor.
+                continue
+            else:
+                module.to(dtype=torch.float16)
 
     def _cast_to_f32(self):
         """Cast model parameters to f32."""

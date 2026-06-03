@@ -90,11 +90,13 @@ def test_no_mm_utils_still_casts_bf16_decoder_params(monkeypatch):
     assert _dtype_of(fms, "decoder.layers.0.weight") == torch.float16
 
 
-def test_non_bf16_non_mm_param__untouched(monkeypatch):
+def test_non_bf16_non_mm_param_cast_to_fp16(monkeypatch):
+    # The whole-model fp16 cast downcasts non-mm fp32 params too (spyre cards
+    # don't support bf16; this path is for non-quantized models only).
     _set_cpu_mm_dtype(monkeypatch, "float32")
     fms = _FakeFmsModel([("decoder.layers.0.weight", torch.float32)])
     _cast(fms, _FakeMMUtils(("vision_tower.",)))
-    assert _dtype_of(fms, "decoder.layers.0.weight") == torch.float32
+    assert _dtype_of(fms, "decoder.layers.0.weight") == torch.float16
 
 
 def test_mixed_params_all_branches(monkeypatch):
