@@ -438,7 +438,7 @@ def test_spyre_bad_words(
     )
     prompt = "The capital of France is"
     params1 = SamplingParams(
-        max_tokens=5, temperature=0, bad_words=[" Paris", " Parisi", " France"]
+        max_tokens=5, temperature=0, bad_words=[" Paris", " Parisi", " France", " Louis"]
     )
     params2 = SamplingParams(max_tokens=5, temperature=0)
 

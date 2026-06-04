@@ -395,8 +395,6 @@ def test_prefix_hit_decoded_block_within_batch(
         {  # prefill chunk 2 seq 1
             # no prefix hit, always recompute last chunk
             "step": 68,
-            # seq 1 tkv (193) is in 4th block. Need to pad seq 0 tkv to 4th
-            # block as well: 192 + 64 = 256
             "tkv": 193,
             "waiting": [],
             "running": ["1", "0"],
