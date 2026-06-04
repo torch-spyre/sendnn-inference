@@ -54,6 +54,7 @@ git_describe_command = "git describe --dirty --tags --long --match 'v*'"
 # by accident
 override-dependencies = [
     "torch==2.11.0",
+    "transformers==5.0.0",
     "triton; sys_platform == 'never'",
     "intel-extension-for-pytorch; sys_platform == 'never'",
 
