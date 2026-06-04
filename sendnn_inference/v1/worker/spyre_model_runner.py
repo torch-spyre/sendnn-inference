@@ -1431,6 +1431,7 @@ class ChunkedPrefillModelRunner(
 
     def _update_batch(self, scheduler_output: SchedulerOutput):
         """Updates the states for the in progress batch
+        - Synchronizes input_batch with scheduler output (handles pause/resume)
         - Bumps the count of computed tokens for each request
         - Updates the KV cache metadata for each request
         - Safely removes finished requests from the batch

@@ -491,7 +491,7 @@ def test_cp_prefill_interleave1(
         {
             # Chunk 0 of request 1 prefill
             "step": 3,
-            "tkv": 512,
+            "tkv": 512,  # prompt len of req1
             "waiting": [],
             "running": ["1", "0"],
             "request_outputs": [],
@@ -508,9 +508,8 @@ def test_cp_prefill_interleave1(
         },
         {
             # Chunk 1 of request 1 prefill
-            # tkv of decode batch (tkv not updated until last chunk)
             "step": 5,
-            "tkv": 512,
+            "tkv": 512,  # prompt len of request
             "waiting": [],
             "running": ["1", "0"],
             "request_outputs": [],
@@ -527,9 +526,8 @@ def test_cp_prefill_interleave1(
         },
         {
             # Chunk 2 of request 1 prefill
-            # tkv of decode batch (tkv not updated until last chunk)
             "step": 7,
-            "tkv": 512,
+            "tkv": 512,  # prompt len of request
             "waiting": [],
             "running": ["1", "0"],
             "request_outputs": [],
@@ -547,9 +545,8 @@ def test_cp_prefill_interleave1(
         {
             # Chunk 3 of request 1 prefill.
             # First token is generated
-            # tkv updated for last chunk
             "step": 9,
-            "tkv": 512,
+            "tkv": 512,  # prompt len of request
             "waiting": [],
             "running": ["1", "0"],
             "request_outputs": ["1"],

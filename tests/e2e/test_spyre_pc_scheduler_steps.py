@@ -1673,9 +1673,9 @@ def test_first_chunk_partial_match(
             "n_prefix_hits": 0,
             "block_tables": {"0": [1]},
         },
-        {  # prefill seq 1. This step was crashing before
+        {  # prefill seq 1
             "step": 2,
-            "tkv": 320,
+            "tkv": 320,  # prompt len of request 1
             "waiting": [],
             "running": ["1", "0"],
             "request_outputs": [],
