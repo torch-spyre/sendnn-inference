@@ -185,6 +185,7 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # Operator-supplied; default 0 means no virtual time accumulates.
     "SENDNN_INFERENCE_SIM_DECODE_MS": lambda: float(
         os.getenv("SENDNN_INFERENCE_SIM_DECODE_MS", "0")
+    ),
 }
 # --8<-- [end:env-vars-definition]
 
