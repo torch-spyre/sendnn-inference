@@ -620,32 +620,15 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         # Step 1: Find the maximum number of blocks across all requests
         # Account for requests that will need a new block after the next token
         max_n_blocks = 0
+        num_blocks_per_req: list[int] = []
         for request in running_requests:
-            block_ids_per_kv_cache_group = self.kv_cache_manager.get_block_ids(request.request_id)
-            assert len(block_ids_per_kv_cache_group) == 1
-            num_blocks = len(block_ids_per_kv_cache_group[0])
-
-            # Check if the next token will require a new block
-            next_token_count = request.num_computed_tokens + 1
-            if next_token_count % self.block_size == 1:
-                # The next token will fill the current block and require a new one
-                num_blocks += 1
-
+            num_blocks = math.ceil((request.num_computed_tokens + 1) / self.block_size)
+            num_blocks_per_req.append(num_blocks)
             max_n_blocks = max(max_n_blocks, num_blocks)
 
         # Step 2: Calculate TKV for each request and find the maximum
         max_tkv = 0
-        for request in running_requests:
-            # Get the number of blocks for this request
-            block_ids_per_kv_cache_group = self.kv_cache_manager.get_block_ids(request.request_id)
-            num_blocks = len(block_ids_per_kv_cache_group[0])
-
-            # Check if the next token will require a new block
-            next_token_count = request.num_computed_tokens + 1
-            if next_token_count % self.block_size == 1:
-                # The next token will fill the current block and require a new one
-                num_blocks += 1
-
+        for request, num_blocks in zip(running_requests, num_blocks_per_req):
             # Calculate left padding blocks needed for alignment
             left_pad_blocks_count = max_n_blocks - num_blocks
             left_padding = left_pad_blocks_count * self.block_size

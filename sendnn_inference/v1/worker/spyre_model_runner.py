@@ -1450,7 +1450,6 @@ class ChunkedPrefillModelRunner(
         for req_id in paused_req_ids:
             # Only pause if it's not a finished request (finished requests are handled separately)
             if req_id not in (scheduler_output.finished_req_ids or []):
-                logger.info("Pausing request %s from input_batch", req_id)
                 self.input_batch.pause_request(req_id)
                 self.paused_req_ids.add(req_id)
                 self.input_batch.refresh_metadata()
@@ -1462,7 +1461,6 @@ class ChunkedPrefillModelRunner(
         for req_id in restored_req_ids:
             # Only restore requests that were previously paused
             if req_id in self.paused_req_ids and req_id in self.requests:
-                logger.info("Restoring paused request %s to input_batch", req_id)
                 req_state = self.requests[req_id]
                 self.input_batch.resume_request(req_id, req_state)
                 self.paused_req_ids.discard(req_id)
