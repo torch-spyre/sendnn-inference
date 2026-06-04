@@ -1788,3 +1788,269 @@ def test_first_chunk_partial_match(
         prefix_caching=True,
         extra_assert_funcs=[verify_block_tables, verify_slot_mappings],
     )
+
+
+@pytest.mark.chunked_prefill
+@pytest.mark.full_model
+@pytest.mark.prefix_caching
+# These values are all parameterized for test sorting
+@pytest.mark.parametrize("max_num_seqs", [2])
+@pytest.mark.parametrize("max_model_len", [124])
+@pytest.mark.parametrize("max_num_batched_tokens", [64])
+@pytest.mark.parametrize("available_blocks", [3])
+def test_reserved_blocks_fit_with_caching(
+    model: ModelInfo,
+    backend: str,
+    monkeypatch: pytest.MonkeyPatch,
+    max_num_seqs: int,
+    max_model_len: int,
+    max_num_batched_tokens: int,
+    available_blocks: int,
+):
+    """Scenario where two equal sequences are scheduled.
+    Both require 2 blocks but only 3 are available. With prefix
+    caching both can run in the same batch because 1 block is shared.
+
+    Configuration:
+        * max_num_seqs: 2
+        * number of prompts: 2
+            * 0: len = 64, max tokens = 3, step joining = 0
+            * 1: len = 65, max tokens = 2, step joining = 0
+    """
+
+    prompt = random_prompt(model=model, seed=0, length=65)
+
+    request1 = create_request_for_scheduler_test(
+        model=model,
+        request_id=0,
+        add_step=0,
+        max_tokens=3,
+        prompt=prompt[:64],
+        use_golden_token_injection=True,
+    )
+
+    request2 = create_request_for_scheduler_test(
+        model=model,
+        request_id=1,
+        add_step=0,
+        max_tokens=2,
+        prompt=prompt,
+        use_golden_token_injection=True,
+    )
+
+    checked_steps = [
+        {
+            "step": 0,
+            "tkv": 0,
+            "waiting": ["0", "1"],
+            "running": [],
+            "request_outputs": [],
+            "n_used_blocks": 0,
+        },
+        {
+            # Prefill sequence 0
+            # total blocks in use: 1
+            "step": 1,
+            "tkv": 64,
+            "waiting": ["1"],
+            "running": ["0"],
+            "request_outputs": ["0"],
+            "n_used_blocks": 1,
+            "n_reserved_blocks": 1,
+        },
+        {
+            # Decode sequence 0
+            "step": 2,
+            "tkv": 65,
+            "waiting": ["1"],
+            "running": ["0"],
+            "request_outputs": ["0"],
+            "n_used_blocks": 2,
+            "n_reserved_blocks": 0,
+        },
+        {
+            # Prefill sequence 1
+            # total blocks in use: 2
+            "step": 3,
+            "tkv": 65,
+            "waiting": [],
+            "running": ["1", "0"],
+            "request_outputs": ["1"],
+            "n_used_blocks": 3,
+            "n_reserved_blocks": 0,
+        },
+        {
+            # Decode sequence 0 and 1
+            "step": 4,
+            "tkv": 66,
+            "waiting": [],
+            "running": [],
+            "request_outputs": ["1", "0"],
+            "finished_requests": ["1", "0"],
+            "n_used_blocks": 0,
+            "n_reserved_blocks": 0,
+        },
+        {
+            # Tkv should be cleared one step later
+            "step": 5,
+            "tkv": 0,
+            "waiting": [],
+            "running": [],
+            "request_outputs": [],
+            "n_used_blocks": 0,
+            "n_reserved_blocks": 0,
+        },
+    ]
+
+    validate_scheduler_steps(
+        model=model,
+        backend=backend,
+        monkeypatch=monkeypatch,
+        requests=[request1, request2],
+        checked_steps=checked_steps,
+        max_num_seqs=max_num_seqs,
+        max_model_len=max_model_len,
+        available_blocks=available_blocks,
+        max_num_batched_tokens=max_num_batched_tokens,
+        prefix_caching=True,
+        extra_assert_funcs=[verify_block_tables],
+    )
+
+
+@pytest.mark.chunked_prefill
+@pytest.mark.full_model
+@pytest.mark.prefix_caching
+# These values are all parameterized for test sorting
+@pytest.mark.parametrize("max_num_seqs", [2])
+@pytest.mark.parametrize("max_model_len", [124])
+@pytest.mark.parametrize("max_num_batched_tokens", [64])
+@pytest.mark.parametrize("available_blocks", [2])
+def test_reserved_blocks_dont_fit_with_caching(
+    model: ModelInfo,
+    backend: str,
+    monkeypatch: pytest.MonkeyPatch,
+    max_num_seqs: int,
+    max_model_len: int,
+    max_num_batched_tokens: int,
+    available_blocks: int,
+):
+    """Same test as above, but now we only have 2 blocks available, which is
+    not enough even with prefix caching.
+
+    Configuration:
+        * max_num_seqs: 2
+        * number of prompts: 2
+            * 0: len = 64, max tokens = 3, step joining = 0
+            * 1: len = 65, max tokens = 2, step joining = 0
+    """
+
+    prompt = random_prompt(model=model, seed=0, length=65)
+
+    request1 = create_request_for_scheduler_test(
+        model=model,
+        request_id=0,
+        add_step=0,
+        max_tokens=3,
+        prompt=prompt[:64],
+        use_golden_token_injection=True,
+    )
+
+    request2 = create_request_for_scheduler_test(
+        model=model,
+        request_id=1,
+        add_step=0,
+        max_tokens=2,
+        prompt=prompt,
+        use_golden_token_injection=True,
+    )
+
+    checked_steps = [
+        {
+            "step": 0,
+            "tkv": 0,
+            "waiting": ["0", "1"],
+            "running": [],
+            "request_outputs": [],
+            "n_used_blocks": 0,
+        },
+        {
+            # Prefill sequence 0
+            # total blocks in use: 1
+            "step": 1,
+            "tkv": 64,
+            "waiting": ["1"],
+            "running": ["0"],
+            "request_outputs": ["0"],
+            "n_used_blocks": 1,
+            "n_reserved_blocks": 1,
+        },
+        {
+            # Decode sequence 0
+            "step": 2,
+            "tkv": 65,
+            "waiting": ["1"],
+            "running": ["0"],
+            "request_outputs": ["0"],
+            "n_used_blocks": 2,
+            "n_reserved_blocks": 0,
+        },
+        {
+            # Decode sequence 0
+            "step": 3,
+            "tkv": 66,
+            "waiting": ["1"],
+            "running": [],
+            "request_outputs": ["0"],
+            "finished_requests": ["0"],
+            "n_used_blocks": 0,
+            "n_reserved_blocks": 0,
+        },
+        {
+            # Prefill sequence 1
+            # total blocks in use: 2
+            "step": 4,
+            "tkv": 65,
+            "waiting": [],
+            "running": ["1"],
+            "request_outputs": ["1"],
+            "n_used_blocks": 2,
+            "n_reserved_blocks": 0,
+        },
+        {
+            # Decode sequence 1
+            # Sequence 1 finishes at step 4
+            # total blocks in use: 3
+            "step": 5,
+            "tkv": 66,
+            "waiting": [],
+            "running": [],
+            "request_outputs": ["1"],
+            "finished_requests": ["1"],
+            "n_used_blocks": 0,
+            "n_reserved_blocks": 0,
+        },
+        {
+            # Tkv should be cleared one step later
+            "step": 6,
+            "tkv": 0,
+            "waiting": [],
+            "running": [],
+            "request_outputs": [],
+            "n_used_blocks": 0,
+            "n_reserved_blocks": 0,
+        },
+    ]
+
+    validate_scheduler_steps(
+        model=model,
+        backend=backend,
+        monkeypatch=monkeypatch,
+        requests=[request1, request2],
+        checked_steps=checked_steps,
+        max_num_seqs=max_num_seqs,
+        max_model_len=max_model_len,
+        available_blocks=available_blocks,
+        max_num_batched_tokens=max_num_batched_tokens,
+        prefix_caching=True,
+        extra_assert_funcs=[verify_block_tables],
+    )
