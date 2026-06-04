@@ -301,7 +301,11 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             total_computed_tokens=num_computed_tokens,
             num_tokens_main_model=num_tokens,
         )
-        return len(new_computed_blocks.blocks[0]), num_blocks_to_allocate
+
+        cached_blocks = sum(1 for block in new_computed_blocks.blocks[0] if block.ref_cnt > 0)
+        total_blocks = math.ceil(num_tokens / self.block_size)
+        assert cached_blocks + num_blocks_to_allocate == total_blocks
+        return cached_blocks, num_blocks_to_allocate
 
     def _get_free_blocks(self) -> int:
         return self.kv_cache_manager.block_pool.get_num_free_blocks()
