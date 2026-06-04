@@ -11,11 +11,11 @@ description = "vLLM plugin for Spyre hardware support"
 readme = "README.md"
 license = {text = "Apache 2"}
 dependencies = [
-    "fms-model-optimizer[fp8]>=0.8.2,<0.9",
+    "fms-model-optimizer[fp8-infer]>=0.8.3,<0.9",
     "ibm-fms>=1.9.0,<2",
     # NB: use strict < with the next patch version to not exclude versions with
     # build metadata suffixes
-    "vllm>=0.19.1,<0.21.1",
+    "vllm>=0.19.1,<0.22.1",
     
     # Specific torch version overrides handled by uv
     "torch",
@@ -76,10 +76,6 @@ override-dependencies = [
     # requests is used by many dependencies, make sure it's patched for CVEs
     "requests>=2.32.4",
 
-    # vllm 0.18.0 pins compressed-tensors==0.13.0; override to 0.14.0.1
-    # TODO: remove once minimum vllm is bumped past 0.18.0
-    "compressed-tensors==0.14.0.1",
-
     # llguidance>=1.7.3 fixes s390x endianness issues.
     # This conflicts with vLLM's version range (llguidance >= 1.3.0, < 1.4.0).
     # TODO: Remove this override once vLLM's requirement range includes or moves past 1.7.3.
@@ -93,7 +89,7 @@ build-constraint-dependencies = []
 extra-build-variables = { vllm = { VLLM_TARGET_DEVICE = "empty" } }
 
 [tool.uv.sources]
-vllm = { git = "https://github.com/vllm-project/vllm", rev = "v0.21.0" }
+vllm = { git = "https://github.com/vllm-project/vllm", rev = "v0.22.0" }
 torch = [
   { index = "pytorch-cpu" },
 ]
@@ -168,6 +164,11 @@ ignore = [
     "B905",
 ]
 
+[tool.typos.default.extend-words]
+# `*.ot` is the file extension for HuggingFace Rust framework model weights
+# (rust_model.ot), referenced in tools/download_model.py.
+ot = "ot"
+
 [tool.codespell]
 ignore-words-list = "dout, te, indicies, subtile, ElementE"
 skip = "*.svg,./tests/hf_cache.json"
@@ -237,12 +238,12 @@ plugins.md007.indent = 4
 
 [dependency-groups]
 dev = [
-    "pytest==8.3.4",
+    "pytest>=8.4.0",
     "pytest-asyncio>=1.0.0",
     "pytest-forked>=1.6.0",
     "pytest-timeout==2.3.1",
     "requests==2.32.3",
     "sentence-transformers==3.4.1",
-    "aiu-fms-testing-utils>=0.5.0",
+    "aiu-fms-testing-utils>=0.8.2",
     "pytest-mock>=3.15.0",
 ]
