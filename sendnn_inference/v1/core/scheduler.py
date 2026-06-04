@@ -400,6 +400,10 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         if len(self.running) + len(self.waiting) == 0:
             return True
 
+        # Paused request have the priority and will be resumed if the tkv_batch limit allows it
+        if self.paused_decoding_requests:
+            return False
+
         if not self._has_scheduling_priority(request):
             return False
 
@@ -442,9 +446,9 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         """First chunked prefill can be scheduled only if there is space in the
         input batch (cond1) and in the prefill batch (cond2)."""
 
-        # TODO theoretically we could already do a chunked prefill even
-        # if the decode batch is full, but the current implementation of input
-        # batch doesn't allow to do so.
+        # NOTE: We could already do a chunked prefill even if the decode batch
+        # is full, this could potentially increase the ITL of the request
+        # if it then request doesn't satisfy the volumetric constraint
         num_running = len(self.running)
         cond1 = num_running + len(self.waiting) < self.max_num_running_reqs
 
