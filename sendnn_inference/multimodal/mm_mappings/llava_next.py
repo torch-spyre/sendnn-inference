@@ -10,6 +10,7 @@ from vllm.multimodal.inputs import (
     PlaceholderRange,
 )
 
+import sendnn_inference.envs as envs_spyre
 from sendnn_inference.multimodal.mm_mappings import MMUtilsBase, MMWarmupInputs
 
 # Extend the adapter as part of the head dim fix; this is needed to
@@ -70,6 +71,7 @@ class LlavaNextMMUtils(MMUtilsBase):
         input_ids: torch.Tensor,
         mm_features: list[MultiModalFeatureSpec],
         is_decode: bool,
+        mm_device: str,
     ) -> torch.Tensor:
         """Get the text or multimodal embeddings for Llava Next using
         the (potentially compiled) FMS model.
@@ -90,7 +92,15 @@ class LlavaNextMMUtils(MMUtilsBase):
                 if any(k not in mm_spec for k in mm_spec_keys):
                     raise KeyError(f"Llava Next requires kwargs: {mm_spec_keys}")
 
-                fms_kwargs["pixel_values"] = mm_spec["pixel_values"].data
+                pixel_values = mm_spec["pixel_values"].data
+                # Place pixel_values on the same device/dtype as the
+                # vision_tower so the encoder forward can run on NNPA when the
+                # vision_tower weights ended up on nnpa (CPU otherwise).
+                mm_dtype = envs_spyre.SENDNN_INFERENCE_CPU_MM_DTYPE
+                if pixel_values.device.type != mm_device or pixel_values.dtype != mm_dtype:
+                    pixel_values = pixel_values.to(device=mm_device, dtype=mm_dtype)
+                fms_kwargs["pixel_values"] = pixel_values
+
                 image_sizes = mm_spec["image_sizes"].data
 
                 # Careful about this; if it's 1D, we'll a tensor of shape
@@ -99,6 +109,8 @@ class LlavaNextMMUtils(MMUtilsBase):
                 # an int instead of an iterable
                 if image_sizes.ndim == 1:
                     image_sizes = image_sizes.unsqueeze(0)
+                # image_sizes is an integer index tensor; keep it on CPU
+                # (NNPA dispatch for int tensors would just fall back anyway).
                 fms_kwargs["image_sizes"] = image_sizes
 
         # The value of iteration does not matter for decode as long as it's > 0

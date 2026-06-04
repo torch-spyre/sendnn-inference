@@ -15,7 +15,7 @@ dependencies = [
     "ibm-fms>=1.9.0,<2",
     # NB: use strict < with the next patch version to not exclude versions with
     # build metadata suffixes
-    "vllm>=0.19.1,<0.21.1",
+    "vllm>=0.19.1,<0.22.1",
     
     # Specific torch version overrides handled by uv
     "torch",
@@ -89,7 +89,7 @@ build-constraint-dependencies = []
 extra-build-variables = { vllm = { VLLM_TARGET_DEVICE = "empty" } }
 
 [tool.uv.sources]
-vllm = { git = "https://github.com/vllm-project/vllm", rev = "v0.21.0" }
+vllm = { git = "https://github.com/vllm-project/vllm", rev = "v0.22.0" }
 torch = [
   { index = "pytorch-cpu" },
 ]
@@ -163,6 +163,11 @@ ignore = [
     # Zip
     "B905",
 ]
+
+[tool.typos.default.extend-words]
+# `*.ot` is the file extension for HuggingFace Rust framework model weights
+# (rust_model.ot), referenced in tools/download_model.py.
+ot = "ot"
 
 [tool.codespell]
 ignore-words-list = "dout, te, indicies, subtile, ElementE"

@@ -97,10 +97,15 @@ class MMUtilsBase(ABC):
         input_ids: torch.Tensor,
         mm_features: list[MultiModalFeatureSpec],
         is_decode: bool,
+        mm_device: str,
     ) -> torch.Tensor:
         """Get the (potentially) multimodal embeddings for this model
         architecture. Produced tensors should be of shape
         [bsz, seq_len, emb_dim].
+
+        ``mm_device`` is the device the vision_tower weights ended up on ("cpu"
+        or "nnpa"); pixel_values must be placed there before the encoder forward.
+        It is resolved at load time from SENDNN_INFERENCE_MM_DEVICE.
         """
         pass
 
