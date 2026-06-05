@@ -567,6 +567,8 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         # the remaining batch fits within constraints
         while not self._can_decode_all_requests(decoding_requests):
             had_to_remove = True
+
+            # TODO we should test different removal logics: longest request, optimize padding
             # Remove the request with the fewest decoded tokens
             # Decoded tokens = num_computed_tokens - num_prompt_tokens
             request_to_remove = min(
@@ -575,6 +577,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             decoding_requests.remove(request_to_remove)
             self.running.remove(request_to_remove)
             self.paused_decoding_requests.append(request_to_remove)
+            logger.info("Request %s paused due to batch TKV limit ", request_to_remove.request_id)
 
         # It shouldn't be possible to remove all requests if we started with some
         assert not initial_had_requests or len(decoding_requests) > 0
@@ -592,6 +595,10 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
                     self.paused_decoding_requests.pop(0)
                     self.running.append(request_to_add)
                     decoding_requests.append(request_to_add)
+                    logger.info(
+                        "Request %s resumed (batch TKV capacity available).",
+                        request_to_add.request_id,
+                    )
                 else:
                     # Can't add any more requests
                     break
