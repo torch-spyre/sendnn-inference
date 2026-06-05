@@ -14,6 +14,12 @@ from vllm.sampling_params import StructuredOutputsParams
 from vllm.v1.core.sched.request_queue import FCFSRequestQueue
 from vllm.v1.request import Request, RequestStatus
 from sendnn_inference.v1.core.scheduler import ChunkedPrefillSpyreScheduler
+from scheduling_utils import create_request_for_scheduler_test, random_prompt
+
+from v1.worker.mock_model import InstrumentedModelRunner
+from vllm.v1.structured_output.request import StructuredOutputRequest
+from vllm.tokenizers import get_tokenizer
+from spyre_util import REFERENCE_MODELS
 
 pytestmark = pytest.mark.skip_global_cleanup
 
@@ -354,3 +360,72 @@ class TestSchedulerSimultaneousRequests:
 
         # _spyre_grammar_output should still be attached (even if None)
         assert hasattr(output, "_spyre_grammar_output")
+
+
+def test_sparse_index_grammar_crash(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """In this scenario we schedule two requests with structured outputs. The
+    first one will drop out of the batch earlier, making a hole in the sparse
+    index. This is to trigger a known bug when the sparse index is not
+    contiguous.
+    """
+    pc_model_runner = InstrumentedModelRunner.build(
+        monkeypatch=monkeypatch,
+        max_num_batched_tokens=64,
+        available_blocks=100,
+    )
+    pc_model_runner.scheduler.structured_output_manager._use_async_grammar_compilation = False
+
+    model = REFERENCE_MODELS[InstrumentedModelRunner.DEFAULT_TEST_MODEL]
+    tokenizer = get_tokenizer(tokenizer_name=model.name, revision=model.revision)
+
+    prompt1 = random_prompt(model=model, seed=0, length=64)
+    request1 = create_request_for_scheduler_test(
+        model=model,
+        request_id=0,
+        add_step=0,
+        max_tokens=3,
+        prompt=prompt1,
+        use_golden_token_injection=False,
+        generate_hf_results=False,
+    )
+
+    request2 = create_request_for_scheduler_test(
+        model=model,
+        request_id=1,
+        add_step=0,
+        max_tokens=4,
+        prompt=prompt1,
+        use_golden_token_injection=False,
+        generate_hf_results=False,
+    )
+
+    # Initialize grammars and requests
+    for request in [request1, request2]:
+        assert (sampling_params := request.request.sampling_params) is not None
+        sampling_params.structured_outputs = StructuredOutputsParams(regex=".*")  # accept anything
+        request.request.structured_output_request = StructuredOutputRequest.from_sampling_params(
+            sampling_params
+        )
+        sampling_params._validate_structured_outputs(
+            pc_model_runner.vllm_config.structured_outputs_config, tokenizer
+        )
+        pc_model_runner.scheduler.structured_output_manager.grammar_init(request.request)
+
+        assert (structured := request.request.structured_output_request) is not None
+        # Wait for grammar to be ready
+        while not structured.is_grammar_ready:
+            pass
+
+    # Run prefill of request 1
+    pc_model_runner.execute_new_request(request=request1.request)
+    # Run first decode of request 1
+    pc_model_runner.execute_running_requests()
+
+    # Run prefill of request 2
+    pc_model_runner.execute_new_request(request=request2.request)
+
+    for i in range(4):
+        # Run decode of requests 1 and 2
+        pc_model_runner.execute_running_requests()
