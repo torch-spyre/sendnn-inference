@@ -390,8 +390,10 @@ class SpyrePoolingModelRunner(
     def vocab_size(self) -> int:
         # self.model here is probably a transformers model class
         if self.model_config.architecture in FMS_POOLING_MODEL_LIST:
-            return self.model.config.src_vocab_size
+            assert isinstance(self.model.config.src_vocab_size, int)
+            return self.model.config.src_vocab_size  # ty: ignore[invalid-return-type]
         else:
+            assert isinstance(self.model.config.vocab_size, int)
             return self.model.config.vocab_size  # ty: ignore[invalid-return-type]
 
     def _prepare_pad_input_ids(
