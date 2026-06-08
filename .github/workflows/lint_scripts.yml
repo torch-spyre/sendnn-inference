@@ -6,9 +6,11 @@ on:
   pull_request:
     branches:
       - main
+      - release-2.0.0
   push:
     branches:
       - main
+      - release-2.0.0
     paths:
       - '**/*.sh'
       - '.github/workflows/lint_scripts.yml'
