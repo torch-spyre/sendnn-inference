@@ -1640,12 +1640,10 @@ class ChunkedPrefillModelRunner(
             left_padding=left_padding,
             prefix_cache_hit_len=self.get_prefix_cache_len(),
         )
-    def sample_tokens(
-        self,
-        scheduler_output: "SchedulerOutput"
-    ) -> ModelRunnerOutput:
+
+    def sample_tokens(self, scheduler_output: "SchedulerOutput") -> ModelRunnerOutput:
         """Complete sampling with the grammar bitmask after async grammar building.
-        
+
         This is called by the engine after grammar bitmasks have been built
         asynchronously while the model was running.
         """
@@ -1706,7 +1704,6 @@ class ChunkedPrefillModelRunner(
 
         model_output = self.sampled_output(output, is_prefill)
         return model_output
-
 
     def sampled_output(self, output: SamplerOutput, is_prefill: bool) -> SpyreModelRunnerOutput:
         req_id_to_index = self.get_req_id_to_index(is_prefill)
@@ -1784,4 +1781,3 @@ class ChunkedPrefillModelRunner(
             else:
                 torch._dynamo.mark_dynamic(model_input.input_tokens, 0)
                 torch._dynamo.mark_static(model_input.input_tokens, 1)  # always 1
-                

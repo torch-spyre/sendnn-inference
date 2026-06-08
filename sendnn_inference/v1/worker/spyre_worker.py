@@ -819,4 +819,3 @@ def _get_extra_args() -> dict:
         "scheduled_encoder_inputs": {},
         "num_common_prefix_blocks": [],
     }
-    
