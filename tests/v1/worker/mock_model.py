@@ -13,6 +13,7 @@ from vllm.v1.sample.metadata import SamplingMetadata
 from vllm.v1.sample.sampler import Sampler
 from vllm.v1.kv_cache_interface import KVCacheGroupSpec, KVCacheConfig
 from vllm.v1.structured_output import StructuredOutputManager
+from transformers import AutoTokenizer
 
 from sendnn_inference.model_executor.model_loader.spyre import SpyreAttentionMetadata
 from sendnn_inference.platform import SpyrePlatform
@@ -48,6 +49,10 @@ class MockSpyreCausalLM:
         self.last_masks: torch.Tensor | None = None
         self.last_is_prompt: bool | None = None
         self.last_attn_metadata: SpyreAttentionMetadata | None = None
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            vllm_config.model_config.model, revision=vllm_config.model_config.revision
+        )
+        self.a_token = self.tokenizer.encode("a", add_special_tokens=False)[0]
 
     def get_maybe_mm_embeddings(self, *args, **kwargs):
         # This model is not multimodal
@@ -77,9 +82,12 @@ class MockSpyreCausalLM:
 
         batch_size = input_ids_or_embeds.shape[0]
 
-        return torch.empty(
+        # make the logits predictable
+        logits = torch.zeros(
             (batch_size, self.vocab_size), dtype=torch.float32, device=input_ids_or_embeds.device
         )
+        logits[:, self.a_token] = 1
+        return logits
 
     def sample(
         self,
@@ -253,7 +261,7 @@ class InstrumentedModelRunner(ChunkedPrefillModelRunner):
         max_model_len: int = 512,
         max_num_batched_tokens: int = 128,
         available_blocks: int | None = None,
-    ) -> ChunkedPrefillModelRunner:
+    ) -> "InstrumentedModelRunner":
         """A fixture that returns a model runner configured for prefix caching."""
 
         os.environ.pop("VLLM_DT_MAX_BATCH_TKV_LIMIT", None)

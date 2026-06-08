@@ -3,7 +3,7 @@ name: pre-commit
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, release-2.0.0]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
