@@ -293,8 +293,6 @@ class SpyreCausalLM(nn.Module):
             )
         self.mm_device = mm_device
 
-        is_quantized = bool(self.model_config.quantization)
-
         # Cast the (non-mm) model to fp16 for Spyre, and place the multimodal
         # submodules on their configured device/dtype. The mm submodules are
         # moved wholesale with Module.to(...) (required because
@@ -315,16 +313,13 @@ class SpyreCausalLM(nn.Module):
             elif module_name.startswith(mm_prefixes_tuple):
                 # Descendant of an mm submodule; already placed with its ancestor.
                 continue
-            elif is_quantized:
-                # Per-tensor cast restricted to bf16: leaves fp8 weights and
-                # fp32 scales alone. recurse=False so each tensor is visited
+            elif self.is_fp8_model:
+                # Per-param cast restricted to bf16: leaves fp8 weights and
+                # fp32 scales alone. recurse=False so each param is visited
                 # once via the outer named_modules() walk.
                 for param in module.parameters(recurse=False):
                     if param.dtype == torch.bfloat16:
                         param.data = param.data.to(dtype=torch.float16)
-                for buf_name, buf in module.named_buffers(recurse=False):
-                    if buf.dtype == torch.bfloat16:
-                        setattr(module, buf_name, buf.to(dtype=torch.float16))
             else:
                 module.to(dtype=torch.float16)
 
