@@ -276,9 +276,8 @@ class SpyreCausalLM(nn.Module):
         (vision_tower / multi_modal_projector) onto SENDNN_INFERENCE_MM_DEVICE
         with SENDNN_INFERENCE_CPU_MM_DTYPE.
 
-        NOTE: the whole non-mm model is cast to fp16, including any fp32
-        params/buffers and the float8 weights of quantized models. This path is
-        only intended for non-quantized (bf16) models.
+        For quantized (e.g. FP8) models we only convert bf16 params/buffers to
+        fp16 — fp8 weights and fp32 scales must be left untouched.
         """
         cpu_mm_dtype = envs_spyre.SENDNN_INFERENCE_CPU_MM_DTYPE
         mm_device = envs_spyre.SENDNN_INFERENCE_MM_DEVICE
@@ -294,13 +293,15 @@ class SpyreCausalLM(nn.Module):
             )
         self.mm_device = mm_device
 
-        # Cast the whole (non-mm) model to fp16 for Spyre, and place the
-        # multimodal submodules on their configured device/dtype. The mm
-        # submodules are moved wholesale with Module.to(...) (required because
+        is_quantized = bool(self.model_config.quantization)
+
+        # Cast the (non-mm) model to fp16 for Spyre, and place the multimodal
+        # submodules on their configured device/dtype. The mm submodules are
+        # moved wholesale with Module.to(...) (required because
         # nn.Parameter.set_data can't swap the CPU->nnpa backend; Module._apply
         # rebuilds the Parameters, and buffers move too). Their descendants must
-        # be skipped so the else branch doesn't re-cast them back to fp16 after
-        # placement (named_modules yields parents before children).
+        # be skipped so the non-mm branch doesn't re-cast them back to fp16
+        # after placement (named_modules yields parents before children).
         mm_prefixes_tuple = tuple(mm_prefixes)
         for module_name, module in self.fms_model.named_modules():
             if module_name in mm_module_names:
@@ -314,6 +315,16 @@ class SpyreCausalLM(nn.Module):
             elif module_name.startswith(mm_prefixes_tuple):
                 # Descendant of an mm submodule; already placed with its ancestor.
                 continue
+            elif is_quantized:
+                # Per-tensor cast restricted to bf16: leaves fp8 weights and
+                # fp32 scales alone. recurse=False so each tensor is visited
+                # once via the outer named_modules() walk.
+                for param in module.parameters(recurse=False):
+                    if param.dtype == torch.bfloat16:
+                        param.data = param.data.to(dtype=torch.float16)
+                for buf_name, buf in module.named_buffers(recurse=False):
+                    if buf.dtype == torch.bfloat16:
+                        setattr(module, buf_name, buf.to(dtype=torch.float16))
             else:
                 module.to(dtype=torch.float16)
 
