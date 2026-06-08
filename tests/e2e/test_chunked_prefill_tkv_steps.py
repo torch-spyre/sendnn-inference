@@ -67,12 +67,7 @@ def get_cpu_model_runner(
     max_num_seqs: int,
     max_num_batched_tokens: int,
     monkeypatch: pytest.MonkeyPatch,
-):
-    """Get the model runner and worker for testing.
-
-    Returns a tuple of (runner, worker) where worker.execute_model() should be used
-    to test the real code path with sampling separation.
-    """
+) -> ChunkedPrefillModelRunner:
     # TODO: Need to add chunked prefill mode + params to get_cached_engine
     engine_core: EngineCore = get_cached_engine(
         model=model,
@@ -85,8 +80,7 @@ def get_cpu_model_runner(
     )
 
     # NB: Only works because this engine is run with no multiprocessing and TP=1
-    worker = engine_core.model_executor.driver_worker.worker
-    runner: ChunkedPrefillModelRunner = worker.model_runner
+    runner: ChunkedPrefillModelRunner = engine_core.model_executor.driver_worker.worker.model_runner
 
     # Clean things up, this isn't a fixture that cleans up after previous tests
     if runner.requests:
@@ -95,9 +89,9 @@ def get_cpu_model_runner(
             abort_sched = make_scheduler_output(
                 scheduled_new_reqs=[], finished_req_ids={request_id}
             )
-            worker.execute_model(abort_sched)
+            runner.execute_model(abort_sched)
 
-    return runner, worker
+    return runner
 
 
 block_id_counter = 1
@@ -175,7 +169,7 @@ def test_single_block_chunked_prefill(
 ):
     """A request that fits within a single block should be prefilled in one
     step and should not be padded out to the chunk boundary on decode"""
-    runner, worker = get_cpu_model_runner(
+    runner: ChunkedPrefillModelRunner = get_cpu_model_runner(
         model=model,
         max_model_len=max_model_len,
         max_num_seqs=max_num_seqs,
@@ -192,7 +186,7 @@ def test_single_block_chunked_prefill(
         scheduled_new_reqs=[new_req_data], num_scheduled_tokens={req_id: prompt_len}
     )
 
-    output = worker.execute_model(scheduler_output)
+    output = runner.execute_model(scheduler_output)
 
     # one output token from prefill
     assert len(output.sampled_token_ids[0]) == 1
@@ -206,7 +200,7 @@ def test_single_block_chunked_prefill(
         scheduled_cached_reqs=cached_req_data,
         num_scheduled_tokens={req_id: 1},
     )
-    output = worker.execute_model(scheduler_output)
+    output = runner.execute_model(scheduler_output)
     assert len(output.sampled_token_ids[0]) == 1
     # No extra block or chunk padding
     assert output.tkv == prompt_len + 1
@@ -225,7 +219,7 @@ def test_multi_chunk_padded_prefill(
     """A request that's longer than a chunk is split into multiple chunks, and
     left-padded only with full size blocks to the end of the last chunk boundary
     """
-    runner, worker = get_cpu_model_runner(
+    runner: ChunkedPrefillModelRunner = get_cpu_model_runner(
         model=model,
         max_model_len=max_model_len,
         max_num_seqs=max_num_seqs,
@@ -243,7 +237,7 @@ def test_multi_chunk_padded_prefill(
     scheduler_output = make_scheduler_output(
         scheduled_new_reqs=[new_req_data], num_scheduled_tokens={req_id: max_num_batched_tokens}
     )
-    output = worker.execute_model(scheduler_output)
+    output = runner.execute_model(scheduler_output)
 
     # no output tokens
     assert len(output.sampled_token_ids) == 0
@@ -264,7 +258,7 @@ def test_multi_chunk_padded_prefill(
         scheduled_cached_reqs=cached_req_data,
         num_scheduled_tokens={req_id: prompt_len - block_size},
     )
-    output = worker.execute_model(scheduler_output)
+    output = runner.execute_model(scheduler_output)
 
     # Should be one output token now
     assert len(output.sampled_token_ids[0]) == 1
@@ -285,7 +279,7 @@ def test_multi_chunk_unpadded_prefill(
     """A request that's longer than a chunk can be split into multiple chunks
     with no padding required when the prompt is within one block of the end of
     a chunk"""
-    runner, worker = get_cpu_model_runner(
+    runner: ChunkedPrefillModelRunner = get_cpu_model_runner(
         model=model,
         max_model_len=max_model_len,
         max_num_seqs=max_num_seqs,
@@ -302,7 +296,7 @@ def test_multi_chunk_unpadded_prefill(
     scheduler_output = make_scheduler_output(
         scheduled_new_reqs=[new_req_data], num_scheduled_tokens={req_id: max_num_batched_tokens}
     )
-    output = worker.execute_model(scheduler_output)
+    output = runner.execute_model(scheduler_output)
 
     # no output tokens
     assert len(output.sampled_token_ids) == 0
@@ -318,7 +312,7 @@ def test_multi_chunk_unpadded_prefill(
         scheduled_cached_reqs=cached_req_data,
         num_scheduled_tokens={req_id: prompt_len - max_num_batched_tokens},
     )
-    output = worker.execute_model(scheduler_output)
+    output = runner.execute_model(scheduler_output)
 
     # Should be one output token now
     assert len(output.sampled_token_ids[0]) == 1
@@ -337,7 +331,7 @@ def test_decode_padding_to_same_block(
 ):
     """Test that decode batches will use full blocks of left-padding to align
     themselves into the same last block of tokens in the sequence"""
-    runner, worker = get_cpu_model_runner(
+    runner: ChunkedPrefillModelRunner = get_cpu_model_runner(
         model=model,
         max_model_len=max_model_len,
         max_num_seqs=max_num_seqs,
@@ -356,13 +350,13 @@ def test_decode_padding_to_same_block(
     scheduler_output = make_scheduler_output(
         scheduled_new_reqs=[short_req_data], num_scheduled_tokens={short_req_id: short_prompt_len}
     )
-    output = worker.execute_model(scheduler_output)
+    output = runner.execute_model(scheduler_output)
 
     long_req_data = make_new_request_data(long_req_id, long_prompt_len)
     scheduler_output = make_scheduler_output(
         scheduled_new_reqs=[long_req_data], num_scheduled_tokens={long_req_id: long_prompt_len}
     )
-    output = worker.execute_model(scheduler_output)
+    output = runner.execute_model(scheduler_output)
 
     short_block_ids = deepcopy(short_req_data.block_ids)
     long_block_ids = deepcopy(long_req_data.block_ids)
@@ -387,7 +381,7 @@ def test_decode_padding_to_same_block(
         scheduled_cached_reqs=cached_req_data,
         num_scheduled_tokens={short_req_id: 1, long_req_id: 1},
     )
-    output = worker.execute_model(scheduler_output)
+    output = runner.execute_model(scheduler_output)
     # TKV is the length of the long request since both are still in first block
     assert output.tkv == long_prompt_len + steps
     append_block_ids(short_block_ids, cached_req_data.new_block_ids[0])
@@ -404,7 +398,7 @@ def test_decode_padding_to_same_block(
         scheduled_cached_reqs=cached_req_data,
         num_scheduled_tokens={short_req_id: 1, long_req_id: 1},
     )
-    output = worker.execute_model(scheduler_output)
+    output = runner.execute_model(scheduler_output)
     # 🌶️🌶️🌶️ short prompt gets padded, it's now the longest sequence
     assert output.tkv == short_prompt_len + steps + 64
     append_block_ids(short_block_ids, cached_req_data.new_block_ids[0])
@@ -421,6 +415,6 @@ def test_decode_padding_to_same_block(
         scheduled_cached_reqs=cached_req_data,
         num_scheduled_tokens={short_req_id: 1, long_req_id: 1},
     )
-    output = worker.execute_model(scheduler_output)
+    output = runner.execute_model(scheduler_output)
     # 🌶️🌶️🌶️ short prompt padding removed again, tkv is back to long + steps
     assert output.tkv == long_prompt_len + steps

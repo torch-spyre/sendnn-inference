@@ -1504,11 +1504,6 @@ class ChunkedPrefillModelRunner(
         if grammar_output is None:
             return
     
-    
-
-        # Simply call the upstream function - it handles everything correctly
-        # The issue was that we were trying to filter, but the upstream function
-        # expects the full batch and handles finished requests internally
         vllm_apply_grammar_bitmask(
             scheduler_output,
             grammar_output,
