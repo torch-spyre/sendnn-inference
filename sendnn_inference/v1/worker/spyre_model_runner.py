@@ -1503,7 +1503,6 @@ class ChunkedPrefillModelRunner(
         grammar_output = getattr(scheduler_output, "_spyre_grammar_output", None)
         if grammar_output is None:
             return
-    
         vllm_apply_grammar_bitmask(
             scheduler_output,
             grammar_output,
@@ -1516,7 +1515,7 @@ class ChunkedPrefillModelRunner(
         self,
         scheduler_output: SchedulerOutput,
         **kwargs,
-    ) -> ModelRunnerOutput:
+    ) -> ModelRunnerOutput | None:
         t0 = time.time()
 
         self.update_states(scheduler_output)
@@ -1785,3 +1784,4 @@ class ChunkedPrefillModelRunner(
             else:
                 torch._dynamo.mark_dynamic(model_input.input_tokens, 0)
                 torch._dynamo.mark_static(model_input.input_tokens, 1)  # always 1
+                
