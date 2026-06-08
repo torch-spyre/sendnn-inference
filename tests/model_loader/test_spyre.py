@@ -46,9 +46,7 @@ class _FakeMMUtils:
 
 def _cast(fms_model, mm_model_utils):
     SpyreCausalLM._cast_params_for_spyre(
-        SimpleNamespace(
-            fms_model=fms_model, mm_model_utils=mm_model_utils, is_fp8_model=False
-        )
+        SimpleNamespace(fms_model=fms_model, mm_model_utils=mm_model_utils, is_fp8_model=False)
     )
 
 
@@ -143,9 +141,7 @@ def _set_mm_device(monkeypatch, value):
 
 
 def _cast_returning_self(fms_model, mm_model_utils):
-    ns = SimpleNamespace(
-        fms_model=fms_model, mm_model_utils=mm_model_utils, is_fp8_model=False
-    )
+    ns = SimpleNamespace(fms_model=fms_model, mm_model_utils=mm_model_utils, is_fp8_model=False)
     SpyreCausalLM._cast_params_for_spyre(ns)
     return ns
 
