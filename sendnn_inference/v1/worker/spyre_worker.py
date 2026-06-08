@@ -4,10 +4,10 @@ import contextlib
 import functools
 import json
 import os
-import time
 import platform
 import signal
 import sys
+import time
 import math
 from datetime import timedelta
 from pathlib import Path
@@ -26,7 +26,7 @@ from vllm.sampling_params import SamplingParams
 from vllm.utils.torch_utils import set_random_seed
 from vllm.v1.core.sched.output import CachedRequestData, NewRequestData, SchedulerOutput
 from vllm.v1.kv_cache_interface import KVCacheConfig, KVCacheSpec
-from vllm.v1.outputs import ModelRunnerOutput, SamplerOutput
+from vllm.v1.outputs import ModelRunnerOutput
 
 try:
     from vllm.v1.worker.worker_base import CompilationTimes, WorkerBase
@@ -46,7 +46,7 @@ from sendnn_inference.v1.worker.spyre_model_runner import (
 )
 
 if TYPE_CHECKING:
-    pass
+    from vllm.v1.core.sched.output import GrammarOutput
 
 
 logger = init_logger(__name__)
@@ -770,121 +770,15 @@ class SpyreWorker(WorkerBase):
     def get_supported_tasks(self) -> tuple[SupportedTask, ...]:
         return self.model_runner.get_supported_tasks()
 
-    def update_request_states_with_samples(
-        self,
-        scheduler_output: SchedulerOutput,
-        sampler_output: SamplerOutput,
-        is_prefill: bool,
-    ) -> None:
-        """
-        Update internal request states with sampled tokens.
-
-        Args:
-            scheduler_output: Scheduler output containing request info
-            sampler_output: Sampler output containing sampled tokens
-            is_prefill: Whether this is a prefill or decode step
-        """
-        # Get the right batch from model runner
-        batch = self.model_runner.prefill_batch if is_prefill else self.model_runner.input_batch  # type: ignore[attr-defined]
-
-        # Add the sampled token(s) to the request cache
-        req_ids = (
-            [r.req_id for r in scheduler_output.scheduled_new_reqs]
-            if len(scheduler_output.scheduled_new_reqs) > 0
-            else batch.sorted_requests_ids
-        )
-        sampled_ids = sampler_output.sampled_token_ids.tolist()
-
-        for i, req_id in enumerate(req_ids):
-            req_state = self.model_runner.requests[req_id]  # type: ignore[attr-defined]
-            req_state.append_output_token_ids(sampled_ids[i])
-
     @SpyrePlatform.inference_mode()
-    def sample_tokens(
-        self,
-        scheduler_output: "SchedulerOutput",
-        grammar_output,
-        logits,
-        is_prefill: bool,
-        model_input,
-        t0: float,
-    ) -> ModelRunnerOutput:
-        """
-        Sample tokens using pre-computed grammar bitmask.
-
-        This method is separated from execute_model to enable async workflows
-        where grammar preparation happens while the model runs.
-
-        Note: This method is only called for generative models (ChunkedPrefillModelRunner),
-        not for pooling models (SpyrePoolingModelRunner).
-
-        Args:
-            scheduler_output: Scheduler output containing request info
-            grammar_output: Pre-computed grammar bitmask from scheduler
-            logits: Logits from forward pass
-            is_prefill: Whether this is a prefill or decode step
-            model_input: Model input metadata
-            t0: Start time for timing
-
-        Returns:
-            ModelRunnerOutput containing sampled tokens and metadata
-        """
-
-        # Attach grammar output to scheduler_output for apply_grammar_bitmask
-        scheduler_output._spyre_grammar_output = grammar_output  # type: ignore[attr-defined]
-
-        # Apply grammar bitmask for structured output requests
-        self.model_runner.apply_grammar_bitmask(  # type: ignore[attr-defined]
-            scheduler_output,
-            logits,
-            self.model_runner.prefill_batch if is_prefill else self.model_runner.input_batch,  # type: ignore[attr-defined]
-        )
-
-        # Sample the next token
-        output = self.model_runner.model.sample(
-            logits=logits,
-            sampling_metadata=self.model_runner.get_sampling_metadata(is_prefill),  # type: ignore[attr-defined]
-        )
-        assert output is not None, "Expected sampler output"
-
-        t1 = time.time() - t0
-        batch_size = model_input.input_tokens.shape[0]
-        step_type = "[prefill last chunk]" if is_prefill else "[decode]"
-        logger.debug("t_token: %.2fms %s[batch size %d]", (t1 * 1000), step_type, batch_size)
-
-        # Update request states with sampled tokens
-        self.update_request_states_with_samples(scheduler_output, output, is_prefill)  # type: ignore[attr-defined]
-
-        # Only return outputs from the driver worker
-        if not self.is_driver_worker:
-            return self.model_runner.get_empty_output()  # type: ignore[attr-defined]
-
-        return self.model_runner.sampled_output(output, is_prefill)  # type: ignore[attr-defined]
-
     def execute_model(
         self,
         scheduler_output: "SchedulerOutput",
     ) -> ModelRunnerOutput | None:
         if self.profiler is not None:
             self.profiler.step()
-
-        # Execute model forward pass
-        result = self.model_runner.execute_model(scheduler_output)
-
-        # Check if result is a tuple (logits, is_prefill, model_input, t0)
-        # This means forward pass is done and sampling is needed
-        if isinstance(result, tuple):
-            logits, is_prefill, model_input, t0 = result
-            # Complete sampling with grammar (can be None for non-structured requests)
-            grammar_output = getattr(scheduler_output, "_spyre_grammar_output", None)
-            output = self.sample_tokens(
-                scheduler_output, grammar_output, logits, is_prefill, model_input, t0
-            )
-            return output if self.is_driver_worker else None
-
-        # Otherwise it's a ModelRunnerOutput (prefill or pooling/embedding model)
-        # Return the result directly
-        return result if self.is_driver_worker else None
+        output = self.model_runner.execute_model(scheduler_output)
+        return output if self.is_driver_worker else None
 
     def _get_num_tokens(self, r: NewRequestData) -> int:
         assert r.prompt_token_ids is not None, "requests should have tokens!"
