@@ -91,6 +91,13 @@ class SpyreCausalLM(nn.Module):
         # can produce 1 token with prefill plus rest of model length
         max_decode_length = max_model_len - BLOCK_SIZE + 1
 
+        if self.model_config.quantization:
+            self.attention_name = "spyre_paged_attn_fp8"
+            self.is_fp8_model = True
+        else:
+            self.attention_name = "spyre_paged_attn"
+            self.is_fp8_model = False
+
         # Load the weights from the cached or downloaded files.
         self.load_weights(
             model_config=self.model_config,
@@ -131,13 +138,6 @@ class SpyreCausalLM(nn.Module):
                 f"[SpyreCausalLM] model type {self.config.model_type} "
                 f"not supported in ContinuousBatchingFmsModel"
             )
-
-        if self.model_config.quantization:
-            self.attention_name = "spyre_paged_attn_fp8"
-            self.is_fp8_model = True
-        else:
-            self.attention_name = "spyre_paged_attn"
-            self.is_fp8_model = False
 
         self.current_scale: list[tuple] | None = None
         self.past_key_value_states: list[
