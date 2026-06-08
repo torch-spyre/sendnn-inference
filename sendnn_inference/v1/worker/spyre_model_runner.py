@@ -703,9 +703,9 @@ class ChunkedPrefillModelRunner(
 
         # State for async sampling (when grammar bitmask is being built)
         self._pending_sampling_logits: torch.Tensor | None = None
-        self._pending_sampling_metadata: "SamplingMetadata | None" = None
+        self._pending_sampling_metadata: SamplingMetadata | None = None
         self._pending_is_prefill: bool = False
-        self._pending_scheduler_output: "SchedulerOutput | None" = None
+        self._pending_scheduler_output: SchedulerOutput | None = None
 
         # TODO: Remove this once we can prefill and decode in the same step
         self.prefill_batch = SamplingInputBatch(

@@ -46,7 +46,7 @@ from sendnn_inference.v1.worker.spyre_model_runner import (
 )
 
 if TYPE_CHECKING:
-    from vllm.v1.core.sched.output import GrammarOutput
+    pass
 
 
 logger = init_logger(__name__)
