@@ -42,10 +42,6 @@ def patch_serving() -> None:
             async for res in result_generator:
                 if res.finished and res.kv_transfer_params:
                     spyre_metrics = res.kv_transfer_params.get("__spyre__")
-                    print(
-                        f"[SPYRE DEBUG server] captured spyre_metrics from res: {spyre_metrics}",
-                        flush=True,
-                    )
                 yield res
 
         async for chunk in _original(
@@ -63,15 +59,12 @@ def patch_serving() -> None:
                     data = json.loads(data_str)
                     data["spyre_metrics"] = spyre_metrics
                     chunk = f"{prefix}{json.dumps(data)}\n\n"
-                    print(
-                        f"[SPYRE DEBUG server] injected spyre_metrics into usage chunk for {request_id}",
-                        flush=True,
-                    )
                 except (json.JSONDecodeError, KeyError, TypeError) as e:
-                    print(f"[SPYRE DEBUG server] exception injecting metrics: {e}", flush=True)
+                    logger.warning(
+                        "Failed to inject spyre_metrics into SSE chunk for %s: %s", request_id, e
+                    )
             yield chunk
 
     OpenAIServingChat.chat_completion_stream_generator = _patched_generator  # ty: ignore[invalid-assignment]
     _patched = True
-    print("[SPYRE DEBUG server] patch_serving() applied successfully", flush=True)
     logger.debug("Spyre serving patch applied: spyre_metrics will be injected in final SSE chunk")

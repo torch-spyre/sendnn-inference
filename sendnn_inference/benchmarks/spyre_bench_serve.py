@@ -11,6 +11,7 @@ Env var:
 
 import argparse
 import asyncio
+import logging
 from typing import Any
 
 import numpy as np
@@ -22,6 +23,8 @@ from vllm.benchmarks.lib.endpoint_request_func import (
 from vllm.benchmarks.serve import add_cli_args, main_async
 
 from sendnn_inference.benchmarks.spyre_request_func import async_request_spyre_chat
+
+logger = logging.getLogger(__name__)
 
 _BACKEND_NAME = "spyre-chat"
 
@@ -39,8 +42,14 @@ def _make_collecting_func():
         pbar=None,
     ):
         output = await async_request_spyre_chat(request_func_input, session, pbar)
-        if output.success and output.custom_metrics_dict:
-            _spyre_metrics_collected.append(output.custom_metrics_dict)
+        if output.success:
+            if output.custom_metrics_dict:
+                _spyre_metrics_collected.append(output.custom_metrics_dict)
+            else:
+                logger.warning(
+                    "Spyre metrics absent from response — is "
+                    "SENDNN_INFERENCE_BENCH_METRICS_ENABLED set on the server?"
+                )
         return output
 
     return _wrapper

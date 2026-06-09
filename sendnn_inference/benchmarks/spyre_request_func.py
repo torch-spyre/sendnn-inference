@@ -106,12 +106,7 @@ async def async_request_spyre_chat(
                                 if (pt := usage.get("prompt_tokens")) is not None:
                                     output.prompt_len = pt
                                 # Parse Spyre-specific metrics from the same chunk
-                                spyre_metrics = data.get("spyre_metrics")
-                                print(
-                                    f"[SPYRE DEBUG client] usage chunk keys: {list(data.keys())}, spyre_metrics present: {spyre_metrics is not None}",
-                                    flush=True,
-                                )
-                                if spyre_metrics:
+                                if spyre_metrics := data.get("spyre_metrics"):
                                     output.custom_metrics_dict = spyre_metrics
 
                             most_recent_timestamp = timestamp
