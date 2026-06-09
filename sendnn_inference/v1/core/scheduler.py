@@ -264,23 +264,24 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             return self.chunk_size
 
         new_prefill = new_prefill_candidates[0]
-        # If the prefix cache already covers chunk 0, no cap is needed: the
-        # base scheduler will start from chunk i>=1, which has no padding.
-        # `get_computed_blocks` records into `prefix_cache_stats` as a side
-        # effect; the base scheduler calls it again, so toggle log_stats off
-        # here to avoid double-counting.
-        prev_log_stats = self.kv_cache_manager.log_stats
-        self.kv_cache_manager.log_stats = False
-        _, prefix_len = self.kv_cache_manager.get_computed_blocks(new_prefill)
-        self.kv_cache_manager.log_stats = prev_log_stats
-        if prefix_len > 0:
-            return self.chunk_size
 
         # Calculate left-padding tokens for this prompt.
         prompt_len = new_prefill.num_prompt_tokens
         n_chunks = math.ceil(prompt_len / self.chunk_size)
         padded_prompt_len = math.ceil(prompt_len / self.block_size) * self.block_size
         left_padding = n_chunks * self.chunk_size - padded_prompt_len
+
+        # If the prefix cache already covers chunk 0's real content, no cap is
+        # needed: the base scheduler will start from chunk i>=1, which has no
+        # padding. `get_computed_blocks` records into `prefix_cache_stats` as
+        # a side effect; the base scheduler calls it again, so toggle
+        # log_stats off here to avoid double-counting.
+        prev_log_stats = self.kv_cache_manager.log_stats
+        self.kv_cache_manager.log_stats = False
+        _, prefix_token_len = self.kv_cache_manager.get_computed_blocks(new_prefill)
+        self.kv_cache_manager.log_stats = prev_log_stats
+        if prefix_token_len >= self.chunk_size - left_padding:
+            return self.chunk_size
 
         # Adjust the token threshold to account for left padding
         return self.chunk_size - left_padding

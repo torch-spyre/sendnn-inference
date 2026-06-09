@@ -1679,9 +1679,9 @@ def test_first_chunk_partial_match(
             "waiting": [],
             "running": ["1", "0"],
             "request_outputs": [],
-            "n_used_blocks": 4,
+            "n_used_blocks": 3,
             "n_prefix_hits": 0,
-            "block_tables": {"0": [1], "1": [1, 2, 3, 4]},
+            "block_tables": {"0": [1], "1": [1, 2, 3]},
             "prefill_slot_mappings": {
                 "1": [0, 0, 2]  # One mask for left padding, one mask for block `1` to not be
                 # overwritten since it hit cache
