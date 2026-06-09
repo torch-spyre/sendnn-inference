@@ -13,19 +13,12 @@ Batch download from a YAML config (list of {repo, revision} entries):
 
 import argparse
 import logging
-import os
-from concurrent.futures import ThreadPoolExecutor
+import subprocess
+import sys
 from pathlib import Path
 
-# snapshot_download uses tqdm internally via thread_map. Running multiple
-# downloads from our own ThreadPoolExecutor races on tqdm's class-level _lock
-# and crashes with `AttributeError: type object 'tqdm' has no attribute
-# '_lock'`. Disabling progress bars avoids tqdm entirely. Must be set before
-# importing huggingface_hub.
-os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
-
-import yaml  # noqa: E402
-from huggingface_hub import snapshot_download  # noqa: E402
+import yaml
+from huggingface_hub import snapshot_download
 
 IGNORE_PATTERNS = [
     "onnx/*",
@@ -49,12 +42,23 @@ def download_from_config(config_path: Path) -> None:
     entries = config.get("models", [])
     if not entries:
         logging.error("No models listed in %s", config_path)
-        exit(1)
+        sys.exit(1)
 
-    with ThreadPoolExecutor(max_workers=len(entries)) as pool:
-        futures = [pool.submit(download, e["repo"], e.get("revision", "main")) for e in entries]
-        for fut in futures:
-            fut.result()
+    # Run each download in its own subprocess for parallelism. We can't use a
+    # ThreadPoolExecutor here: snapshot_download internally uses tqdm's
+    # thread_map, whose `ensure_lock` deletes the class-level `tqdm._lock` on
+    # exit, racing with sibling tqdm contexts in other threads and crashing
+    # with `AttributeError: type object 'tqdm' has no attribute '_lock'`.
+    # Subprocesses isolate tqdm's class state per process.
+    procs = [
+        subprocess.Popen(
+            [sys.executable, __file__, "-m", e["repo"], "-r", e.get("revision", "main")]
+        )
+        for e in entries
+    ]
+    failed = [p.wait() for p in procs]
+    if any(rc != 0 for rc in failed):
+        sys.exit(1)
 
 
 def main():
@@ -76,7 +80,7 @@ def main():
         download(args.model, args.revision)
     else:
         logging.error("Need to provide a HuggingFace model ID or --config file.")
-        exit(1)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
