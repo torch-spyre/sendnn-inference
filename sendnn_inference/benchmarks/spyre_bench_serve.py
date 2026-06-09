@@ -115,8 +115,15 @@ def _print_spyre_section(
 
 
 def main() -> None:
+    import sys
+
+    # Allow `sendnn-bench serve <args>` as an alias (the word "serve" is ignored).
+    argv = sys.argv[1:]
+    if argv and argv[0] == "serve":
+        argv = argv[1:]
+
     parser = _build_parser()
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     # Force chat endpoint and our backend.
     args.backend = _BACKEND_NAME
