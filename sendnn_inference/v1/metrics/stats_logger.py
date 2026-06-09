@@ -193,32 +193,6 @@ class FileStatLogger(StatLoggerBase):
             )
             records_to_write.append(record.to_json())
 
-            # Feed the bench metrics registry when enabled
-            print(
-                f"[SPYRE DEBUG server] FileStatLogger.record:"
-                f" BENCH_METRICS_ENABLED={envs_spyre.SENDNN_INFERENCE_BENCH_METRICS_ENABLED},"
-                f" _REGISTRY={_REGISTRY is not None}, request_id={r.request_id!r}",
-                flush=True,
-            )
-            if (
-                envs_spyre.SENDNN_INFERENCE_BENCH_METRICS_ENABLED
-                and _REGISTRY is not None
-                and r.request_id
-            ):
-                chunk_stats = (
-                    _SCHEDULER.get_and_clear_chunk_stats(r.request_id) if _SCHEDULER else None
-                )
-                m = SpyreRequestMetrics(
-                    request_id=r.request_id,
-                    queued_time_s=r.queued_time,
-                    num_chunked_prefills=chunk_stats["num_chunked_prefills"] if chunk_stats else 0,
-                    chunk_prefill_latencies_s=chunk_stats["chunk_prefill_latencies_s"]
-                    if chunk_stats
-                    else [],
-                )
-                print(f"[SPYRE DEBUG server] putting in registry: {m}", flush=True)
-                _REGISTRY.put(m)
-
         self.open_file_pointer.write("\n".join(records_to_write) + "\n")
         self.open_file_pointer.flush()
 

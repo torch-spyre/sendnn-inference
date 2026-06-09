@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import math
+import time
 from collections import deque
 from typing import TYPE_CHECKING, Iterable, Union
 
@@ -206,6 +207,9 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         # Per-request chunk prefill latency accumulator.
         # Only populated when SENDNN_INFERENCE_BENCH_METRICS_ENABLED is set.
         self._chunk_latencies: dict[str, list[float]] = {}
+        # Timestamps for queue-wait-time calculation.
+        self._arrival_ts: dict[str, float] = {}
+        self._first_scheduled_ts: dict[str, float] = {}
 
         if envs_spyre.SENDNN_INFERENCE_BENCH_METRICS_ENABLED:
             from sendnn_inference.v1.metrics.stats_logger import register_scheduler
@@ -244,6 +248,12 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
                 t = model_runner_output.chunk_prefill_time_s.get(req.request_id)
                 if t is not None:
                     self._chunk_latencies.setdefault(req.request_id, []).append(t)
+            # Track first-scheduled time and arrival time for queue-wait calculation
+            now = time.time()
+            for req in self.ongoing_prefills:
+                if req.request_id not in self._first_scheduled_ts:
+                    self._first_scheduled_ts[req.request_id] = now
+                    self._arrival_ts[req.request_id] = req.arrival_time
 
         # Remove completed prefills
         self.ongoing_prefills = [
@@ -262,6 +272,33 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             "num_chunked_prefills": len(lats),
             "chunk_prefill_latencies_s": lats,
         }
+
+    def _free_request(self, request, delay_free_blocks: bool = False):
+        """Override to inject Spyre bench metrics into kv_transfer_params so
+        they travel over ZMQ to the API server process in EngineCoreOutput."""
+        kv_xfer_params = super()._free_request(request, delay_free_blocks)
+
+        if envs_spyre.SENDNN_INFERENCE_BENCH_METRICS_ENABLED:
+            req_id = request.request_id
+            chunk_stats = self.get_and_clear_chunk_stats(req_id)
+            first_ts = self._first_scheduled_ts.pop(req_id, None)
+            arrival_ts = self._arrival_ts.pop(req_id, None)
+            queued_time_s = (
+                (first_ts - arrival_ts) if first_ts is not None and arrival_ts is not None else 0.0
+            )
+            spyre_data = {
+                "queued_time_s": queued_time_s,
+                "num_chunked_prefills": chunk_stats["num_chunked_prefills"] if chunk_stats else 0,
+                "chunk_prefill_latencies_s": chunk_stats["chunk_prefill_latencies_s"]
+                if chunk_stats
+                else [],
+            }
+            if kv_xfer_params is None:
+                kv_xfer_params = {"__spyre__": spyre_data}
+            else:
+                kv_xfer_params["__spyre__"] = spyre_data
+
+        return kv_xfer_params
 
     def adjust_computed_tokens(
         self, computed_tokens: int, left_padding: int, prefix_cache_len: int

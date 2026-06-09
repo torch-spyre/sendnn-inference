@@ -2,18 +2,16 @@
 """Patch OpenAIServingChat to inject Spyre per-request metrics into the final
 SSE usage chunk when SENDNN_INFERENCE_BENCH_METRICS_ENABLED is set.
 
-The final streaming chunk (empty choices, populated usage) is the natural
-carrier for per-request metadata because the bench client already parses it.
-We intercept only that one chunk per request (one json.loads + json.dumps),
-so overhead is negligible.
+Metrics are carried from the engine process to the API server process via
+RequestOutput.kv_transfer_params["__spyre__"], which already travels over the
+ZMQ IPC channel.  The patched generator intercepts the result_generator to
+capture the final RequestOutput, then injects the metrics into the final SSE
+usage chunk before yielding it.
 """
 
-import dataclasses
 import json
 
 from vllm.logger import init_logger
-
-from sendnn_inference.v1.metrics.stats_logger import get_registry
 
 logger = init_logger(__name__)
 
@@ -36,32 +34,41 @@ def patch_serving() -> None:
     _original = OpenAIServingChat.chat_completion_stream_generator
 
     async def _patched_generator(self, request, result_generator, request_id, *args, **kwargs):
-        registry = get_registry()
-        print(
-            f"[SPYRE DEBUG server] _patched_generator called, request_id={request_id}, registry={registry is not None}",
-            flush=True,
-        )
-        async for chunk in _original(self, request, result_generator, request_id, *args, **kwargs):
-            if isinstance(chunk, str) and '"usage"' in chunk and '"choices":[]' in chunk:
-                print(
-                    f"[SPYRE DEBUG server] final usage chunk detected, registry={registry is not None}",
-                    flush=True,
-                )
-                if registry is not None:
-                    try:
-                        prefix = "data: "
-                        data_str = chunk.removeprefix(prefix).rstrip("\n")
-                        data = json.loads(data_str)
-                        metrics = registry.get_and_clear(request_id)
-                        print(
-                            f"[SPYRE DEBUG server] registry.get_and_clear({request_id!r}) -> {metrics}",
-                            flush=True,
-                        )
-                        if metrics:
-                            data["spyre_metrics"] = dataclasses.asdict(metrics)
-                        chunk = f"{prefix}{json.dumps(data)}\n\n"
-                    except (json.JSONDecodeError, KeyError, TypeError) as e:
-                        print(f"[SPYRE DEBUG server] exception injecting metrics: {e}", flush=True)
+        # Wrap result_generator to capture the final RequestOutput's kv_transfer_params.
+        spyre_metrics: dict | None = None
+
+        async def _capturing_generator():
+            nonlocal spyre_metrics
+            async for res in result_generator:
+                if res.finished and res.kv_transfer_params:
+                    spyre_metrics = res.kv_transfer_params.get("__spyre__")
+                    print(
+                        f"[SPYRE DEBUG server] captured spyre_metrics from res: {spyre_metrics}",
+                        flush=True,
+                    )
+                yield res
+
+        async for chunk in _original(
+            self, request, _capturing_generator(), request_id, *args, **kwargs
+        ):
+            if (
+                spyre_metrics is not None
+                and isinstance(chunk, str)
+                and '"usage"' in chunk
+                and '"choices":[]' in chunk
+            ):
+                try:
+                    prefix = "data: "
+                    data_str = chunk.removeprefix(prefix).rstrip("\n")
+                    data = json.loads(data_str)
+                    data["spyre_metrics"] = spyre_metrics
+                    chunk = f"{prefix}{json.dumps(data)}\n\n"
+                    print(
+                        f"[SPYRE DEBUG server] injected spyre_metrics into usage chunk for {request_id}",
+                        flush=True,
+                    )
+                except (json.JSONDecodeError, KeyError, TypeError) as e:
+                    print(f"[SPYRE DEBUG server] exception injecting metrics: {e}", flush=True)
             yield chunk
 
     OpenAIServingChat.chat_completion_stream_generator = _patched_generator  # ty: ignore[invalid-assignment]
