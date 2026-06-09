@@ -98,6 +98,9 @@ class SpyreModelRunnerOutput(ModelRunnerOutput):
     # available than the number of scheduled tokens. In that case, the scheduler
     # needs to update its state to reflect the correct number of computed tokens
     prefix_cache_hit_len: dict[str, int] = field(default_factory=dict)
+    # Per-chunk prefill wall-clock time in seconds, keyed by request_id.
+    # Only populated when SENDNN_INFERENCE_BENCH_METRICS_ENABLED is set.
+    chunk_prefill_time_s: dict[str, float] = field(default_factory=dict)
 
 
 InputBatchT = TypeVar("InputBatchT", bound=BaseInputBatch)
@@ -1567,7 +1570,12 @@ class ChunkedPrefillModelRunner(
 
             t1 = time.time() - t0
             logger.debug("t_forward_pass: %.2fms [prefill single chunk][batch size 1]", (t1 * 1000))
-            return self.prefill_output()
+            output = self.prefill_output()
+            if envs_spyre.SENDNN_INFERENCE_BENCH_METRICS_ENABLED:
+                req_ids = list(scheduler_output.num_scheduled_tokens)
+                if req_ids:
+                    output.chunk_prefill_time_s[req_ids[0]] = t1
+            return output
 
         # Apply grammar bitmask for structured output requests.
         self.apply_grammar_bitmask(
@@ -1611,6 +1619,10 @@ class ChunkedPrefillModelRunner(
             return self.get_empty_output()
 
         model_output = self.sampled_output(output, is_prefill)
+        if envs_spyre.SENDNN_INFERENCE_BENCH_METRICS_ENABLED and is_prefill:
+            req_ids = list(scheduler_output.num_scheduled_tokens)
+            if req_ids:
+                model_output.chunk_prefill_time_s[req_ids[0]] = t1
         return model_output
 
     def prefill_output(self) -> SpyreModelRunnerOutput:

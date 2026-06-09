@@ -203,6 +203,15 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         self.block_size = SpyrePlatform.get_block_size()
         self.max_batch_tkv_limit = SpyrePlatform.get_max_batch_tkv_limit()
 
+        # Per-request chunk prefill latency accumulator.
+        # Only populated when SENDNN_INFERENCE_BENCH_METRICS_ENABLED is set.
+        self._chunk_latencies: dict[str, list[float]] = {}
+
+        if envs_spyre.SENDNN_INFERENCE_BENCH_METRICS_ENABLED:
+            from sendnn_inference.v1.metrics.stats_logger import register_scheduler
+
+            register_scheduler(self)
+
         assert self.max_batch_tkv_limit != -1, (
             "Expecting the env var VLLM_DT_MAX_BATCH_TKV_LIMIT to be set in platform.py"
         )
@@ -229,6 +238,13 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
                     prefix_cache_len=prefix_cache_len,
                 )
 
+        # Accumulate per-chunk timings before removing completed prefills
+        if envs_spyre.SENDNN_INFERENCE_BENCH_METRICS_ENABLED:
+            for req in self.ongoing_prefills:
+                t = model_runner_output.chunk_prefill_time_s.get(req.request_id)
+                if t is not None:
+                    self._chunk_latencies.setdefault(req.request_id, []).append(t)
+
         # Remove completed prefills
         self.ongoing_prefills = [
             req for req in self.ongoing_prefills if req.num_computed_tokens < req.num_prompt_tokens
@@ -236,6 +252,16 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
 
         self.tkv = model_runner_output.tkv
         return super(SpyreScheduler, self).update_from_output(scheduler_output, model_runner_output)
+
+    def get_and_clear_chunk_stats(self, req_id: str) -> dict | None:
+        """Return and clear accumulated chunk timing for a finished request."""
+        lats = self._chunk_latencies.pop(req_id, None)
+        if lats is None:
+            return None
+        return {
+            "num_chunked_prefills": len(lats),
+            "chunk_prefill_latencies_s": lats,
+        }
 
     def adjust_computed_tokens(
         self, computed_tokens: int, left_padding: int, prefix_cache_len: int
