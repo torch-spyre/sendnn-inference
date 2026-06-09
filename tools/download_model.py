@@ -13,11 +13,19 @@ Batch download from a YAML config (list of {repo, revision} entries):
 
 import argparse
 import logging
+import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-import yaml
-from huggingface_hub import snapshot_download
+# snapshot_download uses tqdm internally via thread_map. Running multiple
+# downloads from our own ThreadPoolExecutor races on tqdm's class-level _lock
+# and crashes with `AttributeError: type object 'tqdm' has no attribute
+# '_lock'`. Disabling progress bars avoids tqdm entirely. Must be set before
+# importing huggingface_hub.
+os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+
+import yaml  # noqa: E402
+from huggingface_hub import snapshot_download  # noqa: E402
 
 IGNORE_PATTERNS = [
     "onnx/*",
