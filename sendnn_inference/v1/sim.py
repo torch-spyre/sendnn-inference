@@ -37,6 +37,7 @@ from vllm.v1.core.sched.output import SchedulerOutput
 from vllm.v1.outputs import SamplerOutput
 from vllm.v1.sample.metadata import SamplingMetadata
 from vllm.v1.sample.sampler import Sampler
+from transformers import AutoTokenizer
 
 import sendnn_inference.envs as envs_spyre
 from sendnn_inference.model_executor.model_loader.spyre import SpyreAttentionMetadata
@@ -81,6 +82,10 @@ class MockSpyreCausalLM:
         self.last_masks: torch.Tensor | None = None
         self.last_is_prompt: bool | None = None
         self.last_attn_metadata: SpyreAttentionMetadata | None = None
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            vllm_config.model_config.model, revision=vllm_config.model_config.revision
+        )
+        self.a_token = self.tokenizer.encode("a", add_special_tokens=False)[0]
 
     def get_maybe_mm_embeddings(self, *args, **kwargs):
         # This model is not multimodal
@@ -110,9 +115,12 @@ class MockSpyreCausalLM:
 
         batch_size = input_ids_or_embeds.shape[0]
 
-        return torch.empty(
+        # make the logits predictable
+        logits = torch.zeros(
             (batch_size, self.vocab_size), dtype=torch.float32, device=input_ids_or_embeds.device
         )
+        logits[:, self.a_token] = 1
+        return logits
 
     def sample(
         self,

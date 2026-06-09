@@ -182,7 +182,7 @@ class InstrumentedModelRunner(ChunkedPrefillModelRunner):
         max_model_len: int = 512,
         max_num_batched_tokens: int = 128,
         available_blocks: int | None = None,
-    ) -> ChunkedPrefillModelRunner:
+    ) -> "InstrumentedModelRunner":
         """A fixture that returns a model runner configured for prefix caching."""
 
         os.environ.pop("VLLM_DT_MAX_BATCH_TKV_LIMIT", None)
