@@ -1127,7 +1127,7 @@ def test_requests_not_enough_blocks(
         },
         {
             # Prefill sequence 1
-            # total blocks in use: 2
+            # total blocks in use: 1
             "step": 4,
             "tkv": 64,
             "waiting": [],
@@ -1139,7 +1139,7 @@ def test_requests_not_enough_blocks(
         {
             # Decode sequence 1
             # Sequence 1 finishes at step 4
-            # total blocks in use: 3
+            # total blocks in use: 0
             "step": 5,
             "tkv": 65,
             "waiting": [],

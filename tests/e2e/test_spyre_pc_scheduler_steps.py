@@ -1857,6 +1857,7 @@ def test_reserved_blocks_fit_with_caching(
             "request_outputs": ["0"],
             "n_used_blocks": 1,
             "n_reserved_blocks": 1,
+            "block_tables": {"0": [1]},
         },
         {
             # Decode sequence 0
@@ -1867,10 +1868,11 @@ def test_reserved_blocks_fit_with_caching(
             "request_outputs": ["0"],
             "n_used_blocks": 2,
             "n_reserved_blocks": 0,
+            "block_tables": {"0": [1, 2]},
         },
         {
             # Prefill sequence 1
-            # total blocks in use: 2
+            # total blocks in use: 3
             "step": 3,
             "tkv": 65,
             "waiting": [],
@@ -1878,6 +1880,7 @@ def test_reserved_blocks_fit_with_caching(
             "request_outputs": ["1"],
             "n_used_blocks": 3,
             "n_reserved_blocks": 0,
+            "block_tables": {"0": [1, 2], "1": [1, 3]},
         },
         {
             # Decode sequence 0 and 1
