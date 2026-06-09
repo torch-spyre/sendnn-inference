@@ -124,6 +124,7 @@ def _print_spyre_section(
 
 
 def main() -> None:
+    import io
     import sys
 
     # Allow `sendnn-bench serve <args>` as an alias (the word "serve" is ignored).
@@ -143,9 +144,48 @@ def main() -> None:
 
     _spyre_metrics_collected.clear()
 
-    asyncio.run(main_async(args))
+    # Capture any stdout noise (warnings, plot-saved lines) that vllm emits after
+    # its metrics table so we can print it after the SenDNN section.
+    _vllm_stdout_buf = io.StringIO()
+    _vllm_stderr_buf = io.StringIO()
+    _orig_stdout, _orig_stderr = sys.stdout, sys.stderr
 
+    # Split stdout: lines that look like the vllm table go straight through;
+    # everything else is buffered.
+    class _SplitWriter:
+        def __init__(self, passthrough, buf):
+            self._passthrough = passthrough
+            self._buf = buf
+            self._in_table = True  # vllm table comes first
+
+        def write(self, s):
+            if self._in_table:
+                self._passthrough.write(s)
+                # Once we see the closing "===...===" the table is done.
+                if s.strip() == "=" * 50:
+                    self._in_table = False
+            else:
+                self._buf.write(s)
+
+        def flush(self):
+            self._passthrough.flush()
+
+    sys.stdout = _SplitWriter(_orig_stdout, _vllm_stdout_buf)
+    sys.stderr = _vllm_stderr_buf
+    try:
+        asyncio.run(main_async(args))
+    finally:
+        sys.stdout = _orig_stdout
+        sys.stderr = _orig_stderr
+
+    print("\n" + "=" * 50)
+    print("{s:{c}^{n}}".format(s=" SenDNN Metrics ", n=50, c="="))
+    print("=" * 50)
     _print_spyre_section(_spyre_metrics_collected, selected_percentiles)
+
+    trailing = _vllm_stdout_buf.getvalue() + _vllm_stderr_buf.getvalue()
+    if trailing.strip():
+        print(trailing, end="")
 
 
 if __name__ == "__main__":
