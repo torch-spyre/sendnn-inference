@@ -11,7 +11,10 @@ Env var:
 
 import argparse
 import asyncio
+import json
 import logging
+import os
+import time
 from typing import Any
 
 import numpy as np
@@ -123,6 +126,77 @@ def _print_spyre_section(
     print("=" * 50)
 
 
+def _inject_spyre_metrics_into_result_file(
+    args: Any,
+    metrics_list: list[dict[str, Any]],
+    run_started_at: float,
+) -> None:
+    """If vllm wrote a result JSON (--save-result / --append-result / --result-filename),
+    find it and inject per-request Spyre metric lists alongside vllm's own per-request
+    fields (ttfts, itls, …)."""
+    if not metrics_list:
+        return
+    if not (
+        getattr(args, "save_result", False)
+        or getattr(args, "append_result", False)
+        or getattr(args, "result_filename", None)
+    ):
+        return
+
+    # Locate the file vllm just wrote by finding the newest .json in the result dir
+    # that was modified after we started the run.
+    result_dir = getattr(args, "result_dir", None) or "."
+    explicit_name = getattr(args, "result_filename", None)
+
+    if explicit_name:
+        candidate = (
+            explicit_name
+            if os.path.isabs(explicit_name)
+            else os.path.join(result_dir, explicit_name)
+        )
+        candidates = [candidate] if os.path.isfile(candidate) else []
+    else:
+        try:
+            candidates = [
+                os.path.join(result_dir, f)
+                for f in os.listdir(result_dir)
+                if f.endswith(".json")
+                and os.path.getmtime(os.path.join(result_dir, f)) >= run_started_at
+            ]
+        except OSError:
+            candidates = []
+
+    if not candidates:
+        logger.warning("Could not locate vllm result JSON to inject Spyre metrics into.")
+        return
+
+    file_path = max(candidates, key=os.path.getmtime)
+
+    try:
+        with open(file_path, encoding="utf-8") as fh:
+            result = json.load(fh)
+    except Exception as exc:
+        logger.warning("Failed to read vllm result JSON %s: %s", file_path, exc)
+        return
+
+    result["spyre_queue_times_s"] = [
+        m["queued_time_s"] for m in metrics_list if "queued_time_s" in m
+    ]
+    result["spyre_num_chunked_prefills"] = [
+        m["num_chunked_prefills"] for m in metrics_list if "num_chunked_prefills" in m
+    ]
+    result["spyre_chunk_prefill_latencies_s"] = [
+        m.get("chunk_prefill_latencies_s", []) for m in metrics_list
+    ]
+
+    try:
+        with open(file_path, "w", encoding="utf-8") as fh:
+            json.dump(result, fh)
+        logger.info("Spyre metrics injected into %s", file_path)
+    except Exception as exc:
+        logger.warning("Failed to write Spyre metrics into result JSON %s: %s", file_path, exc)
+
+
 def _run_vllm_and_capture_trailing(args: Any) -> tuple[str, str]:
     """Run vllm's main_async, letting stdout/stderr pass through live until the
     closing '=' * 50 line of the metrics table.  Everything written after that
@@ -190,10 +264,13 @@ def main() -> None:
 
     _spyre_metrics_collected.clear()
 
+    run_started_at = time.time()
     stdout_trailing, stderr_trailing = _run_vllm_and_capture_trailing(args)
 
     print("{s:{c}^{n}}".format(s=" SenDNN Metrics ", n=50, c="="))
     _print_spyre_section(_spyre_metrics_collected, selected_percentiles)
+
+    _inject_spyre_metrics_into_result_file(args, _spyre_metrics_collected, run_started_at)
 
     trailing = stdout_trailing + stderr_trailing
     if trailing.strip():
