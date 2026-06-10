@@ -139,6 +139,7 @@ def _print_spyre_section(
     chunk_lats_ms = [
         lat * 1000 for m in metrics_list for lat in m.get("chunk_prefill_latencies_s", [])
     ]
+    decode_lats_ms = [lat * 1000 for m in metrics_list for lat in m.get("decode_latencies_s", [])]
     total_prefill_chunks = sum(num_chunks_list)
 
     # Scalar summary line (mirrors vllm's plain-count header section)
@@ -162,6 +163,7 @@ def _print_spyre_section(
     _section("Queue Wait Time", queue_times_ms, "Queue Wait Time (ms)")
     _section("Chunked Prefill Count", num_chunks_list, "Num Chunked Prefills")
     _section("Chunked Prefill Latency", chunk_lats_ms, "Chunk Prefill Latency (ms)")
+    _section("Decode Step Latency", decode_lats_ms, "Decode Step Latency (ms)")
 
     print("=" * 50)
 
@@ -229,6 +231,7 @@ def _inject_spyre_metrics_into_result_file(
         m.get("chunk_prefill_latencies_s", []) for m in metrics_list
     ]
     result["spyre_total_prefill_chunks"] = sum(result["spyre_num_chunked_prefills"])
+    result["spyre_decode_latencies_s"] = [m.get("decode_latencies_s", []) for m in metrics_list]
 
     try:
         with open(file_path, "w", encoding="utf-8") as fh:

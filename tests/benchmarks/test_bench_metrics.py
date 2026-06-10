@@ -35,11 +35,13 @@ FAKE_METRICS: list[dict[str, Any]] = [
         "queued_time_s": 42.0,
         "num_chunked_prefills": 7,
         "chunk_prefill_latencies_s": [0.001, 999.9, 0.003, 500.0, 0.002, 750.0, 1.0],
+        "decode_latencies_s": [88888.8, 0.000005, 44444.4],
     },
     {
         "queued_time_s": 0.00001,
         "num_chunked_prefills": 3,
         "chunk_prefill_latencies_s": [12345.6, 0.0001, 99999.9],
+        "decode_latencies_s": [0.000002, 77777.7],
     },
 ]
 
@@ -75,6 +77,7 @@ def test_inject_adds_spyre_keys(tmp_path):
     assert "spyre_num_chunked_prefills" in data
     assert "spyre_chunk_prefill_latencies_s" in data
     assert "spyre_total_prefill_chunks" in data
+    assert "spyre_decode_latencies_s" in data
 
 
 @pytest.mark.cpu
@@ -89,6 +92,10 @@ def test_inject_values_correct(tmp_path):
     assert data["spyre_chunk_prefill_latencies_s"] == [
         [0.001, 999.9, 0.003, 500.0, 0.002, 750.0, 1.0],
         [12345.6, 0.0001, 99999.9],
+    ]
+    assert data["spyre_decode_latencies_s"] == [
+        [88888.8, 0.000005, 44444.4],
+        [0.000002, 77777.7],
     ]
     # Original keys preserved
     assert data["backend"] == "spyre-chat"
@@ -152,6 +159,7 @@ def test_print_section_headers(capsys):
     assert "Queue Wait Time" in out
     assert "Chunked Prefill Count" in out
     assert "Chunked Prefill Latency" in out
+    assert "Decode Step Latency" in out
 
 
 @pytest.mark.cpu
@@ -172,8 +180,8 @@ def test_print_noop_when_empty(capsys):
 
 @pytest.mark.cpu
 def test_print_missing_keys_tolerated(capsys):
-    # Metrics without chunk_prefill_latencies_s — that section should be absent,
-    # but queue time and chunk count sections should still print.
+    # Metrics without chunk_prefill_latencies_s or decode_latencies_s — those
+    # sections should be absent, but queue time and chunk count should still print.
     metrics = [
         {"queued_time_s": 77777.7, "num_chunked_prefills": 13},
         {"queued_time_s": 0.000003, "num_chunked_prefills": 99},
@@ -183,6 +191,7 @@ def test_print_missing_keys_tolerated(capsys):
     assert "Queue Wait Time" in out
     assert "Chunked Prefill Count" in out
     assert "Chunked Prefill Latency" not in out
+    assert "Decode Step Latency" not in out
 
 
 # ---------------------------------------------------------------------------
