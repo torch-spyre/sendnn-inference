@@ -255,7 +255,7 @@ models:
         max_model_len: 8192
         max_num_seqs: 16
       - tp_size: 2
-        max_model_len: 16382
+        max_model_len: 16384
         max_num_seqs: 16
         device_config: *granite_vision_2b_tp2_device_config
       - tp_size: 4
