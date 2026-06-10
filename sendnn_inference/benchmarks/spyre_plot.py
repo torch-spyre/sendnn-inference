@@ -32,20 +32,35 @@ def _tostr(sec: float) -> str:
     return f"{h:02d}:{m:02d}:{s:06.3f}"
 
 
-def _decode_type(lat: float, thresholds: list[float] | None) -> str:
+def _decode_labels(thresholds: list[float] | None) -> tuple[str, str, str]:
+    """Return (fast_label, mid_label, slow_label) matching vLLM's timeline format."""
     if not thresholds:
-        return "Decode"
+        return ("Decode", "", "")
+    lo_ms = int(thresholds[0] * 1000)
+    hi_ms = int(thresholds[1] * 1000)
+    return (
+        f"ITL < {lo_ms}ms",
+        f"{lo_ms}ms ≤ ITL < {hi_ms}ms",
+        f"ITL ≥ {hi_ms}ms",
+    )
+
+
+def _decode_type(lat: float, thresholds: list[float] | None, labels: tuple[str, str, str]) -> str:
+    fast, mid, slow = labels
+    if not thresholds:
+        return fast
     if lat < thresholds[0]:
-        return "Decode"
+        return fast
     if lat < thresholds[1]:
-        return "Decode (mid)"
-    return "Decode (slow)"
+        return mid
+    return slow
 
 
 def _build_detailed_segments(
     request: dict[str, Any],
     t0_global: float,
     itl_thresholds: list[float] | None = None,
+    decode_labels: tuple[str, str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """Convert one request's timing data into ordered Gantt segments.
 
@@ -186,7 +201,7 @@ def _build_detailed_segments(
                 **common,
                 "start": _tostr(seg_start),
                 "end": _tostr(seg_end),
-                "type": _decode_type(lat, itl_thresholds),
+                "type": _decode_type(lat, itl_thresholds, decode_labels or ("Decode", "", "")),
                 "duration": f"{lat * 1000:.1f}ms",
                 "tkv": str(tkv) if tkv is not None else "—",
             }
@@ -234,9 +249,12 @@ def generate_detailed_timeline_plot(
     for idx, req in enumerate(sorted_requests):
         req["_label"] = f"Req {idx}"
 
+    labels = _decode_labels(itl_thresholds)
+    fast_lbl, mid_lbl, slow_lbl = labels
+
     all_segments: list[dict[str, Any]] = []
     for req in sorted_requests:
-        all_segments.extend(_build_detailed_segments(req, t0_global, itl_thresholds))
+        all_segments.extend(_build_detailed_segments(req, t0_global, itl_thresholds, labels))
 
     if not all_segments:
         logger.warning("No plottable segments found — skipping detailed timeline.")
@@ -244,15 +262,17 @@ def generate_detailed_timeline_plot(
 
     df = pd.DataFrame(all_segments)
 
-    color_map = {
+    color_map: dict[str, str] = {
         "Queue wait": _COLOR_QUEUE_WAIT,
         "Waiting": _COLOR_WAITING,
         "Prefill": _COLOR_PREFILL,
-        "Decode": _COLOR_DECODE_FAST,
-        "Decode (mid)": _COLOR_DECODE_MID,
-        "Decode (slow)": _COLOR_DECODE_SLOW,
+        fast_lbl: _COLOR_DECODE_FAST,
     }
-    category_order = ["Queue wait", "Prefill", "Waiting", "Decode", "Decode (mid)", "Decode (slow)"]
+    category_order = ["Queue wait", "Prefill", "Waiting", fast_lbl]
+    if itl_thresholds:
+        color_map[mid_lbl] = _COLOR_DECODE_MID
+        color_map[slow_lbl] = _COLOR_DECODE_SLOW
+        category_order += [mid_lbl, slow_lbl]
 
     fig = px.timeline(
         df,
