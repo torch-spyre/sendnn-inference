@@ -353,6 +353,7 @@ class SpyrePoolingModelRunner(
 
         if task == "classify":
             tokenizer = AutoTokenizer.from_pretrained(self.model_config.model)
+            assert tokenizer is not None, "Failed to load tokenizer"
             output = tokenizer(text="foo", text_pair="bar")
             self.use_token_type_ids = "token_type_ids" in output
             if self.use_token_type_ids:
