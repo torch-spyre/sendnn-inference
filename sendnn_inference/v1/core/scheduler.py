@@ -31,6 +31,10 @@ class SpyreBenchState:
     chunk_latencies: dict[str, list[float]] = field(default_factory=dict)
     arrival_ts: dict[str, float] = field(default_factory=dict)
     first_scheduled_ts: dict[str, float] = field(default_factory=dict)
+    chunk_start_times: dict[str, list[float]] = field(default_factory=dict)
+    decode_latencies: dict[str, list[float]] = field(default_factory=dict)
+    decode_start_times: dict[str, list[float]] = field(default_factory=dict)
+    decode_tkvs: dict[str, list[int]] = field(default_factory=dict)
 
 
 # Ensure that block_size is 64
@@ -256,12 +260,22 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
                 t = model_runner_output.chunk_prefill_time_s.get(req.request_id)
                 if t is not None:
                     self._bench.chunk_latencies.setdefault(req.request_id, []).append(t)
+                t_start = model_runner_output.chunk_prefill_start_s.get(req.request_id)
+                if t_start is not None:
+                    self._bench.chunk_start_times.setdefault(req.request_id, []).append(t_start)
             # Track first-scheduled time and arrival time for queue-wait calculation
             now = time.time()
             for req in self.ongoing_prefills:
                 if req.request_id not in self._bench.first_scheduled_ts:
                     self._bench.first_scheduled_ts[req.request_id] = now
                     self._bench.arrival_ts[req.request_id] = req.arrival_time
+            # Accumulate decode timings
+            for req_id, t1 in model_runner_output.decode_time_s.items():
+                self._bench.decode_latencies.setdefault(req_id, []).append(t1)
+            for req_id, t0 in model_runner_output.decode_start_s.items():
+                self._bench.decode_start_times.setdefault(req_id, []).append(t0)
+            for req_id, tkv in model_runner_output.decode_tkv.items():
+                self._bench.decode_tkvs.setdefault(req_id, []).append(tkv)
 
         # Remove completed prefills
         self.ongoing_prefills = [
@@ -276,11 +290,19 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         if self._bench is None:
             return None
         lats = self._bench.chunk_latencies.pop(req_id, None)
-        if lats is None:
+        starts = self._bench.chunk_start_times.pop(req_id, None)
+        dec_lats = self._bench.decode_latencies.pop(req_id, None)
+        dec_starts = self._bench.decode_start_times.pop(req_id, None)
+        dec_tkvs = self._bench.decode_tkvs.pop(req_id, None)
+        if lats is None and dec_lats is None:
             return None
         return {
-            "num_chunked_prefills": len(lats),
-            "chunk_prefill_latencies_s": lats,
+            "num_chunked_prefills": len(lats) if lats else 0,
+            "chunk_prefill_latencies_s": lats or [],
+            "chunk_prefill_start_times_s": starts or [],
+            "decode_latencies_s": dec_lats or [],
+            "decode_start_times_s": dec_starts or [],
+            "decode_tkvs": dec_tkvs or [],
         }
 
     def _free_request(self, request, delay_free_blocks: bool = False):
@@ -302,6 +324,12 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
                 "chunk_prefill_latencies_s": chunk_stats["chunk_prefill_latencies_s"]
                 if chunk_stats
                 else [],
+                "chunk_prefill_start_times_s": chunk_stats["chunk_prefill_start_times_s"]
+                if chunk_stats
+                else [],
+                "decode_latencies_s": chunk_stats["decode_latencies_s"] if chunk_stats else [],
+                "decode_start_times_s": chunk_stats["decode_start_times_s"] if chunk_stats else [],
+                "decode_tkvs": chunk_stats["decode_tkvs"] if chunk_stats else [],
             }
             if kv_xfer_params is None:
                 kv_xfer_params = {"__spyre__": spyre_data}

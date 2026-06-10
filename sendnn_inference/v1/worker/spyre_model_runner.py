@@ -101,6 +101,12 @@ class SpyreModelRunnerOutput(ModelRunnerOutput):
     # Per-chunk prefill wall-clock time in seconds, keyed by request_id.
     # Only populated when SENDNN_INFERENCE_BENCH_METRICS_ENABLED is set.
     chunk_prefill_time_s: dict[str, float] = field(default_factory=dict)
+    # Absolute wall-clock start time (time.time()) of each prefill chunk.
+    chunk_prefill_start_s: dict[str, float] = field(default_factory=dict)
+    # Decode step wall-clock duration, start time, and tkv per request.
+    decode_time_s: dict[str, float] = field(default_factory=dict)
+    decode_start_s: dict[str, float] = field(default_factory=dict)
+    decode_tkv: dict[str, int] = field(default_factory=dict)
 
 
 InputBatchT = TypeVar("InputBatchT", bound=BaseInputBatch)
@@ -1571,10 +1577,12 @@ class ChunkedPrefillModelRunner(
             t1 = time.time() - t0
             logger.debug("t_forward_pass: %.2fms [prefill single chunk][batch size 1]", (t1 * 1000))
             output = self.prefill_output()
+            assert isinstance(output, SpyreModelRunnerOutput)
             if envs_spyre.SENDNN_INFERENCE_BENCH_METRICS_ENABLED:
                 req_ids = list(scheduler_output.num_scheduled_tokens)
                 if req_ids:
                     output.chunk_prefill_time_s[req_ids[0]] = t1
+                    output.chunk_prefill_start_s[req_ids[0]] = t0
             return output
 
         # Apply grammar bitmask for structured output requests.
@@ -1619,10 +1627,17 @@ class ChunkedPrefillModelRunner(
             return self.get_empty_output()
 
         model_output = self.sampled_output(output, is_prefill)
-        if envs_spyre.SENDNN_INFERENCE_BENCH_METRICS_ENABLED and is_prefill:
+        if envs_spyre.SENDNN_INFERENCE_BENCH_METRICS_ENABLED:
             req_ids = list(scheduler_output.num_scheduled_tokens)
             if req_ids:
-                model_output.chunk_prefill_time_s[req_ids[0]] = t1
+                if is_prefill:
+                    model_output.chunk_prefill_time_s[req_ids[0]] = t1
+                    model_output.chunk_prefill_start_s[req_ids[0]] = t0
+                else:
+                    for req_id in req_ids:
+                        model_output.decode_time_s[req_id] = t1
+                        model_output.decode_start_s[req_id] = t0
+                        model_output.decode_tkv[req_id] = model_output.tkv
         return model_output
 
     def prefill_output(self) -> SpyreModelRunnerOutput:

@@ -36,6 +36,10 @@ class SpyreRequestMetrics:
     queued_time_s: float
     num_chunked_prefills: int
     chunk_prefill_latencies_s: list[float]
+    chunk_prefill_start_times_s: list[float] = dataclasses.field(default_factory=list)
+    decode_latencies_s: list[float] = dataclasses.field(default_factory=list)
+    decode_start_times_s: list[float] = dataclasses.field(default_factory=list)
+    decode_tkvs: list[int] = dataclasses.field(default_factory=list)
 
 
 class SpyreMetricsRegistry:

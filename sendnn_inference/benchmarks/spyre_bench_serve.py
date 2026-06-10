@@ -31,13 +31,15 @@ logger = logging.getLogger(__name__)
 
 _BACKEND_NAME = "spyre-chat"
 
-# Shared accumulator — populated by the wrapper below during the benchmark run.
+# Shared accumulators — populated by the wrapper below during the benchmark run.
 _spyre_metrics_collected: list[dict[str, Any]] = []
+_request_outputs_collected: list[dict[str, Any]] = []
 
 
 def _make_collecting_func():
     """Return a wrapper around async_request_spyre_chat that accumulates
-    custom_metrics_dict into _spyre_metrics_collected."""
+    custom_metrics_dict into _spyre_metrics_collected and per-request vLLM
+    timing into _request_outputs_collected."""
 
     async def _wrapper(
         request_func_input: RequestFuncInput,
@@ -48,6 +50,17 @@ def _make_collecting_func():
         if output.success:
             if output.custom_metrics_dict:
                 _spyre_metrics_collected.append(output.custom_metrics_dict)
+                _request_outputs_collected.append(
+                    {
+                        "start_time": output.start_time,
+                        "ttft": output.ttft,
+                        "itl": output.itl,
+                        "latency": output.latency,
+                        "prompt_len": request_func_input.prompt_len,
+                        "output_tokens": output.output_tokens,
+                        **output.custom_metrics_dict,
+                    }
+                )
             else:
                 logger.warning(
                     "Spyre metrics absent from response — is "
@@ -84,6 +97,29 @@ def _build_parser() -> argparse.ArgumentParser:
         if action.dest == "backend":
             action.default = _BACKEND_NAME
             break
+
+    parser.add_argument(
+        "--detailed-timeline",
+        action="store_true",
+        default=False,
+        help=(
+            "Write a detailed per-request Gantt-chart timeline HTML alongside the "
+            "JSON result file (same name with a _detailed.html suffix). "
+            "Requires --save-result and SENDNN_INFERENCE_BENCH_METRICS_ENABLED on the server."
+        ),
+    )
+    parser.add_argument(
+        "--itl-thresholds",
+        type=float,
+        nargs=2,
+        metavar=("LOW", "HIGH"),
+        default=None,
+        help=(
+            "Two ITL thresholds in seconds for decode coloring in the detailed timeline. "
+            "Decode steps below LOW are green, between LOW and HIGH are orange, "
+            "above HIGH are red. When omitted, all decode steps are green."
+        ),
+    )
 
     return parser
 
@@ -268,6 +304,7 @@ def main() -> None:
     selected_percentiles = [float(p) for p in args.metric_percentiles.split(",")]
 
     _spyre_metrics_collected.clear()
+    _request_outputs_collected.clear()
 
     run_started_at = time.time()
     stdout_trailing, stderr_trailing = _run_vllm_and_capture_trailing(args)
@@ -276,6 +313,45 @@ def main() -> None:
     _print_spyre_section(_spyre_metrics_collected, selected_percentiles)
 
     _inject_spyre_metrics_into_result_file(args, _spyre_metrics_collected, run_started_at)
+
+    if getattr(args, "detailed_timeline", False):
+        from pathlib import Path
+
+        from sendnn_inference.benchmarks.spyre_plot import generate_detailed_timeline_plot
+
+        # Derive the HTML path from the JSON result file: same name, _detailed.html suffix.
+        result_dir = getattr(args, "result_dir", None) or "."
+        explicit_name = getattr(args, "result_filename", None)
+        if explicit_name:
+            json_candidate = (
+                explicit_name
+                if os.path.isabs(explicit_name)
+                else os.path.join(result_dir, explicit_name)
+            )
+            candidates = [json_candidate] if os.path.isfile(json_candidate) else []
+        else:
+            try:
+                candidates = [
+                    os.path.join(result_dir, f)
+                    for f in os.listdir(result_dir)
+                    if f.endswith(".json")
+                    and os.path.getmtime(os.path.join(result_dir, f)) >= run_started_at
+                ]
+            except OSError:
+                candidates = []
+
+        if candidates:
+            json_path = Path(max(candidates, key=os.path.getmtime))
+            html_path = json_path.with_name(json_path.stem + "_detailed.html")
+            itl_thresholds = getattr(args, "itl_thresholds", None)
+            generate_detailed_timeline_plot(
+                _request_outputs_collected, html_path, itl_thresholds=itl_thresholds
+            )
+        else:
+            logger.warning(
+                "--detailed-timeline requires --save-result so the JSON path is known; "
+                "no result file found, skipping timeline."
+            )
 
     trailing = stdout_trailing + stderr_trailing
     if trailing.strip():
