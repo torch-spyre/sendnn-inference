@@ -178,7 +178,7 @@ class RemoteOpenAIServer:
         return f"http://{self.host}:{self.port}"
 
     def url_for(self, *parts: str) -> str:
-        return self.url_root + "/" + "/".join(parts)
+        return self.url_root + "/" + "/".join(p.strip("/") for p in parts)
 
     def get_client(self, **kwargs):
         if "timeout" not in kwargs:
