@@ -3,6 +3,7 @@
 import math
 import time
 from collections import deque
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Iterable, Union
 
 from vllm.logger import init_logger
@@ -20,6 +21,17 @@ else:
     SchedulerOutput = None
 
 logger = init_logger(__name__)
+
+
+@dataclass
+class SpyreBenchState:
+    """Bench-metrics-only per-request state. Only instantiated when
+    SENDNN_INFERENCE_BENCH_METRICS_ENABLED is set."""
+
+    chunk_latencies: dict[str, list[float]] = field(default_factory=dict)
+    arrival_ts: dict[str, float] = field(default_factory=dict)
+    first_scheduled_ts: dict[str, float] = field(default_factory=dict)
+
 
 # Ensure that block_size is 64
 # This ensures the rounding function is correct
@@ -204,14 +216,10 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         self.block_size = SpyrePlatform.get_block_size()
         self.max_batch_tkv_limit = SpyrePlatform.get_max_batch_tkv_limit()
 
-        # Per-request chunk prefill latency accumulator.
-        # Only populated when SENDNN_INFERENCE_BENCH_METRICS_ENABLED is set.
-        self._chunk_latencies: dict[str, list[float]] = {}
-        # Timestamps for queue-wait-time calculation.
-        self._arrival_ts: dict[str, float] = {}
-        self._first_scheduled_ts: dict[str, float] = {}
+        self._bench: SpyreBenchState | None = None
 
         if envs_spyre.SENDNN_INFERENCE_BENCH_METRICS_ENABLED:
+            self._bench = SpyreBenchState()
             from sendnn_inference.v1.metrics.stats_logger import register_scheduler
 
             register_scheduler(self)
@@ -243,17 +251,17 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
                 )
 
         # Accumulate per-chunk timings before removing completed prefills
-        if envs_spyre.SENDNN_INFERENCE_BENCH_METRICS_ENABLED:
+        if self._bench is not None:
             for req in self.ongoing_prefills:
                 t = model_runner_output.chunk_prefill_time_s.get(req.request_id)
                 if t is not None:
-                    self._chunk_latencies.setdefault(req.request_id, []).append(t)
+                    self._bench.chunk_latencies.setdefault(req.request_id, []).append(t)
             # Track first-scheduled time and arrival time for queue-wait calculation
             now = time.time()
             for req in self.ongoing_prefills:
-                if req.request_id not in self._first_scheduled_ts:
-                    self._first_scheduled_ts[req.request_id] = now
-                    self._arrival_ts[req.request_id] = req.arrival_time
+                if req.request_id not in self._bench.first_scheduled_ts:
+                    self._bench.first_scheduled_ts[req.request_id] = now
+                    self._bench.arrival_ts[req.request_id] = req.arrival_time
 
         # Remove completed prefills
         self.ongoing_prefills = [
@@ -265,7 +273,9 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
 
     def get_and_clear_chunk_stats(self, req_id: str) -> dict | None:
         """Return and clear accumulated chunk timing for a finished request."""
-        lats = self._chunk_latencies.pop(req_id, None)
+        if self._bench is None:
+            return None
+        lats = self._bench.chunk_latencies.pop(req_id, None)
         if lats is None:
             return None
         return {
@@ -278,11 +288,11 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         they travel over ZMQ to the API server process in EngineCoreOutput."""
         kv_xfer_params = super()._free_request(request, delay_free_blocks)
 
-        if envs_spyre.SENDNN_INFERENCE_BENCH_METRICS_ENABLED:
+        if self._bench is not None:
             req_id = request.request_id
             chunk_stats = self.get_and_clear_chunk_stats(req_id)
-            first_ts = self._first_scheduled_ts.pop(req_id, None)
-            arrival_ts = self._arrival_ts.pop(req_id, None)
+            first_ts = self._bench.first_scheduled_ts.pop(req_id, None)
+            arrival_ts = self._bench.arrival_ts.pop(req_id, None)
             queued_time_s = (
                 (first_ts - arrival_ts) if first_ts is not None and arrival_ts is not None else 0.0
             )

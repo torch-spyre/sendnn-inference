@@ -193,24 +193,24 @@ def test_print_missing_keys_tolerated(capsys):
 def _make_bare_scheduler():
     """Instantiate ChunkedPrefillSpyreScheduler with __init__ bypassed so we can
     call its methods without a full vllm engine setup."""
-    from sendnn_inference.v1.core.scheduler import ChunkedPrefillSpyreScheduler
+    from sendnn_inference.v1.core.scheduler import ChunkedPrefillSpyreScheduler, SpyreBenchState
 
     with patch.object(ChunkedPrefillSpyreScheduler, "__init__", lambda *a, **kw: None):
         s = ChunkedPrefillSpyreScheduler()
-    s._chunk_latencies = {}
+    s._bench = SpyreBenchState()
     return s
 
 
 @pytest.mark.cpu
 def test_get_and_clear_returns_correct_dict():
     s = _make_bare_scheduler()
-    s._chunk_latencies["r0"] = [88888.8, 0.000005]
+    s._bench.chunk_latencies["r0"] = [88888.8, 0.000005]
     result = s.get_and_clear_chunk_stats("r0")
     assert result is not None
     assert result["num_chunked_prefills"] == 2
     assert result["chunk_prefill_latencies_s"] == pytest.approx([88888.8, 0.000005])
     # Entry must be cleared after retrieval
-    assert "r0" not in s._chunk_latencies
+    assert "r0" not in s._bench.chunk_latencies
 
 
 @pytest.mark.cpu
@@ -264,11 +264,10 @@ def test_scheduler_bench_metrics_accumulated(
     )
     scheduler = engine.scheduler
 
-    # Patch _chunk_latencies accumulation guard for this test run since the
-    # engine was potentially cached before BENCH_METRICS_ENABLED was set.
-    scheduler._chunk_latencies = {}
-    scheduler._arrival_ts = {}
-    scheduler._first_scheduled_ts = {}
+    # Reset bench state in case the engine was cached before BENCH_METRICS_ENABLED was set.
+    from sendnn_inference.v1.core.scheduler import SpyreBenchState
+
+    scheduler._bench = SpyreBenchState()
 
     # Prompts longer than max_num_batched_tokens (64) → ≥ 2 prefill chunks each
     prompt_len = max_num_batched_tokens + 20  # 84 tokens → 2 chunks of 64
@@ -297,10 +296,11 @@ def test_scheduler_bench_metrics_accumulated(
 
     def _capturing_free(self, request, delay_free_blocks=False):
         req_id = request.request_id
+        bench = self._bench
         captured[req_id] = {
-            "chunk_latencies": list(self._chunk_latencies.get(req_id, [])),
-            "has_arrival_ts": req_id in self._arrival_ts,
-            "has_first_scheduled_ts": req_id in self._first_scheduled_ts,
+            "chunk_latencies": list(bench.chunk_latencies.get(req_id, [])) if bench else [],
+            "has_arrival_ts": (req_id in bench.arrival_ts) if bench else False,
+            "has_first_scheduled_ts": (req_id in bench.first_scheduled_ts) if bench else False,
         }
         return original_free(self, request, delay_free_blocks)
 
@@ -352,10 +352,13 @@ def test_scheduler_bench_metrics_accumulated(
         len(captured["0"]["chunk_latencies"]) >= 2 and len(captured["1"]["chunk_latencies"]) >= 2
     )
 
-    # After all requests finished, the dicts must be empty
-    assert scheduler._chunk_latencies == {}, "Leftover entries in _chunk_latencies after run"
-    assert scheduler._arrival_ts == {}, "Leftover entries in _arrival_ts after run"
-    assert scheduler._first_scheduled_ts == {}, "Leftover entries in _first_scheduled_ts after run"
+    # After all requests finished, the bench state dicts must be empty
+    assert scheduler._bench is not None
+    assert scheduler._bench.chunk_latencies == {}, "Leftover entries in chunk_latencies after run"
+    assert scheduler._bench.arrival_ts == {}, "Leftover entries in arrival_ts after run"
+    assert scheduler._bench.first_scheduled_ts == {}, (
+        "Leftover entries in first_scheduled_ts after run"
+    )
 
 
 # ---------------------------------------------------------------------------
