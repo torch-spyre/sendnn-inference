@@ -123,8 +123,54 @@ def _print_spyre_section(
     print("=" * 50)
 
 
-def main() -> None:
+def _run_vllm_and_capture_trailing(args: Any) -> tuple[str, str]:
+    """Run vllm's main_async, letting stdout/stderr pass through live until the
+    closing '=' * 50 line of the metrics table.  Everything written after that
+    marker is captured and returned as (stdout_trailing, stderr_trailing)."""
     import io
+    import sys
+
+    stdout_buf = io.StringIO()
+    stderr_buf = io.StringIO()
+    orig_stdout, orig_stderr = sys.stdout, sys.stderr
+    done = {"v": False}
+
+    class _StdoutSplitter:
+        def write(self, s):
+            if not done["v"]:
+                if s.strip() == "=" * 50:
+                    done["v"] = True
+                else:
+                    orig_stdout.write(s)
+            else:
+                stdout_buf.write(s)
+
+        def flush(self):
+            orig_stdout.flush()
+
+    class _StderrSplitter:
+        def write(self, s):
+            if not done["v"]:
+                orig_stderr.write(s)
+            else:
+                stderr_buf.write(s)
+
+        def flush(self):
+            if not done["v"]:
+                orig_stderr.flush()
+
+    sys.stdout = _StdoutSplitter()
+    sys.stderr = _StderrSplitter()
+    try:
+        asyncio.run(main_async(args))
+    finally:
+        sys.stdout = orig_stdout
+        sys.stderr = orig_stderr
+
+    return stdout_buf.getvalue(), stderr_buf.getvalue()
+
+
+def main() -> None:
     import sys
 
     # Allow `sendnn-bench serve <args>` as an alias (the word "serve" is ignored).
@@ -144,46 +190,12 @@ def main() -> None:
 
     _spyre_metrics_collected.clear()
 
-    # Capture any stdout noise (warnings, plot-saved lines) that vllm emits after
-    # its metrics table so we can print it after the SenDNN section.
-    _vllm_stdout_buf = io.StringIO()
-    _vllm_stderr_buf = io.StringIO()
-    _orig_stdout, _orig_stderr = sys.stdout, sys.stderr
+    stdout_trailing, stderr_trailing = _run_vllm_and_capture_trailing(args)
 
-    # Split stdout: lines that look like the vllm table go straight through;
-    # everything else is buffered.
-    class _SplitWriter:
-        def __init__(self, passthrough, buf):
-            self._passthrough = passthrough
-            self._buf = buf
-            self._in_table = True  # vllm table comes first
-
-        def write(self, s):
-            if self._in_table:
-                self._passthrough.write(s)
-                # Once we see the closing "===...===" the table is done.
-                if s.strip() == "=" * 50:
-                    self._in_table = False
-            else:
-                self._buf.write(s)
-
-        def flush(self):
-            self._passthrough.flush()
-
-    sys.stdout = _SplitWriter(_orig_stdout, _vllm_stdout_buf)
-    sys.stderr = _vllm_stderr_buf
-    try:
-        asyncio.run(main_async(args))
-    finally:
-        sys.stdout = _orig_stdout
-        sys.stderr = _orig_stderr
-
-    print("\n" + "=" * 50)
     print("{s:{c}^{n}}".format(s=" SenDNN Metrics ", n=50, c="="))
-    print("=" * 50)
     _print_spyre_section(_spyre_metrics_collected, selected_percentiles)
 
-    trailing = _vllm_stdout_buf.getvalue() + _vllm_stderr_buf.getvalue()
+    trailing = stdout_trailing + stderr_trailing
     if trailing.strip():
         print(trailing, end="")
 
