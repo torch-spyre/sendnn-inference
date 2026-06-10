@@ -103,6 +103,10 @@ def _print_spyre_section(
     chunk_lats_ms = [
         lat * 1000 for m in metrics_list for lat in m.get("chunk_prefill_latencies_s", [])
     ]
+    total_prefill_chunks = sum(num_chunks_list)
+
+    # Scalar summary line (mirrors vllm's plain-count header section)
+    print("{:<40} {:<10}".format("Total prefill chunks processed:", total_prefill_chunks))
 
     def _section(header: str, values: list[float], label: str) -> None:
         if not values:
@@ -188,6 +192,7 @@ def _inject_spyre_metrics_into_result_file(
     result["spyre_chunk_prefill_latencies_s"] = [
         m.get("chunk_prefill_latencies_s", []) for m in metrics_list
     ]
+    result["spyre_total_prefill_chunks"] = sum(result["spyre_num_chunked_prefills"])
 
     try:
         with open(file_path, "w", encoding="utf-8") as fh:
