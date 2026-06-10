@@ -1523,10 +1523,18 @@ class ChunkedPrefillModelRunner(
         if grammar_output is None:
             return
 
+        class _DenseBatchAdapter:
+            def __init__(self, batch: SamplingInputBatch):
+                self._batch = batch
+                self.req_ids = batch.sorted_requests_ids
+
+            def __getattr__(self, name: str):
+                return getattr(self._batch, name)
+
         vllm_apply_grammar_bitmask(
             scheduler_output,
             grammar_output,
-            batch,  # type: ignore[arg-type]
+            _DenseBatchAdapter(batch),  # type: ignore[arg-type]
             logits,
         )
 
