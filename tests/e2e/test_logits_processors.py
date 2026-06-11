@@ -127,7 +127,7 @@ def test_logits_processor_advanced(
 
     Uses SpyLogitsProcessor as the inner processor to verify token generation.
     """
-    from tests.v1.worker.mock_model import InstrumentedModelRunner
+    from v1.worker.mock_model import InstrumentedModelRunner
     from vllm.v1.sample.logits_processor.state import LogitsProcessors
 
     monkeypatch.setenv("VLLM_ENABLE_V1_MULTIPROCESSING", "0")

@@ -17,7 +17,7 @@ from scheduling_utils import (
     create_request_for_scheduler_test,
     random_prompt,
 )
-from spyre_util import ModelInfo
+from spyre_util import ModelInfo, verify_block_tables
 
 
 @pytest.mark.chunked_prefill
@@ -100,6 +100,7 @@ def test_max_batch_tkv_decode_pausing(
             "running": ["0"],
             "request_outputs": ["0"],
             "n_used_blocks": 1,
+            "block_tables": {"0": [1]},
         },
         {
             # Decode sequence 0
@@ -109,6 +110,7 @@ def test_max_batch_tkv_decode_pausing(
             "running": ["0"],
             "request_outputs": ["0"],
             "n_used_blocks": 1,
+            "block_tables": {"0": [1]},
         },
         {
             # Prefill sequence 1
@@ -118,6 +120,7 @@ def test_max_batch_tkv_decode_pausing(
             "running": ["1", "0"],
             "request_outputs": ["1"],
             "n_used_blocks": 2,
+            "block_tables": {"0": [1], "1": [2]},
         },
         {
             # Decode sequences 0 and 1
@@ -127,6 +130,7 @@ def test_max_batch_tkv_decode_pausing(
             "running": ["1", "0"],
             "request_outputs": ["1", "0"],
             "n_used_blocks": 2,
+            "block_tables": {"0": [1], "1": [2]},
         },
         {
             # Prefill sequence 2
@@ -139,6 +143,7 @@ def test_max_batch_tkv_decode_pausing(
             "running": ["2", "1", "0"],
             "request_outputs": ["2"],
             "n_used_blocks": 4,
+            "block_tables": {"0": [1], "1": [2], "2": [3, 4]},
         },
         {
             # Decode sequences 0, 1, and 2
@@ -148,6 +153,7 @@ def test_max_batch_tkv_decode_pausing(
             "running": ["2", "1", "0"],
             "request_outputs": ["2", "1", "0"],
             "n_used_blocks": 4,
+            "block_tables": {"0": [1], "1": [2], "2": [3, 4]},
         },
         {
             # Decode sequences 0, 1, and 2
@@ -157,6 +163,7 @@ def test_max_batch_tkv_decode_pausing(
             "running": ["2", "1", "0"],
             "request_outputs": ["2", "1", "0"],
             "n_used_blocks": 4,
+            "block_tables": {"0": [1], "1": [2], "2": [3, 4]},
         },
         {
             # Decode sequences 0 and 1
@@ -168,6 +175,7 @@ def test_max_batch_tkv_decode_pausing(
             "running": ["1", "0"],
             "request_outputs": ["1", "0"],
             "n_used_blocks": 4,
+            "block_tables": {"0": [1], "1": [2], "2": [3, 4]},
         },
         {
             # Decode sequences 0 and 1
@@ -179,6 +187,7 @@ def test_max_batch_tkv_decode_pausing(
             "request_outputs": ["1", "0"],
             "finished_requests": ["0"],
             "n_used_blocks": 3,
+            "block_tables": {"1": [2], "2": [3, 4]},
         },
         {
             # Decode sequences 1 and 2
@@ -189,6 +198,7 @@ def test_max_batch_tkv_decode_pausing(
             "running": ["1", "2"],
             "request_outputs": ["1", "2"],
             "n_used_blocks": 3,
+            "block_tables": {"1": [2], "2": [3, 4]},
         },
         {
             # Decode sequences 1 and 2
@@ -200,6 +210,7 @@ def test_max_batch_tkv_decode_pausing(
             "request_outputs": ["1", "2"],
             "finished_requests": ["1"],
             "n_used_blocks": 2,
+            "block_tables": {"2": [3, 4]},
         },
         {
             # Decode sequence 2
@@ -209,6 +220,7 @@ def test_max_batch_tkv_decode_pausing(
             "running": ["2"],
             "request_outputs": ["2"],
             "n_used_blocks": 2,
+            "block_tables": {"2": [3, 4]},
         },
         {
             # Sequence 2 finishes
@@ -219,6 +231,7 @@ def test_max_batch_tkv_decode_pausing(
             "request_outputs": ["2"],
             "finished_requests": ["2"],
             "n_used_blocks": 0,
+            "block_tables": {},
         },
         {
             # tkv should be cleared one step later
@@ -243,6 +256,7 @@ def test_max_batch_tkv_decode_pausing(
         available_blocks=available_blocks,
         max_batch_tkv_limit=max_batch_tkv_limit,
         max_num_batched_tokens=max_num_batched_tokens,
+        extra_assert_funcs=[verify_block_tables],
     )
 
 
@@ -316,6 +330,7 @@ def test_prefill_exceeds_max_batch_tkv(
             "running": [],
             "request_outputs": [],
             "n_used_blocks": 0,
+            "block_tables": {},
         },
         {
             # Prefill sequence 0
@@ -325,6 +340,7 @@ def test_prefill_exceeds_max_batch_tkv(
             "running": ["0"],
             "request_outputs": ["0"],
             "n_used_blocks": 1,
+            "block_tables": {"0": [1]},
         },
         {
             # Decode sequence 0
@@ -334,6 +350,7 @@ def test_prefill_exceeds_max_batch_tkv(
             "running": ["0"],
             "request_outputs": ["0"],
             "n_used_blocks": 1,
+            "block_tables": {"0": [1]},
         },
         {
             # Prefill sequence 1
@@ -343,6 +360,7 @@ def test_prefill_exceeds_max_batch_tkv(
             "running": ["1", "0"],
             "request_outputs": ["1"],
             "n_used_blocks": 2,
+            "block_tables": {"0": [1], "1": [2]},
         },
         {
             # Decode sequences 0 and 1
@@ -352,6 +370,7 @@ def test_prefill_exceeds_max_batch_tkv(
             "running": ["1", "0"],
             "request_outputs": ["1", "0"],
             "n_used_blocks": 2,
+            "block_tables": {"0": [1], "1": [2]},
         },
         {
             # Decode sequences 0 and 1
@@ -363,6 +382,7 @@ def test_prefill_exceeds_max_batch_tkv(
             "running": ["1", "0"],
             "request_outputs": ["1", "0"],
             "n_used_blocks": 2,
+            "block_tables": {"0": [1], "1": [2]},
         },
         {
             # Sequences 0 and 1 both finish
@@ -373,6 +393,7 @@ def test_prefill_exceeds_max_batch_tkv(
             "request_outputs": ["1", "0"],
             "finished_requests": ["1", "0"],
             "n_used_blocks": 0,
+            "block_tables": {},
         },
         {
             # Prefill sequence 2
@@ -382,6 +403,7 @@ def test_prefill_exceeds_max_batch_tkv(
             "running": ["2"],
             "request_outputs": ["2"],
             "n_used_blocks": 2,
+            "block_tables": {"2": [3, 4]},
         },
         {
             # Decode sequence 2
@@ -391,6 +413,7 @@ def test_prefill_exceeds_max_batch_tkv(
             "running": ["2"],
             "request_outputs": ["2"],
             "n_used_blocks": 2,
+            "block_tables": {"2": [3, 4]},
         },
         {
             # Sequence 2 finishes
@@ -401,6 +424,7 @@ def test_prefill_exceeds_max_batch_tkv(
             "request_outputs": ["2"],
             "finished_requests": ["2"],
             "n_used_blocks": 0,
+            "block_tables": {},
         },
         {
             # tkv should be cleared one step later
@@ -425,4 +449,5 @@ def test_prefill_exceeds_max_batch_tkv(
         available_blocks=available_blocks,
         max_batch_tkv_limit=max_batch_tkv_limit,
         max_num_batched_tokens=max_num_batched_tokens,
+        extra_assert_funcs=[verify_block_tables],
     )

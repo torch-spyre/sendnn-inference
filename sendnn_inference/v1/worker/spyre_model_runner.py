@@ -1450,7 +1450,7 @@ class ChunkedPrefillModelRunner(
 
         # Find requests that are in input_batch but not in scheduler output (paused)
         paused_req_ids = current_batch_req_ids - scheduled_req_ids
-        for req_id in paused_req_ids:
+        for req_id in sorted(paused_req_ids):
             # Only pause if it's not a finished request (finished requests are handled separately)
             if req_id not in (scheduler_output.finished_req_ids or []):
                 self.input_batch.pause_request(req_id)
@@ -1461,7 +1461,7 @@ class ChunkedPrefillModelRunner(
         # Find requests that are in scheduler output but not in input_batch
         # (restore from pausing)
         restored_req_ids = scheduled_req_ids - current_batch_req_ids
-        for req_id in restored_req_ids:
+        for req_id in sorted(restored_req_ids):
             # Only restore requests that were previously paused
             if req_id in self.paused_req_ids and req_id in self.requests:
                 req_state = self.requests[req_id]
