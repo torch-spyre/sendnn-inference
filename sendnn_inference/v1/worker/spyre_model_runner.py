@@ -356,6 +356,8 @@ class SpyrePoolingModelRunner(
 
         if task == "classify":
             tokenizer = AutoTokenizer.from_pretrained(self.model_config.model)
+            # Assert to satisfy type checker
+            assert tokenizer is not None, "Failed to load tokenizer"
             output = tokenizer(text="foo", text_pair="bar")
             self.use_token_type_ids = "token_type_ids" in output
             if self.use_token_type_ids:
@@ -1523,10 +1525,18 @@ class ChunkedPrefillModelRunner(
         if grammar_output is None:
             return
 
+        class _DenseBatchAdapter:
+            def __init__(self, batch: SamplingInputBatch):
+                self._batch = batch
+                self.req_ids = batch.sorted_requests_ids
+
+            def __getattr__(self, name: str):
+                return getattr(self._batch, name)
+
         vllm_apply_grammar_bitmask(
             scheduler_output,
             grammar_output,
-            batch,  # type: ignore[arg-type]
+            _DenseBatchAdapter(batch),  # type: ignore[arg-type]
             logits,
         )
 
