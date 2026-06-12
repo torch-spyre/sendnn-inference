@@ -2,7 +2,7 @@
 """Detailed per-request Gantt-chart timeline plot for sendnn-bench serve.
 
 Generates an HTML file showing, for each request:
-  - Queue wait time (before first prefill)
+  - Waiting time before first prefill (ttft - sum of prefill latencies)
   - Each individual prefill chunk as a separate segment
   - Waiting gaps between segments (absorbed if < 10% of segment duration)
   - Each individual decode step (with TKV in hover)
@@ -15,8 +15,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # Color scheme
-_COLOR_QUEUE_WAIT = "#636EFA"  # blue-purple — queue wait before first prefill
-_COLOR_WAITING = "#777777"  # dark grey — inter-segment gaps
+_COLOR_WAITING = "#636EFA"  # blue-purple — waiting (time before first prefill)
 _COLOR_PREFILL = "#FF0092"  # pink — all prefill chunks
 _COLOR_DECODE_FAST = "#109618"  # green — decode ITL below lower threshold (or all decodes)
 _COLOR_DECODE_MID = "#FF7F0E"  # orange — decode ITL between thresholds (vLLM colors)
@@ -67,9 +66,9 @@ def _build_detailed_segments(
     All timestamps are elapsed seconds relative to t0_global (min client start_time
     across all requests), formatted as HH:MM:SS.mmm strings for px.timeline.
 
-    Absolute server-side timestamps (chunk_prefill_start_times_s, decode_start_times_s)
-    are only used to derive *gaps between consecutive segments on the same request* —
-    never mixed with client-side start_time values — to avoid cross-clock skew.
+    ttft - sum(chunk_prefill_latencies_s) gives the waiting time before the first
+    prefill (plus any inter-prefill gaps, which are shown as separate "Waiting" segments).
+    All values are client-clock, so there is no cross-clock skew.
     """
     client_start = (request.get("start_time") or 0.0) - t0_global
     latency = request.get("latency")
@@ -77,7 +76,6 @@ def _build_detailed_segments(
     output_tokens = request.get("output_tokens")
     req_finish = client_start + latency if latency is not None else None
 
-    queued_time_s = request.get("queued_time_s") or 0.0
     prefill_lats = request.get("chunk_prefill_latencies_s") or []
     prefill_starts_abs = request.get("chunk_prefill_start_times_s") or []
     decode_lats = request.get("decode_latencies_s") or []
@@ -98,16 +96,22 @@ def _build_detailed_segments(
         "req_finish_time": _tostr(req_finish) if req_finish is not None else "—",
     }
 
-    # --- Queue wait ---
-    # Anchored to client start_time; queued_time_s is server-measured but relative.
-    first_prefill_t = client_start + queued_time_s
+    # --- Waiting (client send → first prefill) ---
+    # ttft covers: waiting + all prefill chunks + inter-prefill gaps.
+    # Subtracting the sum of prefill latencies leaves waiting + gaps; gaps are then
+    # shown separately as "Waiting" segments driven by server timestamps, so this
+    # initial bar ends up covering only the pre-first-prefill wait.
+    # All values are client-clock, so there is no cross-clock skew.
+    ttft = request.get("ttft") or 0.0
+    waiting_time_s = max(ttft - sum(prefill_lats), 0.0)
+    first_prefill_t = client_start + waiting_time_s
     segments.append(
         {
             **common,
             "start": _tostr(client_start),
             "end": _tostr(first_prefill_t),
-            "type": "Queue wait",
-            "duration": f"{queued_time_s * 1000:.1f}ms",
+            "type": "Waiting",
+            "duration": f"{waiting_time_s * 1000:.1f}ms",
             "tkv": "—",
         }
     )
@@ -267,12 +271,11 @@ def generate_detailed_timeline_plot(
     df = pd.DataFrame(all_segments)
 
     color_map: dict[str, str] = {
-        "Queue wait": _COLOR_QUEUE_WAIT,
         "Waiting": _COLOR_WAITING,
         "Prefill": _COLOR_PREFILL,
         fast_lbl: _COLOR_DECODE_FAST,
     }
-    category_order = ["Queue wait", "Prefill", "Waiting", fast_lbl]
+    category_order = ["Waiting", "Prefill", fast_lbl]
     if itl_thresholds:
         color_map[mid_lbl] = _COLOR_DECODE_MID
         color_map[slow_lbl] = _COLOR_DECODE_SLOW

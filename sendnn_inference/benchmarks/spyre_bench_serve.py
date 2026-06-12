@@ -110,12 +110,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--itl-thresholds",
-        type=float,
-        nargs=2,
-        metavar=("LOW", "HIGH"),
+        type=str,
+        metavar="LOW,HIGH",
         default=None,
         help=(
-            "Two ITL thresholds in seconds for decode coloring in the detailed timeline. "
+            "Two ITL thresholds in milliseconds (comma-separated) for decode "
+            " coloring in the detailed timeline. "
             "Decode steps below LOW are green, between LOW and HIGH are orange, "
             "above HIGH are red. When omitted, all decode steps are green."
         ),
@@ -221,7 +221,7 @@ def _inject_spyre_metrics_into_result_file(
         logger.warning("Failed to read vllm result JSON %s: %s", file_path, exc)
         return
 
-    result["spyre_queue_times_s"] = [
+    result["spyre_queued_time_s"] = [
         m["queued_time_s"] for m in metrics_list if "queued_time_s" in m
     ]
     result["spyre_num_chunked_prefills"] = [
@@ -351,7 +351,21 @@ def main() -> None:
         if candidates:
             json_path = Path(max(candidates, key=os.path.getmtime))
             html_path = json_path.with_name(json_path.stem + "_detailed.html")
-            itl_thresholds = getattr(args, "itl_thresholds", None)
+            itl_thresholds_str = getattr(args, "itl_thresholds", None)
+            # Parse comma-separated milliseconds and convert to seconds
+            itl_thresholds = None
+            if itl_thresholds_str:
+                try:
+                    thresholds_ms = [float(x.strip()) for x in itl_thresholds_str.split(",")]
+                    if len(thresholds_ms) != 2:
+                        raise ValueError("Expected exactly 2 comma-separated values")
+                    itl_thresholds = [ms / 1000.0 for ms in thresholds_ms]
+                except (ValueError, AttributeError) as e:
+                    logger.warning(
+                        "Invalid --itl-thresholds format: %s (expected LOW,HIGH in ms)",
+                        e,
+                    )
+                    itl_thresholds = None
             generate_detailed_timeline_plot(
                 _request_outputs_collected, html_path, itl_thresholds=itl_thresholds
             )

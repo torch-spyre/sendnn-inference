@@ -270,6 +270,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
                 ] + scheduler_output.scheduled_cached_reqs.req_ids
                 for req_id in all_prefill_reqs:
                     self._bench.chunk_latencies.setdefault(req_id, []).append(duration)
+                    self._bench.chunk_start_times.setdefault(req_id, []).append(t0)
                     self._bench.tkvs.setdefault(req_id, []).append(model_runner_output.tkv)
                 self._bench.prefill_step_start = None
                 self._bench.decode_step_start = None
@@ -281,6 +282,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
                 duration = now - t0
                 for req_id in scheduler_output.scheduled_cached_reqs.req_ids:
                     self._bench.decode_latencies.setdefault(req_id, []).append(duration)
+                    self._bench.decode_start_times.setdefault(req_id, []).append(t0)
                     self._bench.tkvs.setdefault(req_id, []).append(model_runner_output.tkv)
                 self._bench.prefill_step_start = None
                 self._bench.decode_step_start = None

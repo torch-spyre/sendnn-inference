@@ -28,8 +28,7 @@ from sendnn_inference.benchmarks.spyre_bench_serve import (
 # Shared test data
 # ---------------------------------------------------------------------------
 
-# Deliberately synthetic values — order-of-magnitude differences make clear these
-# are not real system measurements.
+# Synthetic values
 FAKE_METRICS: list[dict[str, Any]] = [
     {
         "queued_time_s": 42.0,
@@ -51,7 +50,7 @@ FAKE_METRICS: list[dict[str, Any]] = [
     },
 ]
 
-SELECTED_PERCENTILES = [99.0]
+SELECTED_PERCENTILES = [90.0, 99.0, 100.0]
 
 
 def _write_fake_result(tmp_path) -> pathlib.Path:
@@ -79,14 +78,9 @@ def test_inject_adds_spyre_keys(tmp_path):
     result_file = _write_fake_result(tmp_path)
     _inject_spyre_metrics_into_result_file(_make_args(tmp_path), FAKE_METRICS, time.time() - 1)
     data = json.loads(result_file.read_text())
-    assert "spyre_queue_times_s" in data
-    assert "spyre_num_chunked_prefills" in data
-    assert "spyre_chunk_prefill_latencies_s" in data
-    assert "spyre_chunk_prefill_start_times_s" in data
-    assert "spyre_total_prefill_chunks" in data
-    assert "spyre_decode_latencies_s" in data
-    assert "spyre_decode_start_times_s" in data
-    assert "spyre_tkvs" in data
+    expected_keys = {"spyre_" + k for k in FAKE_METRICS[0]} | {"spyre_total_prefill_chunks"}
+    for key in expected_keys:
+        assert key in data, f"expected key {key!r} missing from result JSON"
 
 
 @pytest.mark.cpu
@@ -95,29 +89,16 @@ def test_inject_values_correct(tmp_path):
     _inject_spyre_metrics_into_result_file(_make_args(tmp_path), FAKE_METRICS, time.time() - 1)
     data = json.loads(result_file.read_text())
 
-    assert data["spyre_queue_times_s"] == pytest.approx([42.0, 0.00001])
-    assert data["spyre_num_chunked_prefills"] == [7, 3]
-    assert data["spyre_total_prefill_chunks"] == 10
-    assert data["spyre_chunk_prefill_latencies_s"] == [
-        [0.001, 999.9, 0.003, 500.0, 0.002, 750.0, 1.0],
-        [12345.6, 0.0001, 99999.9],
-    ]
-    assert data["spyre_chunk_prefill_start_times_s"] == [
-        [1000.0, 1000.01, 2000.0, 2000.5, 3000.0, 3000.1, 4000.0],
-        [1000.0, 1012345.6, 1012345.6],
-    ]
-    assert data["spyre_decode_latencies_s"] == [
-        [88888.8, 0.000005, 44444.4],
-        [0.000002, 77777.7],
-    ]
-    assert data["spyre_decode_start_times_s"] == [
-        [5000.0, 5088888.8, 5088888.8],
-        [1112345.5, 1112345.5],
-    ]
-    assert data["spyre_tkvs"] == [
-        [512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072],
-        [256, 512, 1024, 2048, 4096],
-    ]
+    # Per-request lists map directly: "spyre_" + key → [m[key] for m in FAKE_METRICS]
+    for key in FAKE_METRICS[0]:
+        if key == "num_chunked_prefills":
+            continue
+        expected = [m[key] for m in FAKE_METRICS]
+        assert data["spyre_" + key] == expected
+    # Derived run-level scalar
+    assert data["spyre_total_prefill_chunks"] == sum(
+        m["num_chunked_prefills"] for m in FAKE_METRICS
+    )
     # Original keys preserved
     assert data["backend"] == "spyre-chat"
 
@@ -146,7 +127,7 @@ def test_inject_explicit_result_filename(tmp_path):
     args = _make_args(tmp_path, result_filename=str(result_file))
     _inject_spyre_metrics_into_result_file(args, FAKE_METRICS, time.time() - 1)
     data = json.loads(result_file.read_text())
-    assert "spyre_queue_times_s" in data
+    assert "spyre_queued_time_s" in data
 
 
 # ---------------------------------------------------------------------------
@@ -154,16 +135,42 @@ def test_inject_explicit_result_filename(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.cpu
-def test_print_scalar_total_line(capsys):
-    _print_spyre_section(FAKE_METRICS, SELECTED_PERCENTILES)
-    out = capsys.readouterr().out
-    assert "Total prefill chunks processed:" in out
-    assert "10" in out
+class _TrackedOutput:
+    """Wraps the captured stdout of _print_spyre_section and tracks which
+    non-blank, non-separator lines have been covered by assert_contains().
+    Call assert_all_lines_covered() at the end of the test to fail if any
+    content line was never asserted against."""
+
+    def __init__(self, text: str) -> None:
+        self._text = text
+        # Content lines: all non-empty lines except pure "=" footer/header lines
+        self._content_lines = [
+            line for line in text.splitlines() if line.strip() and set(line.strip()) != {"="}
+        ]
+        self._covered: set[int] = set()
+
+    def assert_contains(self, substring: str) -> None:
+        assert substring in self._text, f"{substring!r} not found in output"
+        for i, line in enumerate(self._content_lines):
+            if substring in line:
+                self._covered.add(i)
+
+    def assert_not_contains(self, substring: str) -> None:
+        assert substring not in self._text, f"{substring!r} unexpectedly found in output"
+
+    def assert_all_lines_covered(self) -> None:
+        uncovered = [
+            self._content_lines[i]
+            for i in range(len(self._content_lines))
+            if i not in self._covered
+        ]
+        assert not uncovered, "The following output lines were never asserted:\n" + "\n".join(
+            f"  {line!r}" for line in uncovered
+        )
 
 
 @pytest.mark.cpu
-def test_print_sendnn_header(capsys):
+def test_print_sendnn_header():
     # The SenDNN header is printed by main() just before _print_spyre_section.
     # We verify the format string produces the expected centred header.
     header = "{s:{c}^{n}}".format(s=" SenDNN Metrics ", n=50, c="=")
@@ -174,22 +181,35 @@ def test_print_sendnn_header(capsys):
 
 
 @pytest.mark.cpu
-def test_print_section_headers(capsys):
+def test_print_spyre_section_output(capsys):
+    """Single test covering every line emitted by _print_spyre_section.
+    Uses _TrackedOutput to enforce that no output line goes unasserted —
+    add assertions here when a new metric section is added."""
     _print_spyre_section(FAKE_METRICS, SELECTED_PERCENTILES)
-    out = capsys.readouterr().out
-    assert "Queue Wait Time" in out
-    assert "Chunked Prefill Count" in out
-    assert "Chunked Prefill Latency" in out
-    assert "Decode Step Latency" in out
+    out = _TrackedOutput(capsys.readouterr().out)
 
+    # Run-level scalar
+    out.assert_contains("Total prefill chunks processed:")
+    out.assert_contains("10")
 
-@pytest.mark.cpu
-def test_print_mean_median_p99(capsys):
-    _print_spyre_section(FAKE_METRICS, SELECTED_PERCENTILES)
-    out = capsys.readouterr().out
-    assert "Mean Queue Wait Time (ms):" in out
-    assert "Median Queue Wait Time (ms):" in out
-    assert "P99 Queue Wait Time (ms):" in out
+    # Section separators and mean/median/percentile lines for all four sections
+    out.assert_contains("Queue Wait Time")
+    out.assert_contains("Chunked Prefill Count")
+    out.assert_contains("Chunked Prefill Latency")
+    out.assert_contains("Decode Step Latency")
+
+    for label in (
+        "Queue Wait Time (ms)",
+        "Num Chunked Prefills",
+        "Chunk Prefill Latency (ms)",
+        "Decode Step Latency (ms)",
+    ):
+        out.assert_contains(f"Mean {label}:")
+        out.assert_contains(f"Median {label}:")
+        for percentile in SELECTED_PERCENTILES:
+            out.assert_contains(f"P{int(percentile)} {label}:")
+
+    out.assert_all_lines_covered()
 
 
 @pytest.mark.cpu
@@ -231,16 +251,94 @@ def _make_bare_scheduler():
     return s
 
 
+# One entry per field of SpyreBenchState — test_bench_fixture_covers_all_per_req_fields
+# will fail if this is out of sync. For dict fields the value is used as the test
+# payload (populated as bench.<field>["r0"] = value). Scalar fields are set directly.
+_BENCH_FIXTURE: dict[str, Any] = {
+    "chunk_latencies": [88888.8, 0.000005],
+    "arrival_ts": 1000.0,
+    "first_scheduled_ts": 1001.0,
+    "chunk_start_times": [1000.0, 1088888.8],
+    "decode_latencies": [0.1, 0.2],
+    "decode_start_times": [2000.0, 2000.1],
+    "tkvs": [64, 128, 192, 256],
+    "prefill_step_start": 999.0,
+    "decode_step_start": 1999.0,
+}
+
+# Expected return value of get_and_clear_chunk_stats. Add an entry here when adding
+# a new key to its return dict — the structural test will fail until you do.
+_EXPECTED_RESULT: dict[str, Any] = {
+    "num_chunked_prefills": 2,
+    "chunk_prefill_latencies_s": pytest.approx([88888.8, 0.000005]),
+    "chunk_prefill_start_times_s": pytest.approx([1000.0, 1088888.8]),
+    "decode_latencies_s": pytest.approx([0.1, 0.2]),
+    "decode_start_times_s": pytest.approx([2000.0, 2000.1]),
+    "tkvs": [64, 128, 192, 256],
+}
+
+
+@pytest.mark.cpu
+def test_bench_fixture_covers_all_per_req_fields():
+    """_BENCH_FIXTURE must contain one entry per field of SpyreBenchState.
+    Fails when a field is added to SpyreBenchState without updating _BENCH_FIXTURE."""
+    from dataclasses import fields as dc_fields
+
+    s = _make_bare_scheduler()
+    assert s._bench is not None
+    all_fields = {f.name for f in dc_fields(s._bench)}
+    assert _BENCH_FIXTURE.keys() == all_fields, (
+        f"_BENCH_FIXTURE is out of sync with SpyreBenchState fields.\n"
+        f"  extra  : {_BENCH_FIXTURE.keys() - all_fields}\n"
+        f"  missing: {all_fields - _BENCH_FIXTURE.keys()}"
+    )
+
+
+@pytest.mark.cpu
+def test_get_and_clear_result_keys():
+    """get_and_clear_chunk_stats must return exactly the keys in _EXPECTED_RESULT.
+    Fails when a key is added or removed without updating _EXPECTED_RESULT."""
+    s = _make_bare_scheduler()
+    assert s._bench is not None
+    bench = s._bench
+    for field, value in _BENCH_FIXTURE.items():
+        attr = getattr(bench, field)
+        if isinstance(attr, dict):
+            attr["r0"] = value
+        else:
+            setattr(bench, field, value)
+    result = s.get_and_clear_chunk_stats("r0")
+    assert result is not None
+    assert result.keys() == _EXPECTED_RESULT.keys(), (
+        f"get_and_clear_chunk_stats returned unexpected keys.\n"
+        f"  extra  : {result.keys() - _EXPECTED_RESULT.keys()}\n"
+        f"  missing: {_EXPECTED_RESULT.keys() - result.keys()}"
+    )
+
+
 @pytest.mark.cpu
 def test_get_and_clear_returns_correct_dict():
     s = _make_bare_scheduler()
-    s._bench.chunk_latencies["r0"] = [88888.8, 0.000005]
+    assert s._bench is not None
+    bench = s._bench
+
+    for field, value in _BENCH_FIXTURE.items():
+        attr = getattr(bench, field)
+        if isinstance(attr, dict):
+            attr["r0"] = value
+        else:
+            setattr(bench, field, value)
+
     result = s.get_and_clear_chunk_stats("r0")
     assert result is not None
-    assert result["num_chunked_prefills"] == 2
-    assert result["chunk_prefill_latencies_s"] == pytest.approx([88888.8, 0.000005])
-    # Entry must be cleared after retrieval
-    assert "r0" not in s._bench.chunk_latencies
+
+    for key, expected in _EXPECTED_RESULT.items():
+        assert result[key] == expected, f"result[{key!r}] mismatch"
+
+    # All per-request bench fields must be cleared after retrieval
+    for field, value in _BENCH_FIXTURE.items():
+        if isinstance(value, list):
+            assert "r0" not in getattr(bench, field), f"bench.{field} was not cleared for r0"
 
 
 @pytest.mark.cpu
@@ -325,13 +423,24 @@ def test_scheduler_bench_metrics_accumulated(
     original_free = scheduler.__class__._free_request
 
     def _capturing_free(self, request, delay_free_blocks=False):
+        from dataclasses import fields as dc_fields
+
         req_id = request.request_id
         bench = self._bench
-        captured[req_id] = {
-            "chunk_latencies": list(bench.chunk_latencies.get(req_id, [])) if bench else [],
-            "has_arrival_ts": (req_id in bench.arrival_ts) if bench else False,
-            "has_first_scheduled_ts": (req_id in bench.first_scheduled_ts) if bench else False,
-        }
+        # Snapshot all dict fields dynamically so new metrics are captured automatically.
+        # List-valued dicts are copied; scalar-valued dicts (arrival_ts, first_scheduled_ts)
+        # are stored as-is so truthiness checks work correctly.
+        if bench:
+            snap = {}
+            for f in dc_fields(bench):
+                val = getattr(bench, f.name)
+                if not isinstance(val, dict):
+                    continue
+                entry = val.get(req_id)
+                snap[f.name] = list(entry) if isinstance(entry, list) else entry
+            captured[req_id] = snap
+        else:
+            captured[req_id] = {}
         return original_free(self, request, delay_free_blocks)
 
     scheduler._free_request = _capturing_free.__get__(scheduler)
@@ -365,15 +474,53 @@ def test_scheduler_bench_metrics_accumulated(
         assert req_id in captured, f"_free_request was never called for req {req_id}"
         info = captured[req_id]
 
-        # At least 2 chunks recorded (prompt > chunk_size)
+        # At least 2 prefill chunks recorded (prompt > chunk_size)
         assert len(info["chunk_latencies"]) >= 2, (
             f"req {req_id}: expected ≥2 chunk latencies, got {info['chunk_latencies']}"
         )
-        # All latencies must be positive floats
+        # All prefill latencies must be positive floats
         for lat in info["chunk_latencies"]:
             assert isinstance(lat, float) and lat > 0, f"req {req_id}: non-positive latency {lat}"
-        assert info["has_arrival_ts"], f"req {req_id}: _arrival_ts not set"
-        assert info["has_first_scheduled_ts"], f"req {req_id}: _first_scheduled_ts not set"
+
+        # chunk_start_times must match chunk_latencies in length
+        assert len(info["chunk_start_times"]) == len(info["chunk_latencies"]), (
+            f"req {req_id}: chunk_start_times length {len(info['chunk_start_times'])} "
+            f"!= chunk_latencies length {len(info['chunk_latencies'])}"
+        )
+        for ts in info["chunk_start_times"]:
+            assert isinstance(ts, float) and ts > 0, (
+                f"req {req_id}: non-positive chunk_start_time {ts}"
+            )
+
+        # Decode latencies: at least 1 decode step after the prefill phase
+        assert len(info["decode_latencies"]) >= 1, (
+            f"req {req_id}: expected ≥1 decode latency, got {info['decode_latencies']}"
+        )
+        for lat in info["decode_latencies"]:
+            assert isinstance(lat, float) and lat > 0, (
+                f"req {req_id}: non-positive decode latency {lat}"
+            )
+
+        # decode_start_times must match decode_latencies in length
+        assert len(info["decode_start_times"]) == len(info["decode_latencies"]), (
+            f"req {req_id}: decode_start_times length {len(info['decode_start_times'])} "
+            f"!= decode_latencies length {len(info['decode_latencies'])}"
+        )
+        for ts in info["decode_start_times"]:
+            assert isinstance(ts, float) and ts > 0, (
+                f"req {req_id}: non-positive decode_start_time {ts}"
+            )
+
+        # tkvs: one entry per prefill chunk + per decode step
+        expected_tkvs = len(info["chunk_latencies"]) + len(info["decode_latencies"])
+        assert len(info["tkvs"]) == expected_tkvs, (
+            f"req {req_id}: expected {expected_tkvs} tkvs, got {info['tkvs']}"
+        )
+        for tkv in info["tkvs"]:
+            assert isinstance(tkv, int) and tkv > 0, f"req {req_id}: non-positive tkv {tkv}"
+
+        assert info["arrival_ts"] is not None, f"req {req_id}: arrival_ts not set"
+        assert info["first_scheduled_ts"] is not None, f"req {req_id}: first_scheduled_ts not set"
 
     # The two requests must have independent latency lists (no cross-contamination)
     assert captured["0"]["chunk_latencies"] != captured["1"]["chunk_latencies"] or (
@@ -382,13 +529,15 @@ def test_scheduler_bench_metrics_accumulated(
         len(captured["0"]["chunk_latencies"]) >= 2 and len(captured["1"]["chunk_latencies"]) >= 2
     )
 
-    # After all requests finished, the bench state dicts must be empty
+    # After all requests finished, all bench state dicts must be empty.
+    # Checked dynamically so new fields are covered automatically.
+    from dataclasses import fields as dc_fields
+
     assert scheduler._bench is not None
-    assert scheduler._bench.chunk_latencies == {}, "Leftover entries in chunk_latencies after run"
-    assert scheduler._bench.arrival_ts == {}, "Leftover entries in arrival_ts after run"
-    assert scheduler._bench.first_scheduled_ts == {}, (
-        "Leftover entries in first_scheduled_ts after run"
-    )
+    for f in dc_fields(scheduler._bench):
+        val = getattr(scheduler._bench, f.name)
+        if isinstance(val, dict):
+            assert val == {}, f"Leftover entries in {f.name} after run"
 
 
 # ---------------------------------------------------------------------------
