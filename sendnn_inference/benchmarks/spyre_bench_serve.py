@@ -230,8 +230,13 @@ def _inject_spyre_metrics_into_result_file(
     result["spyre_chunk_prefill_latencies_s"] = [
         m.get("chunk_prefill_latencies_s", []) for m in metrics_list
     ]
+    result["spyre_chunk_prefill_start_times_s"] = [
+        m.get("chunk_prefill_start_times_s", []) for m in metrics_list
+    ]
     result["spyre_total_prefill_chunks"] = sum(result["spyre_num_chunked_prefills"])
     result["spyre_decode_latencies_s"] = [m.get("decode_latencies_s", []) for m in metrics_list]
+    result["spyre_decode_start_times_s"] = [m.get("decode_start_times_s", []) for m in metrics_list]
+    result["spyre_tkvs"] = [m.get("tkvs", []) for m in metrics_list]
 
     try:
         with open(file_path, "w", encoding="utf-8") as fh:

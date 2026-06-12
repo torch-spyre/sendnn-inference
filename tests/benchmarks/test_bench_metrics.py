@@ -35,13 +35,19 @@ FAKE_METRICS: list[dict[str, Any]] = [
         "queued_time_s": 42.0,
         "num_chunked_prefills": 7,
         "chunk_prefill_latencies_s": [0.001, 999.9, 0.003, 500.0, 0.002, 750.0, 1.0],
+        "chunk_prefill_start_times_s": [1000.0, 1000.01, 2000.0, 2000.5, 3000.0, 3000.1, 4000.0],
         "decode_latencies_s": [88888.8, 0.000005, 44444.4],
+        "decode_start_times_s": [5000.0, 5088888.8, 5088888.8],
+        "tkvs": [512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072],
     },
     {
         "queued_time_s": 0.00001,
         "num_chunked_prefills": 3,
         "chunk_prefill_latencies_s": [12345.6, 0.0001, 99999.9],
+        "chunk_prefill_start_times_s": [1000.0, 1012345.6, 1012345.6],
         "decode_latencies_s": [0.000002, 77777.7],
+        "decode_start_times_s": [1112345.5, 1112345.5],
+        "tkvs": [256, 512, 1024, 2048, 4096],
     },
 ]
 
@@ -76,8 +82,11 @@ def test_inject_adds_spyre_keys(tmp_path):
     assert "spyre_queue_times_s" in data
     assert "spyre_num_chunked_prefills" in data
     assert "spyre_chunk_prefill_latencies_s" in data
+    assert "spyre_chunk_prefill_start_times_s" in data
     assert "spyre_total_prefill_chunks" in data
     assert "spyre_decode_latencies_s" in data
+    assert "spyre_decode_start_times_s" in data
+    assert "spyre_tkvs" in data
 
 
 @pytest.mark.cpu
@@ -93,9 +102,21 @@ def test_inject_values_correct(tmp_path):
         [0.001, 999.9, 0.003, 500.0, 0.002, 750.0, 1.0],
         [12345.6, 0.0001, 99999.9],
     ]
+    assert data["spyre_chunk_prefill_start_times_s"] == [
+        [1000.0, 1000.01, 2000.0, 2000.5, 3000.0, 3000.1, 4000.0],
+        [1000.0, 1012345.6, 1012345.6],
+    ]
     assert data["spyre_decode_latencies_s"] == [
         [88888.8, 0.000005, 44444.4],
         [0.000002, 77777.7],
+    ]
+    assert data["spyre_decode_start_times_s"] == [
+        [5000.0, 5088888.8, 5088888.8],
+        [1112345.5, 1112345.5],
+    ]
+    assert data["spyre_tkvs"] == [
+        [512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072],
+        [256, 512, 1024, 2048, 4096],
     ]
     # Original keys preserved
     assert data["backend"] == "spyre-chat"
