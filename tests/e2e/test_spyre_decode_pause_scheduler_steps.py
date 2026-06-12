@@ -257,6 +257,7 @@ def test_max_batch_tkv_decode_pausing(
         max_batch_tkv_limit=max_batch_tkv_limit,
         max_num_batched_tokens=max_num_batched_tokens,
         extra_assert_funcs=[verify_block_tables],
+        prefix_caching=True,
     )
 
 
@@ -450,4 +451,5 @@ def test_prefill_exceeds_max_batch_tkv(
         max_batch_tkv_limit=max_batch_tkv_limit,
         max_num_batched_tokens=max_num_batched_tokens,
         extra_assert_funcs=[verify_block_tables],
+        prefix_caching=True,
     )
