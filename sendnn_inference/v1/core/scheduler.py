@@ -35,6 +35,7 @@ class SpyreBenchState:
     decode_latencies: dict[str, list[float]] = field(default_factory=dict)
     decode_start_times: dict[str, list[float]] = field(default_factory=dict)
     tkvs: dict[str, list[int]] = field(default_factory=dict)
+    left_padding_blocks: dict[str, list[int]] = field(default_factory=dict)
     prefill_step_start: float | None = None
     decode_step_start: float | None = None
 
@@ -280,10 +281,19 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
                 assert not self.previous_step_was_prefill and self._bench.prefill_step_start is None
                 t0 = self._bench.decode_step_start
                 duration = now - t0
+                tkv = model_runner_output.tkv
+                max_num_blocks = math.ceil(tkv / self.block_size)
+                req_by_id = {r.request_id: r for r in self.running}
                 for req_id in scheduler_output.scheduled_cached_reqs.req_ids:
                     self._bench.decode_latencies.setdefault(req_id, []).append(duration)
                     self._bench.decode_start_times.setdefault(req_id, []).append(t0)
-                    self._bench.tkvs.setdefault(req_id, []).append(model_runner_output.tkv)
+                    self._bench.tkvs.setdefault(req_id, []).append(tkv)
+                    req = req_by_id.get(req_id)
+                    if req is not None:
+                        req_num_blocks = math.ceil(req.num_computed_tokens / self.block_size)
+                        self._bench.left_padding_blocks.setdefault(req_id, []).append(
+                            max_num_blocks - req_num_blocks
+                        )
                 self._bench.prefill_step_start = None
                 self._bench.decode_step_start = None
 
@@ -310,6 +320,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         dec_lats = self._bench.decode_latencies.pop(req_id, None)
         dec_starts = self._bench.decode_start_times.pop(req_id, None)
         tkvs = self._bench.tkvs.pop(req_id, None)
+        left_padding_blocks = self._bench.left_padding_blocks.pop(req_id, None)
         if lats is None and dec_lats is None:
             return None
         return {
@@ -319,6 +330,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             "decode_latencies_s": dec_lats or [],
             "decode_start_times_s": dec_starts or [],
             "tkvs": tkvs or [],
+            "left_padding_blocks": left_padding_blocks or [],
         }
 
     def _free_request(self, request, delay_free_blocks: bool = False):
@@ -351,6 +363,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
                 "decode_start_times_s": chunk_stats["decode_start_times_s"] if chunk_stats else [],
                 "tkvs": chunk_stats["tkvs"] if chunk_stats else [],
                 "prefix_cache_hit_pct": cache_hit_pct,
+                "left_padding_blocks": chunk_stats["left_padding_blocks"] if chunk_stats else [],
             }
             if kv_xfer_params is None:
                 kv_xfer_params = {"__spyre__": spyre_data}

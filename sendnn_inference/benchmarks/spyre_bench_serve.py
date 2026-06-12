@@ -147,7 +147,7 @@ def _print_spyre_section(
 
     def _section(header: str, values: list[float], label: str) -> None:
         if not values:
-            return
+            values = [0.0]
         arr = np.array(values)
         print("{s:{c}^{n}}".format(s=f" {header} ", n=50, c="-"))
         print("{:<40} {:<10.2f}".format(f"Mean {label}:", float(np.mean(arr))))
@@ -164,11 +164,14 @@ def _print_spyre_section(
         m["prefix_cache_hit_pct"] * 100 for m in metrics_list if "prefix_cache_hit_pct" in m
     ]
 
+    left_padding_blocks = [v for m in metrics_list for v in m.get("left_padding_blocks", [])]
+
     _section("Queue Wait Time", queue_times_ms, "Queue Wait Time (ms)")
     _section("Chunked Prefill Count", num_chunks_list, "Num Chunked Prefills")
     _section("Chunked Prefill Latency", chunk_lats_ms, "Chunk Prefill Latency (ms)")
     _section("Decode Step Latency", decode_lats_ms, "Decode Step Latency (ms)")
     _section("Prefix Cache Hit", cache_hit_pcts, "Prefix Cache Hit (%)")
+    _section("Left Padding Blocks", left_padding_blocks, "Left Padding Blocks")
 
     print("=" * 50)
 
@@ -245,6 +248,7 @@ def _inject_spyre_metrics_into_result_file(
     result["spyre_prefix_cache_hit_pct"] = [
         m.get("prefix_cache_hit_pct", 0.0) for m in metrics_list
     ]
+    result["spyre_left_padding_blocks"] = [m.get("left_padding_blocks", []) for m in metrics_list]
 
     try:
         with open(file_path, "w", encoding="utf-8") as fh:
