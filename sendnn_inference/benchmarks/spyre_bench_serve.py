@@ -109,13 +109,13 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--itl-thresholds",
+        "--decode-thresholds",
         type=str,
         metavar="LOW,HIGH",
         default=None,
         help=(
-            "Two ITL thresholds in milliseconds (comma-separated) for decode "
-            " coloring in the detailed timeline. "
+            "Two decode latency thresholds in milliseconds (comma-separated) for "
+            "coloring in the detailed timeline. "
             "Decode steps below LOW are green, between LOW and HIGH are orange, "
             "above HIGH are red. When omitted, all decode steps are green."
         ),
@@ -350,24 +350,24 @@ def main() -> None:
 
         if candidates:
             json_path = Path(max(candidates, key=os.path.getmtime))
-            html_path = json_path.with_name(json_path.stem + "_detailed.html")
-            itl_thresholds_str = getattr(args, "itl_thresholds", None)
+            html_path = json_path.with_name(json_path.stem + "_detailed_timeline.html")
+            decode_thresholds_str = getattr(args, "decode_thresholds", None)
             # Parse comma-separated milliseconds and convert to seconds
-            itl_thresholds = None
-            if itl_thresholds_str:
+            decode_thresholds = None
+            if decode_thresholds_str:
                 try:
-                    thresholds_ms = [float(x.strip()) for x in itl_thresholds_str.split(",")]
+                    thresholds_ms = [float(x.strip()) for x in decode_thresholds_str.split(",")]
                     if len(thresholds_ms) != 2:
                         raise ValueError("Expected exactly 2 comma-separated values")
-                    itl_thresholds = [ms / 1000.0 for ms in thresholds_ms]
+                    decode_thresholds = [ms / 1000.0 for ms in thresholds_ms]
                 except (ValueError, AttributeError) as e:
                     logger.warning(
-                        "Invalid --itl-thresholds format: %s (expected LOW,HIGH in ms)",
+                        "Invalid --decode-thresholds format: %s (expected LOW,HIGH in ms)",
                         e,
                     )
-                    itl_thresholds = None
+                    decode_thresholds = None
             generate_detailed_timeline_plot(
-                _request_outputs_collected, html_path, itl_thresholds=itl_thresholds
+                _request_outputs_collected, html_path, decode_thresholds=decode_thresholds
             )
         else:
             logger.warning(
