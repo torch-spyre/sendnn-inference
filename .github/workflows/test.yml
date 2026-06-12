@@ -20,8 +20,6 @@ env:
   VLLM_TARGET_DEVICE: "empty"
   VLLM_PLUGINS: "sendnn_inference"
   HF_HUB_CACHE: "${{ github.workspace }}/.cache/huggingface/hub"
-  DEFAULT_HF_MODEL: "ibm-ai-platform/micro-g3.3-8b-instruct-1b"
-  DEFAULT_HF_MODEL_REV: "6e9c6465a9d7e5e9fa35004a29f0c90befa7d23f"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -49,26 +47,18 @@ jobs:
           - name: "fp8"
             markers: "cpu and quantized and multi"
             flags: "--timeout=600 -k 'basic and test_output' --durations=0"
-            hf_model: "ibm-ai-platform/micro-g3.3-8b-instruct-1b-FP8"
-            hf_model_rev: "0dff8bacb968836dbbc7c2895c6d9ead0a05dc9e"
           - name: "embedding"
             markers: "cpu and embedding and not quantized"
             flags: "--timeout=300"
-            hf_model: "sentence-transformers/all-roberta-large-v1"
-            hf_model_rev: "cf74d8acd4f198de950bf004b262e6accfed5d2c"
           - name: "scoring"
             markers: "cpu and scoring"
             flags: "--timeout=300"
-            hf_model: "cross-encoder/stsb-roberta-large"
-            hf_model_rev: "2b12c2c0088918e76151fd5937b7bba986ef1f98"
           - name: "worker and utils"
             markers: "not e2e and not quantized and not spyre and not multimodal"
             flags: "--timeout=300"
           - name: "multimodal"
             markers: "cpu and multimodal"
             flags: "--timeout=300 -sv"
-            # hf_model: "ibm-granite/granite-vision-3.2-2b"
-            # hf_model_rev: "2818ae5b93cb750b099df1b65f7864e4a0401271"
             env_overrides: "HF_HUB_OFFLINE=0"
         include:
           # Lower bound support
@@ -79,8 +69,6 @@ jobs:
               name: "backward compat"
               markers: "compat or (cpu and basic and not quantized)"
               flags: "--timeout=300"
-              hf_model_2: "sentence-transformers/all-roberta-large-v1"
-              hf_model_2_rev: "cf74d8acd4f198de950bf004b262e6accfed5d2c"
             os: "ubuntu-latest"
             python_version: "3.12"
           # Intermediate versions of vllm to check basic support for as well
@@ -91,8 +79,6 @@ jobs:
               name: "backward compat"
               markers: "compat or (cpu and basic and not quantized)"
               flags: "--timeout=300"
-              hf_model_2: "sentence-transformers/all-roberta-large-v1"
-              hf_model_2_rev: "cf74d8acd4f198de950bf004b262e6accfed5d2c"
             os: "ubuntu-latest"
             python_version: "3.12"
           - vllm_version:
@@ -102,8 +88,6 @@ jobs:
               name: "backward compat"
               markers: "compat or (cpu and basic and not quantized)"
               flags: "--timeout=300"
-              hf_model_2: "sentence-transformers/all-roberta-large-v1"
-              hf_model_2_rev: "cf74d8acd4f198de950bf004b262e6accfed5d2c"
             os: "ubuntu-latest"
             python_version: "3.12"
           - vllm_version:
@@ -113,8 +97,6 @@ jobs:
               name: "backward compat"
               markers: "compat or (cpu and basic and not quantized)"
               flags: "--timeout=300"
-              hf_model_2: "sentence-transformers/all-roberta-large-v1"
-              hf_model_2_rev: "cf74d8acd4f198de950bf004b262e6accfed5d2c"
             os: "ubuntu-latest"
             python_version: "3.12"
           - vllm_version:
@@ -124,8 +106,6 @@ jobs:
               name: "backward compat"
               markers: "compat or (cpu and basic and not quantized)"
               flags: "--timeout=300"
-              hf_model_2: "sentence-transformers/all-roberta-large-v1"
-              hf_model_2_rev: "cf74d8acd4f198de950bf004b262e6accfed5d2c"
             os: "ubuntu-latest"
             python_version: "3.12"
 
@@ -146,10 +126,14 @@ jobs:
     steps:
       - name: "Lightweight disk cleanup"
         # super lightweight cleanup, not nearly as much as actions/free-up-disk-space
+        # all rm -rf, no apt/docker — completes in < 1s and frees ~20 GB
         shell: bash
         run: |
-          rm -rf /usr/share/swift
-          rm -rf /user/local/share/chromium
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc /usr/local/.ghcup
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/share/swift
+          sudo rm -rf /usr/local/share/chromium
           sudo rm -rf /usr/local/share/powershell
 
       - name: "Checkout"
@@ -199,117 +183,53 @@ jobs:
           # overwritten.
           uv pip install -v .
 
-      - name: "Standardize HF model names for caching"
-        id: standardize-names
-        if: steps.changed-src-files.outputs.any_changed == 'true'
-        run: |
-          # replace '/' characters in HF_MODEL with '--' for GHA cache keys and
-          # in model file names in local HF hub cache
-          
-          # don't use in-line default values for variable expansion here to not
-          # use the default model revision with a non-default model like this:
-          #   model="${{ matrix.test_suite.hf_model || env.DEFAULT_HF_MODEL }}"
-          #   revision="${{ matrix.test_suite.hf_model_rev || env.DEFAULT_HF_MODEL_REV }}"
-          
-          if [[ -n "${{ matrix.test_suite.hf_model }}" ]]; then
-            model="${{ matrix.test_suite.hf_model }}"
-            revision="${{ matrix.test_suite.hf_model_rev }}"
-          else
-            model="${{ env.DEFAULT_HF_MODEL }}"
-            revision="${{ env.DEFAULT_HF_MODEL_REV }}"
-          fi
-          safe_name="${model//\//--}"
-          echo "model_key=${safe_name}_${revision}"              >> "$GITHUB_ENV"
-          echo "model_path=${HF_HUB_CACHE}/models--${safe_name}" >> "$GITHUB_ENV"
-          
-          if [[ -n "${{ matrix.test_suite.hf_model_2 }}" ]]; then
-            model_2="${{ matrix.test_suite.hf_model_2 }}"
-            revision_2="${{ matrix.test_suite.hf_model_2_rev}}"
-            safe_name_2="${model_2//\//--}"
-            echo "model_2_key=${safe_name_2}_${revision_2}"            >> "$GITHUB_ENV"
-            echo "model_2_path=${HF_HUB_CACHE}/models--${safe_name_2}" >> "$GITHUB_ENV"
-          fi
-
       - name: "Restore HF models cache"
         id: cache_restore
         if: steps.changed-src-files.outputs.any_changed == 'true'
         uses: actions/cache/restore@v4
         with:
-          path: ${{ env.model_path }}
-          key: ${{ runner.os }}-hf-model-${{ env.model_key }}
-
-      - name: "Restore HF models cache for additional model"
-        id: cache_restore_2
-        if: ( steps.changed-src-files.outputs.any_changed == 'true' && matrix.test_suite.hf_model_2 )
-        uses: actions/cache/restore@v4
-        with:
-          path: ${{ env.model_2_path }}
-          key: ${{ runner.os }}-hf-model-${{ env.model_2_key }}
+          path: ${{ env.HF_HUB_CACHE }}
+          key: ${{ runner.os }}-hf-cache-${{ hashFiles('.github/ci_model_cache.yaml') }}
 
       - name: "Download HF models"
-        if: ( steps.changed-src-files.outputs.any_changed == 'true' && (steps.cache_restore.outputs.cache-hit != 'true' || steps.cache_restore_2.outputs.cache-hit != 'true'))
+        if: ( steps.changed-src-files.outputs.any_changed == 'true' && steps.cache_restore.outputs.cache-hit != 'true' )
         run: |
-          # We are caching HF models (HF_HUB_CACHE) for reliability rather than
-          # speed, since HF downloads are flaky for concurrent jobs.
-          # Be careful when adding models to the cache here, as the GHA cache is
-          # limited to 10 GB.
-          # If a new model is added here, a new hash key is generated. The
-          # previous cache blob can then be removed by an admin or can be left
-          # to expire after 7 days.
+          # The full HF_HUB_CACHE is cached as a single GHA entry keyed on the
+          # hash of .github/ci_model_cache.yaml. Edit that file to add/remove
+          # models — a fresh download + cache save will run on the next push to
+          # main. Stale cache blobs expire after 7 days (or can be deleted by
+          # an admin).
+          #
+          # We cache for reliability, not speed: HF downloads are flaky under
+          # concurrent jobs.
+          source .venv/bin/activate
+          python3 tools/download_model.py --config .github/ci_model_cache.yaml
 
-          if [[ -n "${{ matrix.test_suite.hf_model }}" ]]; then
-            model="${{ matrix.test_suite.hf_model }}"
-            revision="${{ matrix.test_suite.hf_model_rev }}"
-          else
-            model="${{ env.DEFAULT_HF_MODEL }}"
-            revision="${{ env.DEFAULT_HF_MODEL_REV }}"
-          fi
-          model_2="${{ matrix.test_suite.hf_model_2 }}"
-          revision_2="${{ matrix.test_suite.hf_model_2_rev }}"
-
-          python3 tools/download_model.py -m "$model" -r "${revision:-main}" &
-
-          if [[ -n "$model_2" ]]; then
-            python3 tools/download_model.py -m "$model_2" -r "${revision_2:-main}" &
-          fi
-
-          wait
-
-      - name: "Check HF model cache sizes"
+      - name: "Check HF model cache size"
         if: steps.changed-src-files.outputs.any_changed == 'true'
         run: |
-          # Guard against accidentally caching multi-GB model artifacts (e.g.
-          # onnx/, openvino/, or duplicate framework weights). The GHA cache
-          # has a 10 GB total limit; keep individual model caches well under
-          # that so multiple matrix entries can coexist.
-          MAX_BYTES=$((3 * 1024 * 1024 * 1024))  # 3 GiB (uncompressed; caches are compressed before upload)
-          status=0
-          for path in "${{ env.model_path }}" "${{ env.model_2_path }}"; do
-            if [[ -n "$path" && -d "$path" ]]; then
-              size=$(du -sb "$path" | cut -f1)
-              human=$(du -sh "$path" | cut -f1)
-              echo "Model cache $path: $human ($size bytes)"
-              if (( size > MAX_BYTES )); then
-                echo "::error::Model cache at $path is $human, exceeding the 3 GiB limit. Update tools/download_model.py to exclude unused artifacts (onnx/, openvino/, duplicate framework weights, etc)."
-                status=1
-              fi
+          # GHA cache has a 10 GB total limit. Keep the combined HF cache well
+          # under that so other caches (uv, etc) can coexist. If this fails,
+          # either prune entries from .github/ci_model_cache.yaml or update
+          # tools/download_model.py to exclude unused artifacts (onnx/,
+          # openvino/, duplicate framework weights, etc).
+          MAX_BYTES=$((8 * 1024 * 1024 * 1024))  # 8 GiB uncompressed
+          if [[ -d "${HF_HUB_CACHE}" ]]; then
+            size=$(du -sb "${HF_HUB_CACHE}" | cut -f1)
+            human=$(du -sh "${HF_HUB_CACHE}" | cut -f1)
+            echo "HF cache ${HF_HUB_CACHE}: $human ($size bytes)"
+            if (( size > MAX_BYTES )); then
+              echo "::error::HF cache is $human, exceeding the 8 GiB limit."
+              exit 1
             fi
-          done
-          exit $status
+          fi
 
       - name: "Save HF models cache"
         if: ( steps.changed-src-files.outputs.any_changed == 'true' && github.event_name != 'pull_request' && steps.cache_restore.outputs.cache-hit != 'true' )
         uses: actions/cache/save@v4
         with:
-          path: ${{ env.model_path }}
-          key: ${{ runner.os }}-hf-model-${{ env.model_key }}
-
-      - name: "Save HF models cache for additional model"
-        if: ( steps.changed-src-files.outputs.any_changed == 'true' && matrix.test_suite.hf_model_2 && github.event_name != 'pull_request' && steps.cache_restore_2.outputs.cache-hit != 'true' )
-        uses: actions/cache/save@v4
-        with:
-          path: ${{ env.model_2_path }}
-          key: ${{ runner.os }}-hf-model-${{ env.model_2_key }}
+          path: ${{ env.HF_HUB_CACHE }}
+          key: ${{ runner.os }}-hf-cache-${{ hashFiles('.github/ci_model_cache.yaml') }}
 
       - name: "Run tests"
         if: steps.changed-src-files.outputs.any_changed == 'true'

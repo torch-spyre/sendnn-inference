@@ -475,11 +475,11 @@ class SpyreCausalLM(nn.Module):
 
         # The second item in the output tuple is the KV cache.
         # However, on spyre these are ghost tensors- the data in these tensors does not reflect the
-        # actual kv cache data on the device. They exist only for proper compilation, so we don't
-        # waste any time assigning these tensors back to anything.
-        logits, kv_cache = output
-        if not self.on_spyre:
-            self.past_key_value_states = kv_cache
+        # actual kv cache data on the device. They exist only for proper compilation.
+        # Assigning self.past_key_value_states results in a minor (~1ms)
+        # performance decrease but avoids a ~20gb memory increase when
+        # the value is conditionally assigned.
+        logits, self.past_key_value_states = output
 
         if is_prompt:
             # assert that indeed received the last block of logits
