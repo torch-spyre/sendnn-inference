@@ -126,10 +126,14 @@ jobs:
     steps:
       - name: "Lightweight disk cleanup"
         # super lightweight cleanup, not nearly as much as actions/free-up-disk-space
+        # all rm -rf, no apt/docker — completes in < 1s and frees ~20 GB
         shell: bash
         run: |
-          rm -rf /usr/share/swift
-          rm -rf /user/local/share/chromium
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc /usr/local/.ghcup
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/share/swift
+          sudo rm -rf /usr/local/share/chromium
           sudo rm -rf /usr/local/share/powershell
 
       - name: "Checkout"

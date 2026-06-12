@@ -12,7 +12,7 @@ readme = "README.md"
 license = {text = "Apache 2"}
 dependencies = [
     "fms-model-optimizer[fp8-infer]>=0.8.3,<0.9",
-    "ibm-fms>=1.9.0,<2",
+    "ibm-fms>=1.11.1,<2",
     # NB: use strict < with the next patch version to not exclude versions with
     # build metadata suffixes
     "vllm>=0.19.1,<0.22.1",
@@ -54,6 +54,7 @@ git_describe_command = "git describe --dirty --tags --long --match 'v*'"
 # by accident
 override-dependencies = [
     "torch==2.11.0",
+    "torchvision==0.26.0",
     "triton; sys_platform == 'never'",
     "intel-extension-for-pytorch; sys_platform == 'never'",
 
