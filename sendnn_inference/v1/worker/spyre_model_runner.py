@@ -97,7 +97,7 @@ class SpyreModelRunnerBenchState:
     chunk_prefill_start_s: dict[str, float] = field(default_factory=dict)
     decode_time_s: dict[str, float] = field(default_factory=dict)
     decode_start_s: dict[str, float] = field(default_factory=dict)
-    decode_tkv: dict[str, int] = field(default_factory=dict)
+    tkvs: dict[str, list[int]] = field(default_factory=dict)
 
 
 @dataclass
@@ -1647,11 +1647,12 @@ class ChunkedPrefillModelRunner(
                 if is_prefill:
                     bench_state.chunk_prefill_time_s[req_ids[0]] = t1
                     bench_state.chunk_prefill_start_s[req_ids[0]] = t0
+                    bench_state.tkvs.setdefault(req_ids[0], []).append(model_output.tkv)
                 else:
                     for req_id in req_ids:
                         bench_state.decode_time_s[req_id] = t1
                         bench_state.decode_start_s[req_id] = t0
-                        bench_state.decode_tkv[req_id] = model_output.tkv
+                        bench_state.tkvs.setdefault(req_id, []).append(model_output.tkv)
         return model_output
 
     def prefill_output(self) -> SpyreModelRunnerOutput:

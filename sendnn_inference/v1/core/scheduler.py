@@ -34,7 +34,7 @@ class SpyreBenchState:
     chunk_start_times: dict[str, list[float]] = field(default_factory=dict)
     decode_latencies: dict[str, list[float]] = field(default_factory=dict)
     decode_start_times: dict[str, list[float]] = field(default_factory=dict)
-    decode_tkvs: dict[str, list[int]] = field(default_factory=dict)
+    tkvs: dict[str, list[int]] = field(default_factory=dict)
 
 
 # Ensure that block_size is 64
@@ -274,8 +274,9 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
                 self._bench.decode_latencies.setdefault(req_id, []).append(t1)
             for req_id, t0 in model_runner_output._bench.decode_start_s.items():
                 self._bench.decode_start_times.setdefault(req_id, []).append(t0)
-            for req_id, tkv in model_runner_output._bench.decode_tkv.items():
-                self._bench.decode_tkvs.setdefault(req_id, []).append(tkv)
+            # Accumulate tkvs (one per prefill chunk and decode step)
+            for req_id, tkv_list in model_runner_output._bench.tkvs.items():
+                self._bench.tkvs.setdefault(req_id, []).extend(tkv_list)
 
         # Remove completed prefills
         self.ongoing_prefills = [
@@ -293,7 +294,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         starts = self._bench.chunk_start_times.pop(req_id, None)
         dec_lats = self._bench.decode_latencies.pop(req_id, None)
         dec_starts = self._bench.decode_start_times.pop(req_id, None)
-        dec_tkvs = self._bench.decode_tkvs.pop(req_id, None)
+        tkvs = self._bench.tkvs.pop(req_id, None)
         if lats is None and dec_lats is None:
             return None
         return {
@@ -302,7 +303,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             "chunk_prefill_start_times_s": starts or [],
             "decode_latencies_s": dec_lats or [],
             "decode_start_times_s": dec_starts or [],
-            "decode_tkvs": dec_tkvs or [],
+            "tkvs": tkvs or [],
         }
 
     def _free_request(self, request, delay_free_blocks: bool = False):
@@ -329,7 +330,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
                 else [],
                 "decode_latencies_s": chunk_stats["decode_latencies_s"] if chunk_stats else [],
                 "decode_start_times_s": chunk_stats["decode_start_times_s"] if chunk_stats else [],
-                "decode_tkvs": chunk_stats["decode_tkvs"] if chunk_stats else [],
+                "tkvs": chunk_stats["tkvs"] if chunk_stats else [],
             }
             if kv_xfer_params is None:
                 kv_xfer_params = {"__spyre__": spyre_data}

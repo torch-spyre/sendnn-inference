@@ -82,7 +82,7 @@ def _build_detailed_segments(
     prefill_starts_abs = request.get("chunk_prefill_start_times_s") or []
     decode_lats = request.get("decode_latencies_s") or []
     decode_starts_abs = request.get("decode_start_times_s") or []
-    decode_tkvs = request.get("decode_tkvs") or []
+    tkvs = request.get("tkvs") or []
 
     if not prefill_lats:
         return []
@@ -118,6 +118,7 @@ def _build_detailed_segments(
     # Cursor advances from first_prefill_t using latencies + derived gaps.
     cursor = first_prefill_t
     prev_end_cursor = cursor  # tracks where previous segment ended
+    tkv_idx = 0  # index into all_tkvs (one per prefill, then one per decode)
 
     for i, lat in enumerate(prefill_lats):
         seg_start = cursor
@@ -142,6 +143,8 @@ def _build_detailed_segments(
             # else: absorb gap — seg_start stays at prev_end_cursor (no waiting bar)
             cursor = seg_start
 
+        tkv = tkvs[tkv_idx] if tkv_idx < len(tkvs) else None
+        tkv_idx += 1
         seg_end = seg_start + lat
         segments.append(
             {
@@ -150,7 +153,7 @@ def _build_detailed_segments(
                 "end": _tostr(seg_end),
                 "type": "Prefill",
                 "duration": f"{lat * 1000:.1f}ms",
-                "tkv": "—",
+                "tkv": str(tkv) if tkv is not None else "—",
             }
         )
         prev_end_cursor = seg_end
@@ -194,7 +197,8 @@ def _build_detailed_segments(
                 )
                 seg_start = cursor + gap
 
-        tkv = decode_tkvs[i] if i < len(decode_tkvs) else None
+        tkv = tkvs[tkv_idx] if tkv_idx < len(tkvs) else None
+        tkv_idx += 1
         seg_end = seg_start + lat
         segments.append(
             {
