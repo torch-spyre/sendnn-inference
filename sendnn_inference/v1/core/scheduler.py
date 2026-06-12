@@ -255,12 +255,12 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
                 )
 
         # Accumulate per-chunk timings before removing completed prefills
-        if self._bench is not None:
+        if self._bench is not None and model_runner_output._bench is not None:
             for req in self.ongoing_prefills:
-                t = model_runner_output.chunk_prefill_time_s.get(req.request_id)
+                t = model_runner_output._bench.chunk_prefill_time_s.get(req.request_id)
                 if t is not None:
                     self._bench.chunk_latencies.setdefault(req.request_id, []).append(t)
-                t_start = model_runner_output.chunk_prefill_start_s.get(req.request_id)
+                t_start = model_runner_output._bench.chunk_prefill_start_s.get(req.request_id)
                 if t_start is not None:
                     self._bench.chunk_start_times.setdefault(req.request_id, []).append(t_start)
             # Track first-scheduled time and arrival time for queue-wait calculation
@@ -270,11 +270,11 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
                     self._bench.first_scheduled_ts[req.request_id] = now
                     self._bench.arrival_ts[req.request_id] = req.arrival_time
             # Accumulate decode timings
-            for req_id, t1 in model_runner_output.decode_time_s.items():
+            for req_id, t1 in model_runner_output._bench.decode_time_s.items():
                 self._bench.decode_latencies.setdefault(req_id, []).append(t1)
-            for req_id, t0 in model_runner_output.decode_start_s.items():
+            for req_id, t0 in model_runner_output._bench.decode_start_s.items():
                 self._bench.decode_start_times.setdefault(req_id, []).append(t0)
-            for req_id, tkv in model_runner_output.decode_tkv.items():
+            for req_id, tkv in model_runner_output._bench.decode_tkv.items():
                 self._bench.decode_tkvs.setdefault(req_id, []).append(tkv)
 
         # Remove completed prefills
