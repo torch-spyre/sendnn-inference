@@ -38,6 +38,7 @@ FAKE_METRICS: list[dict[str, Any]] = [
         "decode_latencies_s": [88888.8, 0.000005, 44444.4],
         "decode_start_times_s": [5000.0, 5088888.8, 5088888.8],
         "tkvs": [512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072],
+        "prefix_cache_hit_pct": 0.25,
     },
     {
         "queued_time_s": 0.00001,
@@ -47,6 +48,7 @@ FAKE_METRICS: list[dict[str, Any]] = [
         "decode_latencies_s": [0.000002, 77777.7],
         "decode_start_times_s": [1112345.5, 1112345.5],
         "tkvs": [256, 512, 1024, 2048, 4096],
+        "prefix_cache_hit_pct": 0.0,
     },
 ]
 
@@ -192,17 +194,19 @@ def test_print_spyre_section_output(capsys):
     out.assert_contains("Total prefill chunks processed:")
     out.assert_contains("10")
 
-    # Section separators and mean/median/percentile lines for all four sections
+    # Section separators and mean/median/percentile lines for all five sections
     out.assert_contains("Queue Wait Time")
     out.assert_contains("Chunked Prefill Count")
     out.assert_contains("Chunked Prefill Latency")
     out.assert_contains("Decode Step Latency")
+    out.assert_contains("Prefix Cache Hit")
 
     for label in (
         "Queue Wait Time (ms)",
         "Num Chunked Prefills",
         "Chunk Prefill Latency (ms)",
         "Decode Step Latency (ms)",
+        "Prefix Cache Hit (%)",
     ):
         out.assert_contains(f"Mean {label}:")
         out.assert_contains(f"Median {label}:")

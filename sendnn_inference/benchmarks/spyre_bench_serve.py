@@ -160,10 +160,15 @@ def _print_spyre_section(
                 )
             )
 
+    cache_hit_pcts = [
+        m["prefix_cache_hit_pct"] * 100 for m in metrics_list if "prefix_cache_hit_pct" in m
+    ]
+
     _section("Queue Wait Time", queue_times_ms, "Queue Wait Time (ms)")
     _section("Chunked Prefill Count", num_chunks_list, "Num Chunked Prefills")
     _section("Chunked Prefill Latency", chunk_lats_ms, "Chunk Prefill Latency (ms)")
     _section("Decode Step Latency", decode_lats_ms, "Decode Step Latency (ms)")
+    _section("Prefix Cache Hit", cache_hit_pcts, "Prefix Cache Hit (%)")
 
     print("=" * 50)
 
@@ -237,6 +242,9 @@ def _inject_spyre_metrics_into_result_file(
     result["spyre_decode_latencies_s"] = [m.get("decode_latencies_s", []) for m in metrics_list]
     result["spyre_decode_start_times_s"] = [m.get("decode_start_times_s", []) for m in metrics_list]
     result["spyre_tkvs"] = [m.get("tkvs", []) for m in metrics_list]
+    result["spyre_prefix_cache_hit_pct"] = [
+        m.get("prefix_cache_hit_pct", 0.0) for m in metrics_list
+    ]
 
     try:
         with open(file_path, "w", encoding="utf-8") as fh:

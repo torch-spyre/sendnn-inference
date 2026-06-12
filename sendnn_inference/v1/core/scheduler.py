@@ -334,9 +334,13 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             queued_time_s = (
                 (first_ts - arrival_ts) if first_ts is not None and arrival_ts is not None else 0.0
             )
+            num_executed = chunk_stats["num_chunked_prefills"] if chunk_stats else 0
+            num_expected = math.ceil(request.num_prompt_tokens / self.chunk_size)
+            num_skipped = max(0, num_expected - num_executed)
+            cache_hit_pct = num_skipped / num_expected if num_expected > 0 else 0.0
             spyre_data = {
                 "queued_time_s": queued_time_s,
-                "num_chunked_prefills": chunk_stats["num_chunked_prefills"] if chunk_stats else 0,
+                "num_chunked_prefills": num_executed,
                 "chunk_prefill_latencies_s": chunk_stats["chunk_prefill_latencies_s"]
                 if chunk_stats
                 else [],
@@ -346,6 +350,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
                 "decode_latencies_s": chunk_stats["decode_latencies_s"] if chunk_stats else [],
                 "decode_start_times_s": chunk_stats["decode_start_times_s"] if chunk_stats else [],
                 "tkvs": chunk_stats["tkvs"] if chunk_stats else [],
+                "prefix_cache_hit_pct": cache_hit_pct,
             }
             if kv_xfer_params is None:
                 kv_xfer_params = {"__spyre__": spyre_data}
