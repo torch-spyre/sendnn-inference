@@ -25,8 +25,8 @@ logger = init_logger(__name__)
 
 @dataclass
 class SpyreBenchState:
-    """Bench-metrics-only per-request state. Only instantiated when
-    SENDNN_INFERENCE_BENCH_METRICS_ENABLED is set."""
+    """Bench-metrics-only state for tracking per-request and per-step timing.
+    Only instantiated when SENDNN_INFERENCE_BENCH_METRICS_ENABLED is set."""
 
     chunk_latencies: dict[str, list[float]] = field(default_factory=dict)
     arrival_ts: dict[str, float] = field(default_factory=dict)
@@ -35,6 +35,8 @@ class SpyreBenchState:
     decode_latencies: dict[str, list[float]] = field(default_factory=dict)
     decode_start_times: dict[str, list[float]] = field(default_factory=dict)
     tkvs: dict[str, list[int]] = field(default_factory=dict)
+    prefill_step_start: float | None = None
+    decode_step_start: float | None = None
 
 
 # Ensure that block_size is 64
@@ -254,29 +256,40 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
                     prefix_cache_len=prefix_cache_len,
                 )
 
-        # Accumulate per-chunk timings before removing completed prefills
-        if self._bench is not None and model_runner_output._bench is not None:
-            for req in self.ongoing_prefills:
-                t = model_runner_output._bench.chunk_prefill_time_s.get(req.request_id)
-                if t is not None:
-                    self._bench.chunk_latencies.setdefault(req.request_id, []).append(t)
-                t_start = model_runner_output._bench.chunk_prefill_start_s.get(req.request_id)
-                if t_start is not None:
-                    self._bench.chunk_start_times.setdefault(req.request_id, []).append(t_start)
-            # Track first-scheduled time and arrival time for queue-wait calculation
+        # Measure timing durations and accumulate metrics (scheduler-side timing injection)
+        if self._bench is not None:
             now = time.time()
+
+            # Prefill duration measurement (if prefill step was scheduled)
+            if self._bench.prefill_step_start is not None:
+                assert self.previous_step_was_prefill and self._bench.decode_step_start is None
+                t0 = self._bench.prefill_step_start
+                duration = now - t0
+                all_prefill_reqs = [
+                    r.req_id for r in scheduler_output.scheduled_new_reqs
+                ] + scheduler_output.scheduled_cached_reqs.req_ids
+                for req_id in all_prefill_reqs:
+                    self._bench.chunk_latencies.setdefault(req_id, []).append(duration)
+                    self._bench.tkvs.setdefault(req_id, []).append(model_runner_output.tkv)
+                self._bench.prefill_step_start = None
+                self._bench.decode_step_start = None
+
+            # Decode duration measurement (if decode step was scheduled)
+            elif self._bench.decode_step_start is not None:
+                assert not self.previous_step_was_prefill and self._bench.prefill_step_start is None
+                t0 = self._bench.decode_step_start
+                duration = now - t0
+                for req_id in scheduler_output.scheduled_cached_reqs.req_ids:
+                    self._bench.decode_latencies.setdefault(req_id, []).append(duration)
+                    self._bench.tkvs.setdefault(req_id, []).append(model_runner_output.tkv)
+                self._bench.prefill_step_start = None
+                self._bench.decode_step_start = None
+
+            # Track first-scheduled time and arrival time for queue-wait calculation
             for req in self.ongoing_prefills:
                 if req.request_id not in self._bench.first_scheduled_ts:
                     self._bench.first_scheduled_ts[req.request_id] = now
                     self._bench.arrival_ts[req.request_id] = req.arrival_time
-            # Accumulate decode timings
-            for req_id, t1 in model_runner_output._bench.decode_time_s.items():
-                self._bench.decode_latencies.setdefault(req_id, []).append(t1)
-            for req_id, t0 in model_runner_output._bench.decode_start_s.items():
-                self._bench.decode_start_times.setdefault(req_id, []).append(t0)
-            # Accumulate tkvs (one per prefill chunk and decode step)
-            for req_id, tkv_list in model_runner_output._bench.tkvs.items():
-                self._bench.tkvs.setdefault(req_id, []).extend(tkv_list)
 
         # Remove completed prefills
         self.ongoing_prefills = [
@@ -487,6 +500,17 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         # TODO: Implement sample_tokens() in SpyreModelRunner to enable async grammar
         # collection for better performance.
         outputs._spyre_grammar_output = self.get_grammar_bitmask(outputs)  # type: ignore[attr-defined]
+
+        # Inject scheduler-side step-start timestamps for accurate timing measurement
+        if self._bench is not None:
+            now = time.time()
+            if self.previous_step_was_prefill:
+                self._bench.prefill_step_start = now
+                self._bench.decode_step_start = None
+            else:
+                self._bench.decode_step_start = now
+                self._bench.prefill_step_start = None
+
         return outputs
 
     def can_schedule_prefill(self, request: Request) -> bool:

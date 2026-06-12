@@ -89,18 +89,6 @@ class SamplingForwardInputs(ModelForwardInputs):
 
 
 @dataclass
-class SpyreModelRunnerBenchState:
-    """Bench-metrics-only state in SpyreModelRunnerOutput.
-    Only instantiated when SENDNN_INFERENCE_BENCH_METRICS_ENABLED is set."""
-
-    chunk_prefill_time_s: dict[str, float] = field(default_factory=dict)
-    chunk_prefill_start_s: dict[str, float] = field(default_factory=dict)
-    decode_time_s: dict[str, float] = field(default_factory=dict)
-    decode_start_s: dict[str, float] = field(default_factory=dict)
-    tkvs: dict[str, list[int]] = field(default_factory=dict)
-
-
-@dataclass
 class SpyreModelRunnerOutput(ModelRunnerOutput):
     # Current tkv: this is the maximum padded request length in the batch)
     tkv: int = 0
@@ -110,8 +98,6 @@ class SpyreModelRunnerOutput(ModelRunnerOutput):
     # available than the number of scheduled tokens. In that case, the scheduler
     # needs to update its state to reflect the correct number of computed tokens
     prefix_cache_hit_len: dict[str, int] = field(default_factory=dict)
-    # Bench-metrics-only state. None when SENDNN_INFERENCE_BENCH_METRICS_ENABLED is off.
-    _bench: SpyreModelRunnerBenchState | None = None
 
 
 InputBatchT = TypeVar("InputBatchT", bound=BaseInputBatch)
@@ -1535,13 +1521,6 @@ class ChunkedPrefillModelRunner(
     ) -> ModelRunnerOutput:
         t0 = time.time()
 
-        # Create bench state dict only if bench metrics are enabled
-        bench_state = (
-            SpyreModelRunnerBenchState()
-            if envs_spyre.SENDNN_INFERENCE_BENCH_METRICS_ENABLED
-            else None
-        )
-
         self.update_states(scheduler_output)
 
         if not scheduler_output.total_num_scheduled_tokens:
@@ -1588,15 +1567,7 @@ class ChunkedPrefillModelRunner(
 
             t1 = time.time() - t0
             logger.debug("t_forward_pass: %.2fms [prefill single chunk][batch size 1]", (t1 * 1000))
-            output = self.prefill_output()
-            assert isinstance(output, SpyreModelRunnerOutput)
-            output._bench = bench_state
-            if bench_state is not None:
-                req_ids = list(scheduler_output.num_scheduled_tokens)
-                if req_ids:
-                    bench_state.chunk_prefill_time_s[req_ids[0]] = t1
-                    bench_state.chunk_prefill_start_s[req_ids[0]] = t0
-            return output
+            return self.prefill_output()
 
         # Apply grammar bitmask for structured output requests.
         self.apply_grammar_bitmask(
@@ -1640,19 +1611,6 @@ class ChunkedPrefillModelRunner(
             return self.get_empty_output()
 
         model_output = self.sampled_output(output, is_prefill)
-        model_output._bench = bench_state
-        if bench_state is not None:
-            req_ids = list(scheduler_output.num_scheduled_tokens)
-            if req_ids:
-                if is_prefill:
-                    bench_state.chunk_prefill_time_s[req_ids[0]] = t1
-                    bench_state.chunk_prefill_start_s[req_ids[0]] = t0
-                    bench_state.tkvs.setdefault(req_ids[0], []).append(model_output.tkv)
-                else:
-                    for req_id in req_ids:
-                        bench_state.decode_time_s[req_id] = t1
-                        bench_state.decode_start_s[req_id] = t0
-                        bench_state.tkvs.setdefault(req_id, []).append(model_output.tkv)
         return model_output
 
     def prefill_output(self) -> SpyreModelRunnerOutput:
