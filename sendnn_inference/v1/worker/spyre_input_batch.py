@@ -372,13 +372,12 @@ class SamplingInputBatch(BaseInputBatch[SamplingRequestState]):
         available_indices_list = available_indices.squeeze(dim=-1).tolist()
         return available_indices_list[0] if available_indices_list else None
 
-    def add_request(
+    def _setup_request_data(
         self,
         request: "SamplingRequestState",
         req_index: int | None = None,
-    ) -> int:
+    ) -> tuple[int, int]:
         req_index = super().add_request(request, req_index)
-        req_id = request.req_id
 
         # NOTE: differently from gpu input batch, self.req_output_token_ids
         # is not synced with self._req_ids, it should use
@@ -388,6 +387,23 @@ class SamplingInputBatch(BaseInputBatch[SamplingRequestState]):
         self.req_indices_mask[req_index] = True
         dense_index = self.req_idx_to_dense_index(req_index)
         self.req_output_token_ids.insert(dense_index, request.output_token_ids)
+
+        # Copy the output token ids.
+        start_idx = len(request.prompt_token_ids)
+        end_idx = start_idx + len(request.output_token_ids)
+        self.token_ids_cpu[req_index, start_idx:end_idx] = request.output_token_ids
+
+        return req_index, dense_index
+
+    def add_request(
+        self,
+        request: "SamplingRequestState",
+        req_index: int | None = None,
+    ) -> int:
+        req_index, dense_index = self._setup_request_data(request, req_index)
+        req_id = request.req_id
+
+        self._register_sampling_params(req_id, req_index, request)
 
         params = request.sampling_params  # TODO add pooling params
         tmp_dense = self.num_reqs - 1
@@ -401,12 +417,6 @@ class SamplingInputBatch(BaseInputBatch[SamplingRequestState]):
             )
             tmp_dense = tmp_dense - 1
 
-        # Copy the output token ids.
-        start_idx = len(request.prompt_token_ids)
-        end_idx = start_idx + len(request.output_token_ids)
-        self.token_ids_cpu[req_index, start_idx:end_idx] = request.output_token_ids
-
-        self._register_sampling_params(req_id, req_index, request)
         return req_index
 
     def remove_request(self, req_id: str):
@@ -460,17 +470,13 @@ class SamplingInputBatch(BaseInputBatch[SamplingRequestState]):
         - The slot is freed (cleared from _req_ids) so new requests can use it.
         """
         # Pop from id map and clear the slot
-        req_index = self.req_id_to_index.pop(req_id, None)
+        req_index = super().remove_request(req_id)
         if req_index is None:
             return
 
         # Must compute dense_index before masking
         dense_index = self.req_idx_to_dense_index(req_index)
-
-        # Free the slot for new requests
-        self._req_ids[req_index] = None
         self.req_indices_mask[req_index] = False
-        self._num_requests -= 1
 
         # Tell LogitProcessorWrapper to save state at this dense position.
         self.batch_update_builder.pause_append(dense_index, req_id)
@@ -483,10 +489,10 @@ class SamplingInputBatch(BaseInputBatch[SamplingRequestState]):
                 (tmp_dense, tmp_dense + 1, MoveDirectionality.UNIDIRECTIONAL)
             )
 
-        self.req_output_token_ids.pop(dense_index)
-        self._unregister_sampling_params(req_id, req_index)
+            self.req_output_token_ids.pop(dense_index)
+            self._unregister_sampling_params(req_id, req_index)
 
-    def resume_request(self, req_id: str, request: "SamplingRequestState") -> None:
+    def resume_request(self, request: "SamplingRequestState") -> None:
         """Restore a previously paused request to the active batch.
 
         Emits an 'added' event so builtin processors (MinP, LogitBias, …)
@@ -494,27 +500,10 @@ class SamplingInputBatch(BaseInputBatch[SamplingRequestState]):
         event then tells LogitProcessorWrapper to overwrite that freshly
         initialised slot with the exact saved state, preserving history.
         """
-        # Get an available slot (same as add_request)
-        req_index = self.get_available_index()
-        assert req_index is not None
-        assert req_index < self.max_num_reqs
+        req_index, dense_index = self._setup_request_data(request)
+        req_id = request.req_id
 
-        # Set up the slot
-        self._req_ids[req_index] = req_id
-        self.req_indices_mask[req_index] = True
-        self.req_id_to_index[req_id] = req_index
-        self._num_requests += 1
-
-        # Copy prompt and output token ids
-        num_prompt_tokens = len(request.prompt_token_ids)
-        self.num_prompt_tokens[req_index] = num_prompt_tokens
-        self.token_ids_cpu[req_index, :num_prompt_tokens] = request.prompt_token_ids
-        start_idx = num_prompt_tokens
-        end_idx = start_idx + len(request.output_token_ids)
-        self.token_ids_cpu[req_index, start_idx:end_idx] = request.output_token_ids
-
-        dense_index = self.req_idx_to_dense_index(req_index)
-        self.req_output_token_ids.insert(dense_index, request.output_token_ids)
+        self._register_sampling_params(req_id, req_index, request)
 
         # Tell LogitProcessorWrapper to restore the saved state at dense_index.
         # No 'added' event needed - the saved LogitsProcessor instance already
@@ -529,8 +518,6 @@ class SamplingInputBatch(BaseInputBatch[SamplingRequestState]):
                 (tmp_dense, tmp_dense - 1, MoveDirectionality.SWAP)
             )
             tmp_dense -= 1
-
-        self._register_sampling_params(req_id, req_index, request)
 
     def _register_sampling_params(
         self, req_id: str, req_index: int, request: "SamplingRequestState"

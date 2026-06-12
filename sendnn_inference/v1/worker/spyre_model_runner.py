@@ -1465,7 +1465,7 @@ class ChunkedPrefillModelRunner(
             # Only restore requests that were previously paused
             if req_id in self.paused_req_ids and req_id in self.requests:
                 req_state = self.requests[req_id]
-                self.input_batch.resume_request(req_id, req_state)
+                self.input_batch.resume_request(req_state)
                 self.paused_req_ids.discard(req_id)
                 self.input_batch.refresh_metadata()
                 need_metadata_refresh = False
