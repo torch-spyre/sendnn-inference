@@ -172,7 +172,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
 
         - Volumetric constraint: the product of batch_size and current TKV
             must not exceed `VLLM_DT_MAX_BATCH_TKV_LIMIT` when adding a new
-            request. See `check_batch_tkv_limit()` method for details.
+            request. See `_can_decode_all_requests()` method for details.
 
         - Decode pausing: requests may be temporarily paused from decoding
             when the batch TKV limit would be exceeded in the next decode step.
@@ -464,22 +464,10 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         num_running = len(decoding_requests)
         cond1 = num_running + len(self.waiting) < self.max_num_running_reqs
 
-        # calculate new max tkv of the batch given the new sequence joins
-        # considers all possible cases:
-        # - prompt_len > self.tkv and fall into different blocks
-        # - prompt_len and self.tkv fall within the same block
-        # - prompt_len < self.tkv and fall into different blocks
-        prompt_len = request.num_prompt_tokens
-        n_blocks = math.floor(max(self.tkv, prompt_len) / self.block_size)
-        new_req_tkv = n_blocks * self.block_size + prompt_len % self.block_size
-
-        # check that adding the new request to the decode batch still have
-        # batch size x tkv value being smaller than the accepted limit
-        cond2 = lambda: self.check_batch_tkv_limit(
-            request=request,
-            new_req_tkv=new_req_tkv,
-            running=decoding_requests,
-        )
+        # Check that the current decode batch is not about to have requests paused.
+        # This avoids adding more request to be paused and seems to slightly improve
+        # metrics.
+        cond2 = lambda: self._can_decode_all_requests(self.running)
 
         return cond1 and cond2()
 
@@ -500,35 +488,6 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         max_concurrent_prefills = 1
         num_prefills = len(self.waiting) + len(self.ongoing_prefills)
         return num_prefills < max_concurrent_prefills
-
-    def check_batch_tkv_limit(self, request: Request, new_req_tkv: int, running) -> bool:
-        """
-        Check whether adding a new sequence to the decode batch would immediately
-        violate Spyre's maximum batch volume constraint for chunked prefill.
-
-        In Spyre, the product of `batch_size` and the current `tkv`
-        (tokens-per-sequence) must not exceed the limit defined by
-        `VLLM_DT_MAX_BATCH_TKV_LIMIT`. This checks the immediate constraint
-        only, not future states.
-        """
-        # Calculate the current max tkv across all sequences
-        # new_req_tkv is already the current tkv for the new request
-        current_max_tkv = new_req_tkv
-
-        # Check current tkv for all running requests
-        n_blocks = math.floor(max(self.tkv, request.num_prompt_tokens) / self.block_size)
-        for req in running:
-            dec_req_tkv = n_blocks * self.block_size + req.num_computed_tokens % self.block_size
-            current_max_tkv = max(current_max_tkv, dec_req_tkv)
-
-        # Calculate batch size (including the new request if not already running)
-        batch_size = len(running)
-        if request not in running:
-            batch_size += 1
-
-        # Check immediate volume constraint
-        current_batch_tkv = batch_size * current_max_tkv
-        return current_batch_tkv <= self.max_batch_tkv_limit
 
     def _can_decode_all_requests(self, decoding_requests: list[Request]) -> bool:
         """
