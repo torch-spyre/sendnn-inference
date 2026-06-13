@@ -9,16 +9,6 @@
 
 # templates for reuse via YAML anchors
 _templates:
-
-  granite_41_3b_architecture: &granite_41_3b_architecture
-    model_type: granite
-    num_hidden_layers: 40
-    max_position_embeddings: 131072
-    hidden_size: 2560
-    vocab_size: 100352
-    num_key_value_heads: 8
-    num_attention_heads: 40
-
   granite_41_30b_architecture: &granite_41_30b_architecture
     model_type: granite
     num_hidden_layers: 64
@@ -272,23 +262,6 @@ models:
         max_model_len: 32768
         max_num_seqs: 32
         device_config: *granite_8b_tp4_device_config
-
-  # Granite 4.1 3B
-  ibm-granite/granite-4.1-3b:
-    architecture: *granite_41_3b_architecture
-    continuous_batching_configs:
-      - tp_size: 1
-        max_model_len: 3072
-        max_num_seqs: 16
-      - tp_size: 1
-        max_model_len: 8192
-        max_num_seqs: 4
-      - tp_size: 2
-        max_model_len: 8192
-        max_num_seqs: 4
-      - tp_size: 4
-        max_model_len: 32768
-        max_num_seqs: 32
 
   # Granite 4.1 30B
   ibm-granite/granite-4.1-30b:
