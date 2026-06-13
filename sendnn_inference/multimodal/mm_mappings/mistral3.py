@@ -175,86 +175,64 @@ class Mistral3MMUtils(MMUtilsBase):
         batch_mm_features: list,
         mm_device: str,
     ) -> list:
-        """Run vision encoder once for all requests and return per-request
-        embeddings each of shape [1, seq_len_i, emb_dim].
+        """Return per-request embeddings each of shape [1, seq_len_i, emb_dim].
 
-        All images' pixel_values are concatenated along dim 0 so the pixtral
-        vision tower runs in a single forward pass.  Text embeddings and image
-        token insertion are done per-request because each request has its own
-        prompt layout and sequence length.
+        Pixtral uses global self-attention over all patches as a single flat
+        sequence, so concatenating patches from N independent requests would
+        give O((N*P)²) attention cost — quadratically worse than N independent
+        calls of O(P²).  We therefore call prepare_inputs_for_generation once
+        per request (sequential, correct).  The batching benefit is the single
+        SHM broadcast round for all N embeddings instead of N separate rounds.
         """
-        mm_dtype = envs_spyre.SENDNN_INFERENCE_CPU_MM_DTYPE
-
-        # --- collect pixel_values and image_sizes across all requests ---
-        all_pixel_values: list[torch.Tensor] = []
-        all_image_sizes: list = []
-        # Track how many images came from each request so we can split later.
-        images_per_request: list[int] = []
-
-        for mm_features in batch_mm_features:
-            n_images = 0
-            for spec in mm_features:
-                mm_spec = spec.data
-                if mm_spec is None:
-                    continue
-                if isinstance(mm_spec, MultiModalKwargsItem) and "images" in mm_spec:
-                    mm_spec["pixel_values"] = mm_spec.pop("images")
-                if "pixel_values" not in mm_spec:
-                    raise KeyError("Mistral3 requires pixel_values")
-
-                pixel_values = mm_spec["pixel_values"].data
-                if pixel_values.ndim == 3:
-                    pixel_values = pixel_values.unsqueeze(0)
-                if pixel_values.device.type != mm_device or pixel_values.dtype != mm_dtype:
-                    pixel_values = pixel_values.to(device=mm_device, dtype=mm_dtype)
-                all_pixel_values.append(pixel_values)
-
-                if "image_sizes" in mm_spec:
-                    image_sizes_tensor = mm_spec["image_sizes"].data
-                    if image_sizes_tensor.ndim == 1:
-                        all_image_sizes.append(
-                            (image_sizes_tensor[0].item(), image_sizes_tensor[1].item())
-                        )
-                    else:
-                        all_image_sizes.extend(
-                            (h.item(), w.item()) for h, w in image_sizes_tensor
-                        )
-                else:
-                    all_image_sizes.extend(
-                        (img.shape[-2], img.shape[-1]) for img in pixel_values
-                    )
-                n_images += 1
-            images_per_request.append(n_images)
-
-        # Single vision-tower forward for all images combined.
-        combined_pixel_values = torch.cat(all_pixel_values, dim=0)
-        all_img_features = fms_model._get_image_features(
-            combined_pixel_values, all_image_sizes
-        )
-        # all_img_features is a list[Tensor], one entry per image.
-
-        # --- split back per request and build per-request embeddings ---
-        results: list[torch.Tensor] = []
-        feature_idx = 0
-        for req_idx, (input_ids_1d, n_images) in enumerate(
-            zip(batch_input_ids, images_per_request)
-        ):
-            req_img_features = all_img_features[feature_idx : feature_idx + n_images]
-            feature_idx += n_images
-
-            # Build per-request text embeddings and insert image features.
-            input_ids_2d = input_ids_1d.unsqueeze(0)  # [1, seq_len]
-            embeds = fms_model._get_text_embeddings(input_ids_2d, None)  # [1, seq_len, d]
-            embeds = fms_model._merge_multimodal_embeddings(
-                input_ids_2d,
-                embeds,
-                req_img_features,
-                dtype=embeds.dtype,
-                device=embeds.device,
+        results = []
+        for input_ids_1d, mm_features in zip(batch_input_ids, batch_mm_features):
+            embeds, _ = fms_model.prepare_inputs_for_generation(
+                iteration=0,
+                input_ids=input_ids_1d.unsqueeze(0),
+                kwargs=Mistral3MMUtils._build_fms_kwargs(mm_features, mm_device),
             )
             results.append(embeds)
-
         return results
+
+    @staticmethod
+    def _build_fms_kwargs(mm_features: list, mm_device: str) -> dict:
+        """Build the fms_kwargs dict consumed by prepare_inputs_for_generation."""
+        fms_kwargs: dict = {"use_cache": True}
+        if not mm_features:
+            return fms_kwargs
+
+        mm_dtype = envs_spyre.SENDNN_INFERENCE_CPU_MM_DTYPE
+        mm_spec = mm_features[0].data
+        if mm_spec is None:
+            return fms_kwargs
+
+        if isinstance(mm_spec, MultiModalKwargsItem) and "images" in mm_spec:
+            mm_spec["pixel_values"] = mm_spec.pop("images")
+        if "pixel_values" not in mm_spec:
+            raise KeyError("Mistral3 requires pixel_values")
+
+        pixel_values = mm_spec["pixel_values"].data
+        if pixel_values.ndim == 3:
+            pixel_values = pixel_values.unsqueeze(0)
+        if pixel_values.device.type != mm_device or pixel_values.dtype != mm_dtype:
+            pixel_values = pixel_values.to(device=mm_device, dtype=mm_dtype)
+        fms_kwargs["pixel_values"] = pixel_values
+
+        if "image_sizes" in mm_spec:
+            image_sizes_tensor = mm_spec["image_sizes"].data
+            if image_sizes_tensor.ndim == 1:
+                fms_kwargs["image_sizes"] = [
+                    (image_sizes_tensor[0].item(), image_sizes_tensor[1].item())
+                ]
+            else:
+                fms_kwargs["image_sizes"] = [
+                    (h.item(), w.item()) for h, w in image_sizes_tensor
+                ]
+        else:
+            fms_kwargs["image_sizes"] = [
+                (img.shape[-2], img.shape[-1]) for img in pixel_values
+            ]
+        return fms_kwargs
 
     def get_multimodal_token_id(self) -> int:
         return self.hf_config.image_token_index

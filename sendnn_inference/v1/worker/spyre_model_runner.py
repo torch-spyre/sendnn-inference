@@ -1500,6 +1500,9 @@ class ChunkedPrefillModelRunner(
         # Consume pre-computed embeddings if they were encoded in advance by
         # pre_encode_mm_requests().  With cached_mm_embeddings already set,
         # _prepare_chunked_prefill skips its encoding block entirely.
+        # Consume pre-computed embeddings if they were encoded in advance by
+        # pre_encode_mm_requests().  With cached_mm_embeddings already set,
+        # _prepare_chunked_prefill skips its encoding block entirely.
         if req_id in self.pending_mm_embeddings:
             req_state.cached_mm_embeddings = self.pending_mm_embeddings.pop(req_id)
             logger.debug(
@@ -1720,7 +1723,7 @@ class ChunkedPrefillModelRunner(
         if mm_encode_reqs:
             self.pre_encode_mm_requests(mm_encode_reqs)
 
-        # Initialize internal request states if this is the first chunk of a very new prefill
+        # Initialize internal request states if this is the first chunk of a new prefill
         self.maybe_setup_new_prefill(scheduler_output)
 
         model_input = self.prepare_model_input(scheduler_output)
