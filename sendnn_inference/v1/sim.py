@@ -264,9 +264,10 @@ class SimState:
             "mean_time_per_output_token_seconds": mean_tpot,
             "inter_token_latencies_seconds": itls,
         }
-        self._ensure_file()
-        assert self._fp is not None
-        self._fp.write(json.dumps(record) + "\n")
+        with self._lock:
+            self._ensure_file()
+            assert self._fp is not None
+            self._fp.write(json.dumps(record) + "\n")
 
 
 _sim_state: SimState | None = None
