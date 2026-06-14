@@ -242,6 +242,12 @@ class SpyrePlatform(Platform):
         if not is_decoder and not is_pooling:
             raise ValueError("Only the 'generate' and 'pooling' runners are supported")
 
+        if envs_spyre.SENDNN_INFERENCE_SIM_MODE and parallel_config.tensor_parallel_size != 1:
+            raise ValueError(
+                "SENDNN_INFERENCE_SIM_MODE only supports tensor_parallel_size=1, "
+                f"got {parallel_config.tensor_parallel_size}."
+            )
+
         if parallel_config.worker_cls == "auto":
             parallel_config.worker_cls = "sendnn_inference.v1.worker.spyre_worker.SpyreWorker"
 
