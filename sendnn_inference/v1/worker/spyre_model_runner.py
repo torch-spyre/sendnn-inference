@@ -723,12 +723,19 @@ class ChunkedPrefillModelRunner(
         # Initialize performance metric logger for tracking embedding times
         self.perf_logger = create_perf_metric_logger(rank=rank)
 
+        self._sim_state = None
+        self._mock_causal_lm = None
+        if envs_spyre.SENDNN_INFERENCE_SIM_MODE:
+            from sendnn_inference.v1.sim import MockSpyreCausalLM, get_sim_state
+
+            self._sim_state = get_sim_state()
+            self._mock_causal_lm = MockSpyreCausalLM
+
     def load_model(self) -> None:
         if envs_spyre.SENDNN_INFERENCE_SIM_MODE:
-            from sendnn_inference.v1.sim import MockSpyreCausalLM
-
             logger.info("SENDNN_INFERENCE_SIM_MODE=1: loading MockSpyreCausalLM (no-op forward)")
-            self._model = MockSpyreCausalLM(vllm_config=self.vllm_config)  # ty: ignore[invalid-assignment]
+            assert self._mock_causal_lm is not None
+            self._model = self._mock_causal_lm(vllm_config=self.vllm_config)  # ty: ignore[invalid-assignment]
         else:
             self._model = SpyreCausalLM(
                 vllm_config=self.vllm_config,
@@ -1466,18 +1473,13 @@ class ChunkedPrefillModelRunner(
             req_state.num_computed_tokens = num_computed_tokens
 
         if scheduler_output.finished_req_ids:
-            sim = None
-            if envs_spyre.SENDNN_INFERENCE_SIM_MODE:
-                from sendnn_inference.v1.sim import get_sim_state
-
-                sim = get_sim_state()
             for req_id in scheduler_output.finished_req_ids:
-                if sim is not None:
+                if self._sim_state is not None:
                     finished_state = self.requests.get(req_id)
                     num_prompt_tokens = (
                         len(finished_state.prompt_token_ids) if finished_state is not None else 0
                     )
-                    sim.finalize_and_write(
+                    self._sim_state.finalize_and_write(
                         req_id=req_id,
                         num_prompt_tokens=num_prompt_tokens,
                     )
@@ -1578,10 +1580,8 @@ class ChunkedPrefillModelRunner(
                 is_prompt=model_input.is_prompt,
             )
 
-        if envs_spyre.SENDNN_INFERENCE_SIM_MODE:
-            from sendnn_inference.v1.sim import get_sim_state
-
-            get_sim_state().record_step(
+        if self._sim_state is not None:
+            self._sim_state.record_step(
                 is_prompt=model_input.is_prompt,
                 prefill_ms=envs_spyre.SENDNN_INFERENCE_SIM_PREFILL_MS,
                 decode_ms=envs_spyre.SENDNN_INFERENCE_SIM_DECODE_MS,
