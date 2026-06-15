@@ -1086,6 +1086,9 @@ class ChunkedPrefillModelRunner(
                 #   broadcast B — non-rank-0 has finished reading, rank 0 can unlink
 
                 data_shm = None
+                # Initialise meta before the try block so it is always defined
+                # in the finally clause even if rank 0 raises before assigning it.
+                meta = torch.zeros(4, dtype=torch.int64)
 
                 try:
                     if self.rank == 0:
@@ -1100,9 +1103,8 @@ class ChunkedPrefillModelRunner(
                             ],
                             dtype=torch.int64,
                         )
-                    else:
-                        meta = torch.zeros(4, dtype=torch.int64)
 
+                    # Broadcast A: rank 0 signals SHM is ready + shares shape/dtype.
                     torch.distributed.broadcast(meta, src=0)
 
                     if self.rank != 0:
@@ -1110,8 +1112,13 @@ class ChunkedPrefillModelRunner(
                         dtype = _MM_EMBED_IDX_TO_DTYPE[int(meta[3])]
                         full_embeds = read_embeddings(req_id, shape, dtype)
 
-                    torch.distributed.broadcast(meta, src=0)
                 finally:
+                    # Broadcast B: If read_embeddings (or anything else) raises on
+                    # any rank after broadcast A, that rank would skip broadcast B
+                    # and all other ranks would hang forever at this collective.
+                    # By placing it in finally it is always called, even on the
+                    # exception path.
+                    torch.distributed.broadcast(meta, src=0)
                     if data_shm is not None:
                         cleanup_embeddings(data_shm)
 
