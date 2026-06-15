@@ -310,6 +310,30 @@ models:
           - prompt_len: 512
             batch_size: 64
 
+  Qwen/Qwen3-Embedding-0.6B:
+    architecture:
+      model_type: qwen3
+      num_hidden_layers: 28
+      vocab_size: 151669
+
+    static_batching_configs:
+      - tp_size: 1
+        warmup_shapes:
+          - prompt_len: 512
+            batch_size: 64
+
+  Qwen/Qwen3-Embedding-4B:
+    architecture:
+      model_type: qwen3
+      num_hidden_layers: 36
+      vocab_size: 151665
+
+    static_batching_configs:
+      - tp_size: 1
+        warmup_shapes:
+          - prompt_len: 512
+            batch_size: 64
+
   # Other supported models (static batching only)
   intfloat/multilingual-e5-large:
     architecture:
