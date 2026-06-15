@@ -167,7 +167,7 @@ class LogitProcessorWrapper(LogitsProcessor):
                 # Max: I think we can't assume that the request will
                 # be here because it could be a cancelled request that
                 # never made it into the batch.
-                self._saved.pop(req_id, 0)
+                self._saved.pop(req_id, None)
 
             for adx, bdx, _ in batch_update.moved:
                 update_called[adx], update_called[bdx] = update_called[bdx], update_called[adx]
