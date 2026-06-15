@@ -393,33 +393,11 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
 
         # Check new requests to prefill
         elif len(self.waiting) > 0:
-            # Try to promote grammar-waiting requests whose FSM is now
-            # ready, so we correctly classify ready vs not-ready requests.
-            for r in list(self.waiting):
-                if r.status == RequestStatus.WAITING_FOR_STRUCTURED_OUTPUT_GRAMMAR:
-                    so_req = r.structured_output_request
-                    if so_req and so_req.grammar:
-                        r.status = RequestStatus.WAITING
-
-            ready_to_prefill = [
-                r
-                for r in self.waiting
-                if r.status != RequestStatus.WAITING_FOR_STRUCTURED_OUTPUT_GRAMMAR  # type: ignore[attr-defined]
-            ]
-            if ready_to_prefill:
-                new_prefill_candidates = list(self.waiting)
-                # Hide current decodes from the scheduler
-                running_holdback = self.running
-                self.running = []
-                self.previous_step_was_prefill = True
-            else:
-                # Grammar not yet initialized for any waiting request.
-                # Return them to holdback so the base scheduler doesn't
-                # try to promote and schedule them alongside decodes.
-                while self.waiting:
-                    holdback_queue.appendleft(self.waiting.pop())
-                running_holdback = []
-                self.previous_step_was_prefill = False
+            new_prefill_candidates = list(self.waiting)
+            # Hide current decodes from the scheduler
+            running_holdback = self.running
+            self.running = []
+            self.previous_step_was_prefill = True
         else:
             self.previous_step_was_prefill = False
             running_holdback = []
@@ -482,11 +460,30 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
 
         return outputs
 
+    def _is_request_structured_output_grammar_ready(self, request: Request) -> bool:
+        """
+        Check if a request structured output grammar is ready.
+        """
+        # If the request is waiting for structured output grammar, check if it's ready
+        if request.status == RequestStatus.WAITING_FOR_STRUCTURED_OUTPUT_GRAMMAR:
+            so_req = request.structured_output_request
+            if so_req and so_req.grammar:
+                # Grammar is ready, promote the request
+                request.status = RequestStatus.WAITING
+                return True
+            # Grammar not ready yet
+            return False
+        # Request is ready (not waiting for grammar)
+        return True
+
     def can_schedule_prefill(self, request: Request) -> bool:
         # running and waiting queues are both empty, we can start a new batch
         # which can always be scheduled
         if len(self.running) + len(self.waiting) == 0:
             return True
+
+        if not self._is_request_structured_output_grammar_ready(request):
+            return False
 
         if not self._has_scheduling_priority(request):
             return False
