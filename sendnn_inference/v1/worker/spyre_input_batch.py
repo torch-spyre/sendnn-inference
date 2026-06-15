@@ -489,7 +489,7 @@ class SamplingInputBatch(BaseInputBatch[SamplingRequestState]):
                 (tmp_dense, tmp_dense + 1, MoveDirectionality.UNIDIRECTIONAL)
             )
 
-            self.req_output_token_ids.pop(dense_index)
+        self.req_output_token_ids.pop(dense_index)
         self._unregister_sampling_params(req_id, req_index)
 
     def resume_request(self, request: "SamplingRequestState") -> None:
