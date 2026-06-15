@@ -855,6 +855,126 @@ class ChunkedPrefillModelRunner(
     def _prepare_prompt(self, new_request_data: list[NewRequestData]) -> SamplingForwardInputs:
         raise NotImplementedError
 
+    def _compute_and_cache_mm_embeddings(
+        self,
+        request: SamplingRequestState,
+        req_id: str,
+        full_input_tokens: torch.Tensor,
+        mm_features: Any,
+    ) -> None:
+        """Compute MM embeddings on rank 0 and distribute to all TP ranks.
+
+        For TP > 1 the embeddings are shared via POSIX shared memory with two
+        broadcast collectives acting as sync signals (A = data ready, B = read
+        done).  Both broadcasts are placed in a ``finally`` block so they
+        always execute — even when an exception is raised — preventing any rank
+        from hanging at a collective that the failing rank never reaches.
+
+        A zero ``meta`` tensor is the failure sentinel: rank 0 only writes a
+        non-zero ``meta`` on success; non-rank-0 workers skip the SHM read when
+        they receive all-zeros.
+
+        On completion, ``request.cached_mm_embeddings`` is set on every rank.
+        """
+        if self.parallel_config.world_size > 1:
+            data_shm = None
+            full_embeds = None
+            meta = torch.zeros(4, dtype=torch.int64)
+
+            try:
+                if self.rank == 0:
+                    # Embedding computation is inside the try so that a failure
+                    # here still reaches the finally → broadcast A → unblocks
+                    # the other ranks that are waiting on broadcast A.
+                    t0 = time.time()
+                    full_embeds = self.model.get_maybe_mm_embeddings(
+                        full_input_tokens,
+                        mm_features=mm_features,
+                        is_decode=False,
+                    )
+                    t_elapsed = time.time() - t0
+                    logger.info(
+                        "maybe_mm_embedding processing time: %.2fms", (t_elapsed * 1000)
+                    )
+                    self.perf_logger.log(
+                        "get_mm_embeddings_time_ms",
+                        t_elapsed * 1000,
+                        phase="prefill",
+                        has_mm_features=True,
+                        req_id=req_id,
+                    )
+                    full_embeds = full_embeds.cpu().contiguous()
+                    data_shm = write_embeddings(full_embeds, req_id)
+                    # Only set meta to a non-zero value on success; zeros = failure.
+                    meta = torch.tensor(
+                        [
+                            full_embeds.shape[0],
+                            full_embeds.shape[1],
+                            full_embeds.shape[2],
+                            dtype_to_idx(full_embeds.dtype),
+                        ],
+                        dtype=torch.int64,
+                    )
+
+            finally:
+                # ── Broadcast A (always) ──────────────────────────────────────
+                # Carries valid shape/dtype on success, all-zeros on failure.
+                # Must be in finally so it is sent even when rank 0 raises above.
+                torch.distributed.broadcast(meta, src=0)
+
+                # Non-rank-0 reads from SHM only if meta signals success.
+                # Wrapped in try/except so a read failure does not stop
+                # broadcast B from executing on this rank.
+                if self.rank != 0:
+                    try:
+                        if meta.any():
+                            shape = (int(meta[0]), int(meta[1]), int(meta[2]))
+                            dtype = idx_to_dtype(int(meta[3]))
+                            full_embeds = read_embeddings(req_id, shape, dtype)
+                        # else: full_embeds stays None — rank 0 failed; the
+                        # exception will propagate from rank 0 separately.
+                    except Exception as exc:
+                        logger.error(
+                            "[rank %d] SHM read failed for req '%s': %s",
+                            self.rank, req_id, exc,
+                        )
+                        full_embeds = None
+
+                # ── Broadcast B (always) ──────────────────────────────────────
+                # Symmetric cleanup barrier. Must be in finally for the same
+                # reason as broadcast A.
+                torch.distributed.broadcast(meta, src=0)
+                if data_shm is not None:
+                    cleanup_embeddings(data_shm)
+        else:
+            # TP = 1: no sharing needed, compute directly on rank 0.
+            full_embeds = None
+            if self.rank == 0:
+                t0 = time.time()
+                full_embeds = self.model.get_maybe_mm_embeddings(
+                    full_input_tokens,
+                    mm_features=mm_features,
+                    is_decode=False,
+                )
+                t_elapsed = time.time() - t0
+                logger.info(
+                    "maybe_mm_embedding processing time: %.2fms", (t_elapsed * 1000)
+                )
+                self.perf_logger.log(
+                    "get_mm_embeddings_time_ms",
+                    t_elapsed * 1000,
+                    phase="prefill",
+                    has_mm_features=True,
+                    req_id=req_id,
+                )
+
+        request.cached_mm_embeddings = full_embeds
+        logger.debug(
+            "Cached full multimodal embeddings for request '%s' (rank %d)",
+            req_id,
+            self.rank,
+        )
+
     def _prepare_chunked_prefill(self, req_id: str) -> SamplingForwardInputs:
         """
         Cases / Scenarios for the chunked prefill with right padding.
@@ -1052,115 +1172,7 @@ class ChunkedPrefillModelRunner(
             full_input_tokens = torch.tensor(
                 prompt_token_ids, dtype=torch.int64, device=self.device
             ).unsqueeze(0)
-
-            if self.parallel_config.world_size > 1:
-                # Share rank 0's MM embeddings with all other ranks via SHM.
-                #
-                # Failure-safety invariant: BOTH broadcast A and broadcast B must
-                # execute on every rank regardless of any exception, otherwise the
-                # failing rank leaves the others hanging at that collective forever.
-                #
-                # meta = all-zeros is a failure sentinel: rank 0 only writes valid
-                # shape/dtype into meta when it succeeds; non-rank-0 checks before
-                # attempting the SHM read.
-
-                data_shm = None
-                full_embeds = None
-                meta = torch.zeros(4, dtype=torch.int64)
-
-                try:
-                    if self.rank == 0:
-                        # Embedding computation is inside the try so that a failure
-                        # here still reaches the finally → broadcast A → unblocks
-                        # the other ranks that are waiting on broadcast A.
-                        t0 = time.time()
-                        full_embeds = self.model.get_maybe_mm_embeddings(
-                            full_input_tokens,
-                            mm_features=mm_features,
-                            is_decode=False,
-                        )
-                        t_elapsed = time.time() - t0
-                        logger.info(
-                            "maybe_mm_embedding processing time: %.2fms", (t_elapsed * 1000)
-                        )
-                        self.perf_logger.log(
-                            "get_mm_embeddings_time_ms",
-                            t_elapsed * 1000,
-                            phase="prefill",
-                            has_mm_features=True,
-                            req_id=req_id,
-                        )
-                        full_embeds = full_embeds.cpu().contiguous()
-                        data_shm = write_embeddings(full_embeds, req_id)
-                        # Only set meta to a non-zero value on success; zeros = failure.
-                        meta = torch.tensor(
-                            [
-                                full_embeds.shape[0],
-                                full_embeds.shape[1],
-                                full_embeds.shape[2],
-                                dtype_to_idx(full_embeds.dtype),
-                            ],
-                            dtype=torch.int64,
-                        )
-
-                finally:
-                    # ── Broadcast A (always) ─────────────────────────────────────
-                    # Carries valid shape/dtype on success, all-zeros on failure.
-                    # Must be in finally so it is sent even when rank 0 raises above.
-                    torch.distributed.broadcast(meta, src=0)
-
-                    # Non-rank-0 reads from SHM only if meta signals success.
-                    # Wrapped in try/except so a read failure does not stop
-                    # broadcast B from executing on this rank.
-                    if self.rank != 0:
-                        try:
-                            if meta.any():
-                                shape = (int(meta[0]), int(meta[1]), int(meta[2]))
-                                dtype = idx_to_dtype(int(meta[3]))
-                                full_embeds = read_embeddings(req_id, shape, dtype)
-                            # else: full_embeds stays None — rank 0 failed; the
-                            # exception will propagate from rank 0 separately.
-                        except Exception as exc:
-                            logger.error(
-                                "[rank %d] SHM read failed for req '%s': %s",
-                                self.rank, req_id, exc,
-                            )
-                            full_embeds = None
-
-                    # ── Broadcast B (always) ─────────────────────────────────────
-                    # Symmetric cleanup barrier. Must be in finally for the same
-                    # reason as broadcast A.
-                    torch.distributed.broadcast(meta, src=0)
-                    if data_shm is not None:
-                        cleanup_embeddings(data_shm)
-            else:
-                # TP = 1: no sharing needed, compute directly.
-                full_embeds = None
-                if self.rank == 0:
-                    t0 = time.time()
-                    full_embeds = self.model.get_maybe_mm_embeddings(
-                        full_input_tokens,
-                        mm_features=mm_features,
-                        is_decode=False,
-                    )
-                    t_elapsed = time.time() - t0
-                    logger.info(
-                        "maybe_mm_embedding processing time: %.2fms", (t_elapsed * 1000)
-                    )
-                    self.perf_logger.log(
-                        "get_mm_embeddings_time_ms",
-                        t_elapsed * 1000,
-                        phase="prefill",
-                        has_mm_features=True,
-                        req_id=req_id,
-                    )
-
-            request.cached_mm_embeddings = full_embeds
-            logger.debug(
-                "Cached full multimodal embeddings for request '%s' (rank %d)",
-                req_id,
-                self.rank,
-            )
+            self._compute_and_cache_mm_embeddings(request, req_id, full_input_tokens, mm_features)
 
         # Slice the cached embeddings for this chunk
         if request.cached_mm_embeddings is not None:
