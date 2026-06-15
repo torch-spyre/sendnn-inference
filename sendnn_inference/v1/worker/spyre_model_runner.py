@@ -893,9 +893,7 @@ class ChunkedPrefillModelRunner(
                         is_decode=False,
                     )
                     t_elapsed = time.time() - t0
-                    logger.info(
-                        "maybe_mm_embedding processing time: %.2fms", (t_elapsed * 1000)
-                    )
+                    logger.info("maybe_mm_embedding processing time: %.2fms", (t_elapsed * 1000))
                     self.perf_logger.log(
                         "get_mm_embeddings_time_ms",
                         t_elapsed * 1000,
@@ -936,7 +934,9 @@ class ChunkedPrefillModelRunner(
                     except Exception as exc:
                         logger.error(
                             "[rank %d] SHM read failed for req '%s': %s",
-                            self.rank, req_id, exc,
+                            self.rank,
+                            req_id,
+                            exc,
                         )
                         full_embeds = None
 
@@ -957,9 +957,7 @@ class ChunkedPrefillModelRunner(
                     is_decode=False,
                 )
                 t_elapsed = time.time() - t0
-                logger.info(
-                    "maybe_mm_embedding processing time: %.2fms", (t_elapsed * 1000)
-                )
+                logger.info("maybe_mm_embedding processing time: %.2fms", (t_elapsed * 1000))
                 self.perf_logger.log(
                     "get_mm_embeddings_time_ms",
                     t_elapsed * 1000,
