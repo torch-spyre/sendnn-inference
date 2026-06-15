@@ -40,9 +40,9 @@ from sendnn_inference.platform import SpyrePlatform
 from sendnn_inference.utils import exact_div
 from sendnn_inference.v1.sample.spyre_logits_processor import build_logitsprocs_for_cb
 from sendnn_inference.v1.worker.mm_shared_memory import (
-    _DTYPE_TO_IDX as _MM_EMBED_DTYPE_TO_IDX,
-    _IDX_TO_DTYPE as _MM_EMBED_IDX_TO_DTYPE,
     cleanup_embeddings,
+    dtype_to_idx,
+    idx_to_dtype,
     read_embeddings,
     write_embeddings,
 )
@@ -1099,7 +1099,7 @@ class ChunkedPrefillModelRunner(
                                 full_embeds.shape[0],
                                 full_embeds.shape[1],
                                 full_embeds.shape[2],
-                                _MM_EMBED_DTYPE_TO_IDX[full_embeds.dtype],
+                                dtype_to_idx(full_embeds.dtype),
                             ],
                             dtype=torch.int64,
                         )
@@ -1109,7 +1109,7 @@ class ChunkedPrefillModelRunner(
 
                     if self.rank != 0:
                         shape = (int(meta[0]), int(meta[1]), int(meta[2]))
-                        dtype = _MM_EMBED_IDX_TO_DTYPE[int(meta[3])]
+                        dtype = idx_to_dtype(int(meta[3]))
                         full_embeds = read_embeddings(req_id, shape, dtype)
 
                 finally:

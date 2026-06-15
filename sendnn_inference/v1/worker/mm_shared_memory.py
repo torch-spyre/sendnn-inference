@@ -23,6 +23,20 @@ _DTYPE_TO_IDX: dict[torch.dtype, int] = {
 _IDX_TO_DTYPE: dict[int, torch.dtype] = {v: k for k, v in _DTYPE_TO_IDX.items()}
 
 
+def dtype_to_idx(dtype: torch.dtype) -> int:
+    """Encode a torch dtype as a compact integer for the broadcast metadata tensor."""
+    if dtype not in _DTYPE_TO_IDX:
+        raise ValueError(f"Unsupported dtype for SHM transfer: {dtype}")
+    return _DTYPE_TO_IDX[dtype]
+
+
+def idx_to_dtype(idx: int) -> torch.dtype:
+    """Decode a compact integer back to the corresponding torch dtype."""
+    if idx not in _IDX_TO_DTYPE:
+        raise ValueError(f"Unknown dtype index: {idx}")
+    return _IDX_TO_DTYPE[idx]
+
+
 def _shm_name(req_id: str) -> str:
     """Generate a short, deterministic POSIX SHM name for a request.
 
@@ -96,6 +110,17 @@ def cleanup_embeddings(data_shm: SharedMemory) -> None:
     Safe to call even if the block was already cleaned up — exceptions are
     logged but not re-raised.
     """
+    # Deregister from Python's resource tracker *before* touching the file.
+    # SharedMemory.close() only calls resource_tracker.unregister() at the
+    # very end; if os.close(fd) or mmap.close() raises earlier and we swallow
+    # that exception, unregister() is never reached.  At process shutdown the
+    # tracker then warns "1 leaked shared_memory" and tries to unlink a file
+    # that is already gone — the "[Errno 2] No such file" message.
+    try:
+        from multiprocessing import resource_tracker
+        resource_tracker.unregister(data_shm._name, "shared_memory")
+    except Exception:
+        pass
     try:
         data_shm.unlink()
     except Exception as exc:
