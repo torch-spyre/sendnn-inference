@@ -110,17 +110,6 @@ def cleanup_embeddings(data_shm: SharedMemory) -> None:
     Safe to call even if the block was already cleaned up — exceptions are
     logged but not re-raised.
     """
-    # Deregister from Python's resource tracker *before* touching the file.
-    # SharedMemory.close() only calls resource_tracker.unregister() at the
-    # very end; if os.close(fd) or mmap.close() raises earlier and we swallow
-    # that exception, unregister() is never reached.  At process shutdown the
-    # tracker then warns "1 leaked shared_memory" and tries to unlink a file
-    # that is already gone — the "[Errno 2] No such file" message.
-    try:
-        from multiprocessing import resource_tracker
-        resource_tracker.unregister(data_shm._name, "shared_memory")
-    except Exception:
-        pass
     try:
         data_shm.unlink()
     except Exception as exc:
