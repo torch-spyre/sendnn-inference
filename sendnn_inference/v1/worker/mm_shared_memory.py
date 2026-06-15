@@ -5,6 +5,7 @@ them here; non-zero ranks read after synchronisation in the model runner.
 This avoids running the (CPU-bound) vision encoder world_size times per request.
 """
 
+import hashlib
 from multiprocessing.shared_memory import SharedMemory
 
 import torch
@@ -40,12 +41,21 @@ def idx_to_dtype(idx: int) -> torch.dtype:
 def _shm_name(req_id: str) -> str:
     """Generate a short, deterministic POSIX SHM name for a request.
 
-    Linux NAME_MAX is 255; the shortest common constraint (macOS) is 31 chars
-    for the full '/name' string, leaving 29 for the name itself.  We use
-    'sm' + 20 hex chars + 1-char suffix = 23 chars, which is safe everywhere.
+    Uses an MD5 hash of the *full* req_id so that requests which share a
+    common prefix (e.g. all benchmark requests in a run share the
+    ``chatcmpl-bench-<uuid>-`` prefix) still get distinct SHM names.
+
+    Truncating the req_id (the previous approach) caused silent collisions:
+    ``chatcmpl-bench-34e3ed2d-1-…`` and ``chatcmpl-bench-34e3ed2d-39-…``
+    both hash to the same 20-char prefix, so every request in the benchmark
+    wrote to the same SHM segment — corrupting each other's embeddings.
+
+    Linux NAME_MAX is 255; macOS requires ≤ 30 chars for the name itself
+    (the kernel prefixes it with ``/``).  'sm' + 16 hex chars = 18 chars,
+    safely within every platform's limit.
     """
-    safe_id = req_id.replace("-", "")[:20]
-    return f"sm{safe_id}"
+    digest = hashlib.md5(req_id.encode(), usedforsecurity=False).hexdigest()[:16]
+    return f"sm{digest}"
 
 
 def write_embeddings(tensor: torch.Tensor, req_id: str) -> SharedMemory:
