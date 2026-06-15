@@ -26,12 +26,6 @@ logger = init_logger(__name__)
 assert SpyrePlatform.get_block_size() == 64
 
 
-def round_up_to_block_size(n: int) -> int:
-    # Helper function to round up to the nearest block size
-    # Uses bitwise alignment for better performance
-    return (n + 63) & ~63
-
-
 class SpyreScheduler(Scheduler):
     """Base class inheriting from the V1 scheduler to support static
     and continuous batching respecting AIU Spyre constraints."""
@@ -606,15 +600,12 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         """
         decoding_requests = [r for r in self.running if r not in self.ongoing_prefills]
 
-        had_to_remove = False
         initial_had_requests = len(decoding_requests) > 0
 
         # If we can't decode all requests due to batch TKV limits, iteratively
         # remove requests with the fewest decoded tokens and pause them until
         # the remaining batch fits within constraints
         while not self._can_decode_all_requests(decoding_requests):
-            had_to_remove = True
-
             # TODO we should test different removal logics: longest request, optimize padding
             # Remove the request with the fewest decoded tokens
             # Decoded tokens = num_computed_tokens - num_prompt_tokens
@@ -629,26 +620,21 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         # It shouldn't be possible to remove all requests if we started with some
         assert not initial_had_requests or len(decoding_requests) > 0
 
-        # If we didn't have to remove any requests, try to add back previously
-        # paused requests (oldest first) as long as they fit within constraints
-        if not had_to_remove:
-            while self.paused_decoding_requests:
-                # Try adding the oldest paused request (first in list)
-                request_to_add = self.paused_decoding_requests[0]
-                test_requests = decoding_requests + [request_to_add]
+        # Check if any paused request can be added back.
+        for i in range(len(self.paused_decoding_requests) - 1, -1, -1):
+            # Try adding the oldest paused request (first in list)
+            request_to_add = self.paused_decoding_requests[i]
+            test_requests = decoding_requests + [request_to_add]
 
-                if self._can_decode_all_requests(test_requests):
-                    # Can add this request back
-                    self.paused_decoding_requests.pop(0)
-                    self.running.append(request_to_add)
-                    decoding_requests.append(request_to_add)
-                    logger.info(
-                        "Request %s resumed (batch TKV capacity available).",
-                        request_to_add.request_id,
-                    )
-                else:
-                    # Can't add any more requests
-                    break
+            if self._can_decode_all_requests(test_requests):
+                # Can add this request back
+                self.paused_decoding_requests.pop(i)
+                self.running.append(request_to_add)
+                decoding_requests.append(request_to_add)
+                logger.info(
+                    "Request %s resumed (batch TKV capacity available).",
+                    request_to_add.request_id,
+                )
 
     def predict_next_decode_tkv(self, running_requests: list[Request]) -> int:
         """

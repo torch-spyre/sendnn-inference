@@ -490,7 +490,7 @@ class SamplingInputBatch(BaseInputBatch[SamplingRequestState]):
             )
 
             self.req_output_token_ids.pop(dense_index)
-            self._unregister_sampling_params(req_id, req_index)
+        self._unregister_sampling_params(req_id, req_index)
 
     def resume_request(self, request: "SamplingRequestState") -> None:
         """Restore a previously paused request to the active batch.
