@@ -61,6 +61,12 @@ def mocked_scheduler():
     scheduler._get_required_blocks = lambda x, *args, **kwargs: (0, 0)
     scheduler._get_free_blocks = lambda *args, **kwargs: 1
 
+    # Stub kv_cache_manager.get_computed_blocks → (None, 0) so
+    # _current_chunk_token_threshold treats every candidate as a fresh prefill
+    # with no prefix-cache hit.
+    scheduler.kv_cache_manager = Mock()
+    scheduler.kv_cache_manager.get_computed_blocks.return_value = (None, 0)
+
     # Mock the base scheduler's schedule method and can_schedule_prefill,
     # but ChunkedPrefillSpyreScheduler.schedule uses the code implementation
     mock_output = Mock()
