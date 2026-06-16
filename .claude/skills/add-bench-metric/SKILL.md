@@ -14,7 +14,7 @@ If `$ARGUMENTS` is empty, ask the user what they want to measure before doing an
 
 Every custom bench metric travels through five layers (all scheduler-process-side):
 
-```
+```text
 schedule()  →  SpyreBenchState (accumulate raw values)
   →  _free_request()  →  kv_transfer_params["__spyre__"]  (ZMQ to API server)
   →  patch_serving.py SSE injection  (into final usage SSE chunk)
@@ -23,6 +23,7 @@ schedule()  →  SpyreBenchState (accumulate raw values)
 ```
 
 **Key architecture facts:**
+
 - All timing is measured in the scheduler.
 - `SpyreBenchState` is the single source of truth for per-request bench state. It is `None` when `SENDNN_INFERENCE_BENCH_METRICS_ENABLED` is off; every access must be guarded by `if self._bench is not None:`.
 - Timing works by bracket: at the **end** of `schedule()`, a step-start timestamp (`prefill_step_start` or `decode_step_start`) is written into `_bench`. At the **start** of the next `update_from_output()`, the duration is computed from that timestamp and `time.time()`.
@@ -203,52 +204,54 @@ Use a `spyre_` prefix so the key is clearly SenDNN-owned in the vllm result JSON
 
 4. **Update `test_scheduler_bench_metrics_accumulated`**: This is an integration test that runs a real engine and captures the bench state just before `_free_request` clears it. The capture (`_capturing_free`) and the post-run empty-dict check are both dynamic — they iterate over `dataclasses.fields(bench)` and need no changes. What you **do** need to add is a value assertion for your new field in the `for req_id in ("0", "1"):` block, following the pattern of the existing ones. For example, for a new list-per-step field:
 
-```python
-# In the for req_id in ("0", "1"): block:
-assert len(info["my_new_metric"]) >= 1, (
-    f"req {req_id}: expected ≥1 my_new_metric entry, got {info['my_new_metric']}"
-)
-for val in info["my_new_metric"]:
-    assert isinstance(val, float) and val > 0, f"req {req_id}: non-positive my_new_metric {val}"
-```
+    ```python
+    # In the for req_id in ("0", "1"): block:
+    assert len(info["my_new_metric"]) >= 1, (
+        f"req {req_id}: expected ≥1 my_new_metric entry, got {info['my_new_metric']}"
+    )
+    for val in info["my_new_metric"]:
+        assert isinstance(val, float) and val > 0, f"req {req_id}: non-positive my_new_metric {val}"
+    ```
 
-For a scalar field (`arrival_ts`-style), check `is not None`:
-```python
-assert info["my_scalar_field"] is not None, f"req {req_id}: my_scalar_field not set"
-```
+    For a scalar field (`arrival_ts`-style), check `is not None`:
+
+    ```python
+    assert info["my_scalar_field"] is not None, f"req {req_id}: my_scalar_field not set"
+    ```
 
 5. **Update `test_get_and_clear_returns_correct_dict`**: The test is driven by two dicts defined just above it — update both:
 
    - **`_BENCH_FIXTURE`** — add an entry for your new `SpyreBenchState` field. This dict must cover **every** field of `SpyreBenchState` (dict and scalar alike); `test_bench_fixture_covers_all_per_req_fields` compares `_BENCH_FIXTURE.keys()` against `dataclasses.fields(bench)` and fails if they diverge. For dict fields the value is used as the per-request payload (`bench.<field>["r0"] = value`); for scalar fields it is set directly (`setattr(bench, field, value)`).
    - **`_EXPECTED_RESULT`** — add an entry `"<result key>": <expected value>`. `test_get_and_clear_result_keys` asserts `result.keys() == _EXPECTED_RESULT.keys()`, so it will fail if the returned dict has any extra or missing keys.
 
-Example:
-```python
-# In FAKE_METRICS entry 1:
-"my_new_metric": [0.001, 0.002],
+    Example:
 
-# In test_inject_adds_spyre_keys:
-assert "spyre_my_new_metric" in data
+    ```python
+    # In FAKE_METRICS entry 1:
+    "my_new_metric": [0.001, 0.002],
 
-# In test_inject_values_correct:
-assert data["spyre_my_new_metric"] == [[0.001, 0.002], [0.003]]
+    # In test_inject_adds_spyre_keys:
+    assert "spyre_my_new_metric" in data
 
-# In the sentinel dicts (dict field example):
-_BENCH_FIXTURE: dict[str, Any] = {
-    ...,
-    "my_new_metric": [0.001, 0.002],  # NEW — dict field, keyed by req_id at test time
-}
-_EXPECTED_RESULT: dict[str, Any] = {
-    ...,
-    "my_new_metric_s": pytest.approx([0.001, 0.002]),  # NEW — key in returned dict
-}
+    # In test_inject_values_correct:
+    assert data["spyre_my_new_metric"] == [[0.001, 0.002], [0.003]]
 
-# Scalar field example (e.g. a single float per request stored directly):
-_BENCH_FIXTURE: dict[str, Any] = {
-    ...,
-    "my_scalar_field": 42.0,  # NEW — set directly via setattr
-}
-```
+    # In the sentinel dicts (dict field example):
+    _BENCH_FIXTURE: dict[str, Any] = {
+        ...,
+        "my_new_metric": [0.001, 0.002],  # NEW — dict field, keyed by req_id at test time
+    }
+    _EXPECTED_RESULT: dict[str, Any] = {
+        ...,
+        "my_new_metric_s": pytest.approx([0.001, 0.002]),  # NEW — key in returned dict
+    }
+
+    # Scalar field example (e.g. a single float per request stored directly):
+    _BENCH_FIXTURE: dict[str, Any] = {
+        ...,
+        "my_scalar_field": 42.0,  # NEW — set directly via setattr
+    }
+    ```
 
 6. **Update `test_print_spyre_section_output`** (if you added a new `_section()` call): Add `out.assert_contains("<SectionHeader>")` for the section separator, and add the label string (third argument to `_section()`) to the `for label in (...)` loop so mean/median/percentile lines are asserted. `assert_all_lines_covered()` is called at the end of the test and will fail if any output line was not covered by an assertion — the error message lists the exact uncovered lines.
 
