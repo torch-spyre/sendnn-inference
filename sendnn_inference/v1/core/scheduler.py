@@ -604,16 +604,6 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         # collection for better performance.
         outputs._spyre_grammar_output = self.get_grammar_bitmask(outputs)  # type: ignore[attr-defined]
 
-        # Inject scheduler-side step-start timestamps for accurate timing measurement
-        if self._bench is not None:
-            now = time.time()
-            if self.previous_step_was_prefill:
-                self._bench.prefill_step_start = now
-                self._bench.decode_step_start = None
-            else:
-                self._bench.decode_step_start = now
-                self._bench.prefill_step_start = None
-
         # As blocks are allocated, we discount them from the reserved blocks.
         # For prefill blocks we must first subtract the cached blocks.
         free_blocks = self._get_free_blocks()
@@ -639,6 +629,16 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             assert self.reserved_blocks[req_id] >= 0
 
         assert 0 <= self.total_reserved_blocks <= free_blocks
+
+        # Inject step-start timestamps for timing measurement
+        if self._bench is not None:
+            now = time.time()
+            if self.previous_step_was_prefill:
+                self._bench.prefill_step_start = now
+                self._bench.decode_step_start = None
+            else:
+                self._bench.decode_step_start = now
+                self._bench.prefill_step_start = None
 
         return outputs
 
