@@ -359,7 +359,7 @@ def main() -> None:
                 candidates = []
 
         if candidates:
-            json_path = Path(max(candidates, key=os.path.getmtime))
+            json_path = Path(str(max(candidates, key=os.path.getmtime)))
             html_path = json_path.with_name(json_path.stem + "_detailed_timeline.html")
             decode_thresholds_str = getattr(args, "decode_thresholds", None)
             # Parse comma-separated milliseconds and convert to seconds

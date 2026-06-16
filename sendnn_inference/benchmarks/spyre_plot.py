@@ -229,8 +229,8 @@ def generate_detailed_timeline_plot(
     """
     try:
         import pandas as pd
-        import plotly.express as px
-        import plotly.io as pio
+        import plotly.express as px  # ty: ignore[unresolved-import]
+        import plotly.io as pio  # ty: ignore[unresolved-import]
     except ImportError as exc:
         logger.warning(
             "Cannot generate detailed timeline plot — missing dependency: %s. "

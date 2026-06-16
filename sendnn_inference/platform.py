@@ -348,7 +348,7 @@ class SpyrePlatform(Platform):
                 scheduler_config.max_num_batched_tokens = (
                     model_config.max_model_len * scheduler_config.max_num_seqs
                 )
-                cache_config.block_size = model_config.max_model_len  # ty: ignore[invalid-assignment]
+                cache_config.block_size = model_config.max_model_len
                 vllm_config.cache_config.enable_prefix_caching = False
 
             else:
@@ -824,7 +824,7 @@ class SpyrePlatform(Platform):
     @classmethod
     def _set_batch_tkv_limit_from_env(cls) -> None:
         try:
-            cls._max_batch_tkv_limit = int(os.getenv("VLLM_DT_MAX_BATCH_TKV_LIMIT", "-1"))  #  ty: ignore
+            cls._max_batch_tkv_limit = int(os.getenv("VLLM_DT_MAX_BATCH_TKV_LIMIT", "-1"))
         except ValueError as e:
             raise ValueError("VLLM_DT_MAX_BATCH_TKV_LIMIT must be an integer") from e
 
