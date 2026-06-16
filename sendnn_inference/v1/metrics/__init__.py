@@ -1,3 +1,3 @@
-from .stats_logger import FileStatLogger, file_stat_logger_factory, patch_async_llm_stat_loggers
+from .stats_logger import FileStatLogger
 
-__all__ = ["patch_async_llm_stat_loggers", "file_stat_logger_factory", "FileStatLogger"]
+__all__ = ["FileStatLogger"]

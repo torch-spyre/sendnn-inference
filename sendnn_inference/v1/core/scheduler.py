@@ -3,7 +3,7 @@
 import math
 from collections import deque
 from typing import TYPE_CHECKING, Iterable, Union
-
+from dataclasses import dataclass
 
 from vllm.logger import init_logger
 from vllm.v1.core.sched.scheduler import Scheduler
@@ -134,6 +134,14 @@ class PoolingSpyreScheduler(SpyreScheduler):
             if request.num_prompt_tokens <= shape["prompt_length"]
             and current_batch_size < shape["batch_size"]
         ]
+
+
+@dataclass
+class ChunkedPrefillSpyreSchedulerStats:
+    decode_batch_size: int = 0
+    num_paused_reqs: int = 0
+    pause_events: int = 0
+    resume_events: int = 0
 
 
 class ChunkedPrefillSpyreScheduler(SpyreScheduler):
@@ -775,14 +783,29 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         """
         base_stats = super().make_stats(*args, **kwargs)
 
-        if base_stats is not None and base_stats.prefix_cache_stats is not None:
-            base_stats.prefix_cache_stats.hits = self.adjust_hit(
-                base_stats.prefix_cache_stats.queries, base_stats.prefix_cache_stats.hits
-            )
-
         if base_stats is not None:
-            mm_cache_stats = getattr(base_stats, "mm_cache_stats", None)
-            if mm_cache_stats is not None:
-                mm_cache_stats.hits = 0
+            if base_stats.prefix_cache_stats is not None:
+                base_stats.prefix_cache_stats.hits = self.adjust_hit(
+                    base_stats.prefix_cache_stats.queries, base_stats.prefix_cache_stats.hits
+                )
+
+                mm_cache_stats = getattr(base_stats, "mm_cache_stats", None)
+                if mm_cache_stats is not None:
+                    mm_cache_stats.hits = 0
+
+            decode_batch_size = sum(1 for r in self.running if r not in self.ongoing_prefills)
+            num_paused_reqs = len(self.paused_decoding_requests)
+
+            if base_stats.kv_connector_stats is None:
+                base_stats.kv_connector_stats = {}
+
+            # Abuse the sendnn-stats field to store the spyre stats.
+            # We can open an upstream PR to add another extensible field.
+            base_stats.kv_connector_stats["sendnn-stats"] = ChunkedPrefillSpyreSchedulerStats(
+                decode_batch_size=decode_batch_size,
+                num_paused_reqs=num_paused_reqs,
+                pause_events=0,
+                resume_events=0,
+            )
 
         return base_stats
