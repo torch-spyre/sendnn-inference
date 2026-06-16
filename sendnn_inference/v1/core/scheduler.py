@@ -192,7 +192,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         # are interleaved with a decode step. This allows to minimize currently
         # decoding requests
         self.do_interleaving: bool = envs_spyre.SENDNN_INFERENCE_CP_INTERLEAVE_STEPS
-        self.previous_step_was_prefill: bool = False
+        self.step_is_prefill: bool = False
 
         self.tkv = 0
         self.block_size = SpyrePlatform.get_block_size()
@@ -379,11 +379,11 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             if schedule_prefill:
                 running_holdback = [r for r in self.running if r not in self.ongoing_prefills]
                 self.running = self.ongoing_prefills
-                self.previous_step_was_prefill = True
+                self.step_is_prefill = True
             else:
                 self.running = [r for r in self.running if r not in self.ongoing_prefills]
                 running_holdback = self.ongoing_prefills
-                self.previous_step_was_prefill = False
+                self.step_is_prefill = False
 
         # Check new requests to prefill
         elif len(self.waiting) > 0:
@@ -405,7 +405,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
                 # Hide current decodes from the scheduler
                 running_holdback = self.running
                 self.running = []
-                self.previous_step_was_prefill = True
+                self.step_is_prefill = True
             else:
                 # Grammar not yet initialized for any waiting request.
                 # Return them to holdback so the base scheduler doesn't
@@ -413,12 +413,12 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
                 while self.waiting:
                     holdback_queue.appendleft(self.waiting.pop())
                 running_holdback = []
-                self.previous_step_was_prefill = False
+                self.step_is_prefill = False
         else:
-            self.previous_step_was_prefill = False
+            self.step_is_prefill = False
             running_holdback = []
 
-        if not self.previous_step_was_prefill:
+        if not self.step_is_prefill:
             self._handle_decode_requests_pausing()
 
         # delegate to super of SpyreScheduler: base V1 Scheduler
@@ -558,7 +558,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
 
         # If we do interleaving, then two consecutive prefill steps are
         # forbidden when there are decoding requests
-        if self.do_interleaving and self.previous_step_was_prefill and len(decoding_requests) > 0:
+        if self.do_interleaving and self.step_is_prefill and len(decoding_requests) > 0:
             return False
 
         # Requests that are already prefilling are prioritized over new requests
