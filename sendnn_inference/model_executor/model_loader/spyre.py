@@ -91,6 +91,13 @@ class SpyreCausalLM(nn.Module):
         # can produce 1 token with prefill plus rest of model length
         max_decode_length = max_model_len - BLOCK_SIZE + 1
 
+        if self.model_config.quantization:
+            self.attention_name = "spyre_paged_attn_fp8"
+            self.is_fp8_model = True
+        else:
+            self.attention_name = "spyre_paged_attn"
+            self.is_fp8_model = False
+
         # Load the weights from the cached or downloaded files.
         self.load_weights(
             model_config=self.model_config,
@@ -131,13 +138,6 @@ class SpyreCausalLM(nn.Module):
                 f"[SpyreCausalLM] model type {self.config.model_type} "
                 f"not supported in ContinuousBatchingFmsModel"
             )
-
-        if self.model_config.quantization:
-            self.attention_name = "spyre_paged_attn_fp8"
-            self.is_fp8_model = True
-        else:
-            self.attention_name = "spyre_paged_attn"
-            self.is_fp8_model = False
 
         self.current_scale: list[tuple] | None = None
         self.past_key_value_states: list[
@@ -276,9 +276,8 @@ class SpyreCausalLM(nn.Module):
         (vision_tower / multi_modal_projector) onto SENDNN_INFERENCE_MM_DEVICE
         with SENDNN_INFERENCE_CPU_MM_DTYPE.
 
-        NOTE: the whole non-mm model is cast to fp16, including any fp32
-        params/buffers and the float8 weights of quantized models. This path is
-        only intended for non-quantized (bf16) models.
+        For quantized (e.g. FP8) models we only convert bf16 params/buffers to
+        fp16 — fp8 weights and fp32 scales must be left untouched.
         """
         cpu_mm_dtype = envs_spyre.SENDNN_INFERENCE_CPU_MM_DTYPE
         mm_device = envs_spyre.SENDNN_INFERENCE_MM_DEVICE
@@ -294,13 +293,13 @@ class SpyreCausalLM(nn.Module):
             )
         self.mm_device = mm_device
 
-        # Cast the whole (non-mm) model to fp16 for Spyre, and place the
-        # multimodal submodules on their configured device/dtype. The mm
-        # submodules are moved wholesale with Module.to(...) (required because
+        # Cast the (non-mm) model to fp16 for Spyre, and place the multimodal
+        # submodules on their configured device/dtype. The mm submodules are
+        # moved wholesale with Module.to(...) (required because
         # nn.Parameter.set_data can't swap the CPU->nnpa backend; Module._apply
         # rebuilds the Parameters, and buffers move too). Their descendants must
-        # be skipped so the else branch doesn't re-cast them back to fp16 after
-        # placement (named_modules yields parents before children).
+        # be skipped so the non-mm branch doesn't re-cast them back to fp16
+        # after placement (named_modules yields parents before children).
         mm_prefixes_tuple = tuple(mm_prefixes)
         for module_name, module in self.fms_model.named_modules():
             if module_name in mm_module_names:
@@ -314,6 +313,13 @@ class SpyreCausalLM(nn.Module):
             elif module_name.startswith(mm_prefixes_tuple):
                 # Descendant of an mm submodule; already placed with its ancestor.
                 continue
+            elif self.is_fp8_model:
+                # Per-param cast restricted to bf16: leaves fp8 weights and
+                # fp32 scales alone. recurse=False so each param is visited
+                # once via the outer named_modules() walk.
+                for param in module.parameters(recurse=False):
+                    if param.dtype == torch.bfloat16:
+                        param.data = param.data.to(dtype=torch.float16)
             else:
                 module.to(dtype=torch.float16)
 
@@ -469,11 +475,11 @@ class SpyreCausalLM(nn.Module):
 
         # The second item in the output tuple is the KV cache.
         # However, on spyre these are ghost tensors- the data in these tensors does not reflect the
-        # actual kv cache data on the device. They exist only for proper compilation, so we don't
-        # waste any time assigning these tensors back to anything.
-        logits, kv_cache = output
-        if not self.on_spyre:
-            self.past_key_value_states = kv_cache
+        # actual kv cache data on the device. They exist only for proper compilation.
+        # Assigning self.past_key_value_states results in a minor (~1ms)
+        # performance decrease but avoids a ~20gb memory increase when
+        # the value is conditionally assigned.
+        logits, self.past_key_value_states = output
 
         if is_prompt:
             # assert that indeed received the last block of logits

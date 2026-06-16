@@ -15,7 +15,7 @@ from transformers import AutoConfig, AutoProcessor
 from vllm.multimodal.inputs import MultiModalFeatureSpec
 
 import sendnn_inference.multimodal as spyre_mm
-from tests.spyre_util import REFERENCE_MODELS
+from spyre_util import REFERENCE_MODELS
 
 GVISION_MODEL = REFERENCE_MODELS["ibm-granite/granite-vision-3.2-2b"]
 # Marks all tests in this file as multimodal and CPU to match
