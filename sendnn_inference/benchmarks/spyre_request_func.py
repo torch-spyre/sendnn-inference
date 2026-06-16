@@ -37,29 +37,37 @@ async def async_request_spyre_chat(
     pbar: tqdm | None = None,
     mm_position: Literal["first", "last"] = "last",
 ) -> SpyreRequestFuncOutput:
-    """Chat completions request function that additionally parses the
-    ``spyre_metrics`` field injected into the final SSE usage chunk."""
+    """Chat completions (or raw completions) request function that additionally
+    parses the ``spyre_metrics`` field injected into the final SSE usage chunk.
+
+    When ``request_func_input.api_url`` targets ``/v1/completions``the prompt
+    is sent verbatim without wrapping it in a chat message, so the server-side
+    chat template is not applied a second time."""
 
     api_url = request_func_input.api_url
-    _validate_api_url(api_url, "OpenAI Chat Completions API", "chat/completions")
+    use_completions = api_url.endswith("/v1/completions")
 
-    content = _get_chat_content(request_func_input, mm_position=mm_position)
+    model = request_func_input.model_name or request_func_input.model
 
-    payload = {
-        "model": (
-            request_func_input.model_name
-            if request_func_input.model_name
-            else request_func_input.model
-        ),
-        "messages": [
-            {"role": "user", "content": content},
-        ],
-        "max_completion_tokens": request_func_input.output_len,
-        "stream": True,
-        "stream_options": {
-            "include_usage": True,
-        },
-    }
+    if use_completions:
+        _validate_api_url(api_url, "OpenAI Completions API", "completions")
+        payload: dict[str, Any] = {
+            "model": model,
+            "prompt": request_func_input.prompt,
+            "max_tokens": request_func_input.output_len,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        }
+    else:
+        _validate_api_url(api_url, "OpenAI Chat Completions API", "chat/completions")
+        content = _get_chat_content(request_func_input, mm_position=mm_position)
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": content}],
+            "max_completion_tokens": request_func_input.output_len,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        }
     _update_payload_common(payload, request_func_input)
 
     headers = _get_headers("application/json")
@@ -94,7 +102,12 @@ async def async_request_spyre_chat(
                             data = json.loads(chunk)
 
                             if choices := data.get("choices"):
-                                content_delta = choices[0]["delta"].get("content")
+                                # Chat completions uses delta.content; raw
+                                # completions uses text directly on the choice.
+                                if use_completions:
+                                    content_delta = choices[0].get("text")
+                                else:
+                                    content_delta = choices[0]["delta"].get("content")
                                 if ttft == 0.0:
                                     ttft = timestamp - st
                                     output.ttft = ttft

@@ -316,10 +316,8 @@ def main() -> None:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
-    # Force chat endpoint and our backend.
+    # Force our custom backend so Spyre metrics are always collected.
     args.backend = _BACKEND_NAME
-    if not hasattr(args, "endpoint") or args.endpoint == "/v1/completions":
-        args.endpoint = "/v1/chat/completions"
 
     selected_percentiles = [float(p) for p in args.metric_percentiles.split(",")]
 

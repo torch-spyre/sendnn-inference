@@ -228,9 +228,10 @@ def test_print_noop_when_empty(capsys):
 
 
 @pytest.mark.cpu
-def test_print_missing_keys_tolerated(capsys):
+def test_print_missing_keys_show_zeros(capsys):
     # Metrics without chunk_prefill_latencies_s or decode_latencies_s — those
-    # sections should be absent, but queue time and chunk count should still print.
+    # sections still print with 0.00 values as a fallback, alongside the sections
+    # that do have data.
     metrics = [
         {"queued_time_s": 77777.7, "num_chunked_prefills": 13},
         {"queued_time_s": 0.000003, "num_chunked_prefills": 99},
@@ -239,8 +240,9 @@ def test_print_missing_keys_tolerated(capsys):
     out = capsys.readouterr().out
     assert "Queue Wait Time" in out
     assert "Chunked Prefill Count" in out
-    assert "Chunked Prefill Latency" not in out
-    assert "Decode Step Latency" not in out
+    assert "Chunked Prefill Latency" in out
+    assert "Decode Step Latency" in out
+    assert "0.00" in out
 
 
 # ---------------------------------------------------------------------------
