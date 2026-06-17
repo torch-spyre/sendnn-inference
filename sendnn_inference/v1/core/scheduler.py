@@ -212,6 +212,8 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
 
         self.total_reserved_blocks = 0
         self.reserved_blocks = dict[str, int]()
+        self.pause_events = 0
+        self.resume_events = 0
 
     def update_from_output(self, scheduler_output, model_runner_output):
         assert isinstance(model_runner_output, SpyreModelRunnerOutput), (
@@ -645,7 +647,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
 
         # It shouldn't be possible to remove all requests if we started with some
         assert not initial_had_requests or len(decoding_requests) > 0
-
+        self.pause_events += num_paused
         return num_paused
 
     def _maybe_resume_decoding_requests(self, decoding_requests: list[Request]) -> int:
@@ -671,7 +673,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
                     request_to_add.request_id,
                 )
                 num_resumed += 1
-
+        self.resume_events += num_resumed
         return num_resumed
 
     def predict_next_decode_tkv(self, running_requests: list[Request]) -> int:
@@ -799,13 +801,15 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             if base_stats.kv_connector_stats is None:
                 base_stats.kv_connector_stats = {}
 
-            # Abuse the sendnn-stats field to store the spyre stats.
+            # Abuse the kv_connector_stats field to store the spyre stats.
             # We can open an upstream PR to add another extensible field.
             base_stats.kv_connector_stats["sendnn-stats"] = ChunkedPrefillSpyreSchedulerStats(
                 decode_batch_size=decode_batch_size,
                 num_paused_reqs=num_paused_reqs,
-                pause_events=0,
-                resume_events=0,
+                pause_events=self.pause_events,
+                resume_events=self.resume_events,
             )
+        self.pause_events = 0
+        self.resume_events = 0
 
         return base_stats
