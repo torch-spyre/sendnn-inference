@@ -9,6 +9,8 @@ from sendnn_inference.v1.worker.mm_shared_memory import (
     write_embeddings,
 )
 
+pytestmark = [pytest.mark.multimodal, pytest.mark.cpu]
+
 
 # ---------------------------------------------------------------------------
 # helpers
