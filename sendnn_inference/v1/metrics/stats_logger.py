@@ -2,13 +2,16 @@ import dataclasses
 import json
 import time
 from datetime import datetime
+from functools import wraps
 from pathlib import Path
 from prometheus_client import REGISTRY, Counter, Gauge
 from typing import cast
 
 from vllm.config import VllmConfig
 from vllm.logger import init_logger
+from vllm.v1.engine import async_llm, llm_engine
 from vllm.v1.metrics.loggers import StatLoggerBase, AggregateStatLoggerBase
+from vllm.v1.metrics.loggers import StatLoggerManager
 from vllm.v1.metrics.stats import (
     FinishedRequestStats,
     IterationStats,
@@ -273,3 +276,41 @@ class SpyrePrometheusStatLogger(AggregateStatLoggerBase):
 
     def log_engine_initialized(self):
         pass
+
+
+def file_stat_logger_factory(config: VllmConfig, engine_index=0) -> FileStatLogger:
+    """Factory method accepted by vllm engine initializers"""
+    return FileStatLogger(config, engine_index)
+
+
+def prom_stat_logger_factory(config: VllmConfig, engine_index=0) -> SpyrePrometheusStatLogger:
+    """Factory method accepted by vllm engine initializers"""
+    return SpyrePrometheusStatLogger(config, [engine_index])
+
+
+def patch_async_llm_stat_loggers():
+    """
+    🌶️🌶️🌶️
+    Platforms cannot alter the initialization of a vllm engine, and the
+    `stat_loggers` parameter is not user-settable via `EngineArgs`.
+
+    So we resort to patching the initialization of the StatsLoggerManager to
+    inject our own stats logger. This _should_ also be compatible with versions
+    of vllm prior to the addition of `stats_loggers` engine parameter.
+    🌶️🌶️🌶️
+    """
+    logger.debug("Setting up perf logger injection")
+    original_init = StatLoggerManager.__init__
+
+    @wraps(original_init)
+    def new_init(self, *args, **kwargs):
+        logger.debug("Injecting sendnn-inference perf logger factory")
+        if "custom_stat_loggers" not in kwargs or kwargs["custom_stat_loggers"] is None:
+            kwargs["custom_stat_loggers"] = []
+
+        kwargs["custom_stat_loggers"].extend([file_stat_logger_factory, prom_stat_logger_factory])
+
+        original_init(self, *args, **kwargs)
+
+    async_llm.StatLoggerManager.__init__ = new_init  # ty: ignore[invalid-assignment]
+    llm_engine.StatLoggerManager.__init__ = new_init  # ty: ignore[invalid-assignment]
