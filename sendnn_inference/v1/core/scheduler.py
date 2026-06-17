@@ -652,7 +652,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
 
     def _maybe_resume_decoding_requests(self, decoding_requests: list[Request]) -> int:
         """
-        Resumes previously paused requests (oldest first) when TKV capacity is available.
+        Resumes previously paused requests (newest first) when TKV capacity is available.
         Mutates both decoding_requests and self.running.
 
         Returns the number of requests resumed.
@@ -809,7 +809,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
                 pause_events=self.pause_events,
                 resume_events=self.resume_events,
             )
-        self.pause_events = 0
-        self.resume_events = 0
+            self.pause_events = 0
+            self.resume_events = 0
 
         return base_stats

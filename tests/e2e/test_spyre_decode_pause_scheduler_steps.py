@@ -8,7 +8,7 @@ The two main constraints checked at prefill time are:
 1. Max-context constraint: current tkv <= max_context_len
 2. Volumetric constraint: current_max_tkv * batch_size <= max_batch_tkv_limit
 
-Run `python -m pytest tests/e2e/test_spyre_holdback_scheduler_steps.py`.
+Run `python -m pytest tests/e2e/test_spyre_decode_pause_scheduler_steps.py`.
 """
 
 import pytest

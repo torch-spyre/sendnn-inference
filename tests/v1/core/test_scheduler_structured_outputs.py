@@ -49,7 +49,7 @@ def mocked_scheduler():
     scheduler.paused_decoding_requests = []
     scheduler.chunk_size = 128
     scheduler.do_interleaving = False
-    scheduler.previous_step_was_prefill = False
+    scheduler.step_is_prefill = False
     scheduler.max_num_running_reqs = 4
     scheduler.tkv = 0
     scheduler.block_size = 64
