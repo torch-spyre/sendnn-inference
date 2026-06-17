@@ -12,6 +12,7 @@ Run `python -m pytest tests/e2e/test_spyre_holdback_scheduler_steps.py`.
 """
 
 import pytest
+from prometheus_client import REGISTRY
 from scheduling_utils import (
     validate_scheduler_steps,
     create_request_for_scheduler_test,
@@ -26,6 +27,7 @@ from spyre_util import ModelInfo, verify_block_tables
 @pytest.mark.parametrize("max_model_len", [128])
 @pytest.mark.parametrize("max_num_batched_tokens", [128])
 @pytest.mark.parametrize("available_blocks", [None])
+@pytest.mark.parametrize("use_git", [False, True])
 def test_max_batch_tkv_decode_pausing(
     model: ModelInfo,
     backend: str,
@@ -35,6 +37,7 @@ def test_max_batch_tkv_decode_pausing(
     max_model_len: int,
     max_num_batched_tokens: int,
     available_blocks: int,
+    use_git: bool,
 ):
     """Test that requests are scheduled and removed on time before max batch tkv
     exceeds the limit.
@@ -60,7 +63,7 @@ def test_max_batch_tkv_decode_pausing(
             add_step=0,
             max_tokens=11,
             prompt=random_prompt(model, seed=0, length=15),
-            use_golden_token_injection=False,
+            use_golden_token_injection=use_git,
             generate_hf_results=True,
         ),
         create_request_for_scheduler_test(
@@ -69,7 +72,7 @@ def test_max_batch_tkv_decode_pausing(
             add_step=0,
             max_tokens=13,
             prompt=random_prompt(model, seed=1, length=15),
-            use_golden_token_injection=False,
+            use_golden_token_injection=use_git,
             generate_hf_results=True,
         ),
         create_request_for_scheduler_test(
@@ -78,7 +81,7 @@ def test_max_batch_tkv_decode_pausing(
             add_step=0,
             max_tokens=10,
             prompt=random_prompt(model, seed=2, length=66),
-            use_golden_token_injection=False,
+            use_golden_token_injection=use_git,
             generate_hf_results=True,
         ),
     ]
@@ -260,6 +263,17 @@ def test_max_batch_tkv_decode_pausing(
         prefix_caching=True,
     )
 
+    def get_counter(name: str) -> float:
+        return (
+            REGISTRY.get_sample_value(
+                f"sendnn:{name}_total", {"engine": "0", "model_name": model.name}
+            )
+            or 0.0
+        )
+
+    assert get_counter("pause_events") == 1.0
+    assert get_counter("resume_events") == 1.0
+
 
 @pytest.mark.chunked_prefill
 @pytest.mark.full_model
@@ -267,6 +281,7 @@ def test_max_batch_tkv_decode_pausing(
 @pytest.mark.parametrize("max_model_len", [128])
 @pytest.mark.parametrize("max_num_batched_tokens", [128])
 @pytest.mark.parametrize("available_blocks", [None])
+@pytest.mark.parametrize("use_git", [False, True])
 def test_prefill_exceeds_max_batch_tkv(
     model: ModelInfo,
     backend: str,
@@ -276,6 +291,7 @@ def test_prefill_exceeds_max_batch_tkv(
     max_model_len: int,
     max_num_batched_tokens: int,
     available_blocks: int,
+    use_git: bool,
 ):
     """Test that requests are blocked when the volumetric constraint is immediately
     violated after prefill.
@@ -300,7 +316,7 @@ def test_prefill_exceeds_max_batch_tkv(
             add_step=0,
             max_tokens=7,
             prompt=random_prompt(model, seed=0, length=25),
-            use_golden_token_injection=False,
+            use_golden_token_injection=use_git,
             generate_hf_results=True,
         ),
         create_request_for_scheduler_test(
@@ -309,7 +325,7 @@ def test_prefill_exceeds_max_batch_tkv(
             add_step=0,
             max_tokens=6,
             prompt=random_prompt(model, seed=1, length=25),
-            use_golden_token_injection=False,
+            use_golden_token_injection=use_git,
             generate_hf_results=True,
         ),
         create_request_for_scheduler_test(
@@ -318,7 +334,7 @@ def test_prefill_exceeds_max_batch_tkv(
             add_step=0,
             max_tokens=3,
             prompt=random_prompt(model, seed=2, length=66),
-            use_golden_token_injection=False,
+            use_golden_token_injection=use_git,
             generate_hf_results=True,
         ),
     ]
@@ -453,3 +469,14 @@ def test_prefill_exceeds_max_batch_tkv(
         extra_assert_funcs=[verify_block_tables],
         prefix_caching=True,
     )
+
+    def get_counter(name: str) -> float:
+        return (
+            REGISTRY.get_sample_value(
+                f"sendnn:{name}_total", {"engine": "0", "model_name": model.name}
+            )
+            or 0.0
+        )
+
+    assert get_counter("pause_events") == 0.0
+    assert get_counter("resume_events") == 0.0

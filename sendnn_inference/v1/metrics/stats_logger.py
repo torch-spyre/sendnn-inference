@@ -268,7 +268,8 @@ class SpyrePrometheusStatLogger(AggregateStatLoggerBase):
         if scheduler_stats is not None and scheduler_stats.kv_connector_stats:
             sendnn_stats = scheduler_stats.kv_connector_stats.pop("sendnn-stats")
             if sendnn_stats is not None:
-                sendnn_stats = ChunkedPrefillSpyreSchedulerStats(**sendnn_stats)
+                if isinstance(sendnn_stats, dict):
+                    sendnn_stats = ChunkedPrefillSpyreSchedulerStats(**sendnn_stats)
                 self.gauge_scheduler_decode_batch[engine_idx].set(sendnn_stats.decode_batch_size)
                 self.gauge_scheduler_paused[engine_idx].set(sendnn_stats.num_paused_reqs)
                 self.counter_pause_events[engine_idx].inc(sendnn_stats.pause_events)
@@ -300,6 +301,9 @@ def patch_async_llm_stat_loggers():
     🌶️🌶️🌶️
     """
     logger.debug("Setting up perf logger injection")
+    if getattr(async_llm.StatLoggerManager, "__patched", False):
+        return
+    setattr(async_llm.StatLoggerManager, "__patched", True)
     original_init = StatLoggerManager.__init__
 
     @wraps(original_init)
