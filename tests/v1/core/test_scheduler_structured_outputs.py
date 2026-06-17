@@ -60,6 +60,8 @@ def mocked_scheduler():
     scheduler.reserved_blocks = dict[str, int]()
     scheduler._get_required_blocks = lambda x, *args, **kwargs: (0, 0)
     scheduler._get_free_blocks = lambda *args, **kwargs: 1
+    scheduler.pause_events = 0
+    scheduler.resume_events = 0
 
     # Stub kv_cache_manager.get_computed_blocks → (None, 0) so
     # _current_chunk_token_threshold treats every candidate as a fresh prefill
