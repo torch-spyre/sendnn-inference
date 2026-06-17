@@ -4,6 +4,7 @@ import math
 from collections import deque
 from typing import TYPE_CHECKING, Iterable, Union
 
+
 from vllm.logger import init_logger
 from vllm.v1.core.sched.scheduler import Scheduler
 from vllm.v1.metrics.stats import SchedulerStats
@@ -207,27 +208,13 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             "Expecting the env var VLLM_DT_MAX_BATCH_TKV_LIMIT to be set in platform.py"
         )
 
+        self.total_reserved_blocks = 0
+        self.reserved_blocks = dict[str, int]()
+
     def update_from_output(self, scheduler_output, model_runner_output):
         assert isinstance(model_runner_output, SpyreModelRunnerOutput), (
             "Expecting an instance of CPSpyreModelRunnerOutput when doing chunked prefill."
         )
-
-        # Update the correct num_computed_tokens value given left-padding and
-        # prefix cache hit info
-        for req in self.ongoing_prefills:
-            # The number of computed tokens only need to be adapted when it is
-            # the first chunk of a multi-chunk prefill
-            is_first_chunk = req.num_computed_tokens <= self.chunk_size
-            is_last_chunk = req.num_computed_tokens == req.num_prompt_tokens
-            if is_first_chunk and not is_last_chunk:
-                left_padding = model_runner_output.left_padding.get(req.request_id, 0)
-                prefix_cache_len = model_runner_output.prefix_cache_hit_len.get(req.request_id, 0)
-
-                req.num_computed_tokens = self.adjust_computed_tokens(
-                    computed_tokens=req.num_computed_tokens,
-                    left_padding=left_padding,
-                    prefix_cache_len=prefix_cache_len,
-                )
 
         # Remove completed prefills
         self.ongoing_prefills = [
@@ -235,23 +222,94 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         ]
 
         self.tkv = model_runner_output.tkv
-        return super(SpyreScheduler, self).update_from_output(scheduler_output, model_runner_output)
+        result = super(SpyreScheduler, self).update_from_output(
+            scheduler_output, model_runner_output
+        )
 
-    def adjust_computed_tokens(
-        self, computed_tokens: int, left_padding: int, prefix_cache_len: int
-    ) -> int:
+        for finished_request in self.finished_req_ids:
+            blocks = self.reserved_blocks.pop(finished_request, 0)
+            self.total_reserved_blocks -= blocks
+            assert self.total_reserved_blocks >= 0
+
+        return result
+
+    def _current_chunk_token_threshold(self, new_prefill_candidates: list[Request]) -> int:
+        """Returns the `long_prefill_token_threshold` to use for this step.
+
+        For the chunk-0 step cap to `chunk_size - left_padding` so the base
+        scheduler is aware of the padding blocks.
+        Otherwise return `chunk_size`: the natural chunk boundary."""
+
+        # If there are no new prefill candidates, no cap is needed.
+        if not new_prefill_candidates:
+            return self.chunk_size
+
+        new_prefill = new_prefill_candidates[0]
+
+        # Calculate left-padding tokens for this prompt.
+        prompt_len = new_prefill.num_prompt_tokens
+        n_chunks = math.ceil(prompt_len / self.chunk_size)
+        padded_prompt_len = math.ceil(prompt_len / self.block_size) * self.block_size
+        left_padding = n_chunks * self.chunk_size - padded_prompt_len
+
+        # If the prefix cache already covers chunk 0's real content, no cap is
+        # needed: the base scheduler will start from chunk i>=1, which has no
+        # padding. `get_computed_blocks` records into `prefix_cache_stats` as
+        # a side effect; the base scheduler calls it again, so toggle
+        # log_stats off here to avoid double-counting.
+        prev_log_stats = self.kv_cache_manager.log_stats
+        self.kv_cache_manager.log_stats = False
+        _, prefix_token_len = self.kv_cache_manager.get_computed_blocks(new_prefill)
+        self.kv_cache_manager.log_stats = prev_log_stats
+        if prefix_token_len >= self.chunk_size - left_padding:
+            return self.chunk_size
+
+        # Adjust the token threshold to account for left padding
+        return self.chunk_size - left_padding
+
+    def _get_required_blocks(self, request: Request, max_output: bool = False) -> tuple[int, int]:
         """
-        Returns an adjusted `num_computed_tokens` given left padding and prefix
-        cache hit info.
+        Returns the block parameters for the given request.
         """
-        # The prefix cache length is already adjusted for left padding.
-        # If it's bigger than the number of computed tokens, then we hit more
-        # prefix cache than we scheduled.
-        if prefix_cache_len > computed_tokens:
-            assert (prefix_cache_len + left_padding) % self.chunk_size == 0
-            return prefix_cache_len
-        # Otherwise just account for the left padding
-        return computed_tokens - left_padding
+        # This basically replicates what the scheduler already does, but
+        # scattered all over the place in `schedule()`
+        if request.num_computed_tokens == 0:
+            old_log_stats = self.kv_cache_manager.log_stats
+            self.kv_cache_manager.log_stats = False
+            new_computed_blocks, num_new_local_computed_tokens = (
+                self.kv_cache_manager.get_computed_blocks(request)
+            )
+            self.kv_cache_manager.log_stats = old_log_stats
+            num_computed_tokens = num_new_local_computed_tokens
+        else:
+            new_computed_blocks = self.kv_cache_manager.create_kv_cache_blocks(blocks=tuple())
+            num_new_local_computed_tokens = 0
+            num_computed_tokens = request.num_computed_tokens
+
+        num_tokens = request.num_tokens
+        if max_output:
+            assert request.sampling_params is not None
+            assert request.sampling_params.max_tokens is not None
+            prompt_tokens = request.num_prompt_tokens
+            max_tokens = request.sampling_params.max_tokens
+            num_tokens = prompt_tokens + max_tokens
+
+        num_blocks_to_allocate = self.kv_cache_manager.coordinator.get_num_blocks_to_allocate(
+            request_id=request.request_id,
+            num_tokens=num_tokens,
+            new_computed_blocks=new_computed_blocks.blocks,
+            num_encoder_tokens=0,
+            total_computed_tokens=num_computed_tokens,
+            num_tokens_main_model=num_tokens,
+        )
+
+        cached_blocks = sum(1 for block in new_computed_blocks.blocks[0] if block.ref_cnt > 0)
+        total_blocks = math.ceil(num_tokens / self.block_size)
+        assert cached_blocks + num_blocks_to_allocate == total_blocks
+        return cached_blocks, num_blocks_to_allocate
+
+    def _get_free_blocks(self) -> int:
+        return self.kv_cache_manager.block_pool.get_num_free_blocks()
 
     def schedule(self) -> "SchedulerOutput":
         """
@@ -273,10 +331,21 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         while self.skipped_waiting:
             holdback_queue.append(self.skipped_waiting.pop_request())
 
+        # req_id -> cached_blocks, new_blocks
+        required_blocks = dict[str, tuple[int, int]]()
+
         # Check if new requests can be scheduled for prefill
+        available_blocks = self._get_free_blocks() - self.total_reserved_blocks
         while holdback_queue:
-            if self.can_schedule_prefill(holdback_queue[0]):
-                new_request = holdback_queue.popleft()
+            new_request = holdback_queue[0]
+            cached, blocks = self._get_required_blocks(new_request, True)
+            if blocks > available_blocks:
+                break
+
+            if self.can_schedule_prefill(new_request):
+                holdback_queue.popleft()
+                required_blocks[new_request.request_id] = (cached, blocks)
+                available_blocks -= blocks
 
                 logger.debug(
                     "Scheduling a new request (%d prompt tokens), holding back %d requests",
@@ -356,6 +425,15 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             self.previous_step_was_prefill = False
             running_holdback = []
 
+        # Cap chunk-0 token count to chunk_size - left_padding so the upstream KV
+        # cache manager doesn't allocate a real blocks for the left-padding region.
+        # Only matters at chunk 0; later chunks land on natural chunk boundaries.
+        # Mutating scheduler_config is safe: the SpyreScheduler is the only
+        # scheduler in this engine and at most one prefill is in flight per step.
+        self.scheduler_config.long_prefill_token_threshold = self._current_chunk_token_threshold(
+            new_prefill_candidates
+        )
+
         # delegate to super of SpyreScheduler: base V1 Scheduler
         outputs = super(SpyreScheduler, self).schedule()
 
@@ -385,6 +463,33 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         # TODO: Implement sample_tokens() in SpyreModelRunner to enable async grammar
         # collection for better performance.
         outputs._spyre_grammar_output = self.get_grammar_bitmask(outputs)  # type: ignore[attr-defined]
+
+        # As blocks are allocated, we discount them from the reserved blocks.
+        # For prefill blocks we must first subtract the cached blocks.
+        free_blocks = self._get_free_blocks()
+        for new_request in outputs.scheduled_new_reqs:
+            cached, reserved = required_blocks[new_request.req_id]
+            scheduled_blocks = len(new_request.block_ids[0])
+            new_blocks = scheduled_blocks - cached
+            # The first chunk of a prefill that is scheduled
+            # always has at least one new block
+            assert new_blocks >= 1
+            actual_reserved = reserved - new_blocks
+            assert actual_reserved >= 0
+            self.total_reserved_blocks += actual_reserved
+            self.reserved_blocks[new_request.req_id] = actual_reserved
+
+        for req_id, req_new_blocks in zip(
+            outputs.scheduled_cached_reqs.req_ids,
+            outputs.scheduled_cached_reqs.new_block_ids,
+        ):
+            new_blocks = 0 if req_new_blocks is None else len(req_new_blocks[0])
+            self.total_reserved_blocks -= new_blocks
+            self.reserved_blocks[req_id] -= new_blocks
+            assert self.reserved_blocks[req_id] >= 0
+
+        assert 0 <= self.total_reserved_blocks <= free_blocks
+
         return outputs
 
     def can_schedule_prefill(self, request: Request) -> bool:

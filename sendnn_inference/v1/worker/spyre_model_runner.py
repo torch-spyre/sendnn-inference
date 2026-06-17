@@ -28,6 +28,9 @@ from vllm.v1.structured_output.utils import (
     apply_grammar_bitmask as vllm_apply_grammar_bitmask,
 )
 
+from fms.models import get_model as fms_get_model
+from fms.utils.generation import pad_input_ids as fms_pad_input_ids
+
 import sendnn_inference.envs as envs_spyre
 import sendnn_inference.utils as utils_spyre
 from sendnn_inference.model_executor.model_loader.spyre import (
@@ -66,6 +69,8 @@ else:
     SchedulerOutput = None
     NewRequestData = None
     SamplingMetadata = None
+
+FMS_POOLING_MODEL_LIST = ["Qwen3ForCausalLM"]
 
 logger = init_logger(__name__)
 
@@ -311,7 +316,15 @@ class SpyrePoolingModelRunner(
         )
 
         if task == "embed":
-            self._model = AutoModel.from_pretrained(self.model_config.model)
+            if self.model_config.architecture in FMS_POOLING_MODEL_LIST:
+                self._model = fms_get_model(
+                    "hf_pretrained",
+                    self.model_config.model,
+                    data_type=torch.float16,
+                )
+                self._model = self._model.base_model
+            else:
+                self._model = AutoModel.from_pretrained(self.model_config.model)
         elif task == "classify":
             class_model = AutoModelForSequenceClassification.from_pretrained(
                 self.model_config.model
@@ -384,7 +397,12 @@ class SpyrePoolingModelRunner(
     @property
     def vocab_size(self) -> int:
         # self.model here is probably a transformers model class
-        return self.model.config.vocab_size  # ty: ignore[invalid-return-type]
+        if self.model_config.architecture in FMS_POOLING_MODEL_LIST:
+            assert isinstance(self.model.config.src_vocab_size, int)
+            return self.model.config.src_vocab_size  # ty: ignore[invalid-return-type]
+        else:
+            assert isinstance(self.model.config.vocab_size, int)
+            return self.model.config.vocab_size  # ty: ignore[invalid-return-type]
 
     def _prepare_pad_input_ids(
         self,
@@ -551,9 +569,17 @@ class SpyrePoolingModelRunner(
             )
 
         # get position ids and attention mask
-        input_tokens, position_ids, mask = self.pad_input_ids(
-            input_token_list, min_pad_length=min_pad_length_batch
-        )
+        if self.model_config.architecture in FMS_POOLING_MODEL_LIST:
+            input_tokens, padding_kwargs = fms_pad_input_ids(
+                input_token_list,
+                min_pad_length=min_pad_length_batch,
+            )
+            position_ids = padding_kwargs["position_ids"]
+            mask = padding_kwargs["mask"]
+        else:
+            input_tokens, position_ids, mask = self.pad_input_ids(
+                input_token_list, min_pad_length=min_pad_length_batch
+            )
 
         token_type_ids = None
         if self.use_token_type_ids:
@@ -634,14 +660,24 @@ class SpyrePoolingModelRunner(
 
         # Execute the model
         with set_forward_context(attn_metadata, self.vllm_config):
-            outputs = self.model(
-                input_ids=model_input.input_tokens,
-                position_ids=model_input.input_positions,
-                attention_mask=model_input.input_masks,
-                **model_kwargs,
-            )
+            if self.model_config.architecture in FMS_POOLING_MODEL_LIST:
+                outputs = self.model(
+                    model_input.input_tokens,
+                    position_ids=model_input.input_positions,
+                    mask=model_input.input_masks,
+                    **model_kwargs,
+                )
 
-            hidden_states = outputs["last_hidden_state"]
+                hidden_states = outputs[0]
+            else:
+                outputs = self.model(
+                    input_ids=model_input.input_tokens,
+                    position_ids=model_input.input_positions,
+                    attention_mask=model_input.input_masks,
+                    **model_kwargs,
+                )
+
+                hidden_states = outputs["last_hidden_state"]
 
         # Only perform sampling in the driver worker.
         if not self.is_driver_worker:
