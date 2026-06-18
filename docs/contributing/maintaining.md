@@ -11,6 +11,16 @@ When a new version of vLLM is released, the plugin usually needs to be updated t
 
 ### Updating vLLM version
 
+!!! tip "AI Assistant Skills"
+    Both Claude Code and IBM Bob have skills to automate this workflow:
+
+    - **Claude Code**: Use `/update-vllm <version>` (defined in `.claude/skills/update-vllm/`)
+    - **IBM Bob**: The `update-vllm` skill (defined in `.bob/skills/update-vllm/`) is automatically
+      activated when you request a vLLM update in Advanced mode
+
+    Both skills reference the detailed procedure in [vllm-update-procedure.md](./vllm-update-procedure.md).
+    You can also follow this procedure manually if needed.
+
 To update the version of vLLM used by the plugin, the pyproject.toml needs to be updated in two places:
 
 1. [tool.uv.sources.vllm](https://github.com/torch-spyre/sendnn-inference/blob/v2.0.0-rc.1/pyproject.toml#L79)

@@ -12,10 +12,10 @@ readme = "README.md"
 license = {text = "Apache 2"}
 dependencies = [
     "fms-model-optimizer[fp8-infer]>=0.8.3,<0.9",
-    "ibm-fms>=1.9.0,<2",
+    "ibm-fms>=1.11.1,<2",
     # NB: use strict < with the next patch version to not exclude versions with
     # build metadata suffixes
-    "vllm>=0.19.1,<0.21.1",
+    "vllm>=0.19.1,<0.23.1",
     
     # Specific torch version overrides handled by uv
     "torch",
@@ -54,6 +54,7 @@ git_describe_command = "git describe --dirty --tags --long --match 'v*'"
 # by accident
 override-dependencies = [
     "torch==2.11.0",
+    "torchvision==0.26.0",
     "triton; sys_platform == 'never'",
     "intel-extension-for-pytorch; sys_platform == 'never'",
 
@@ -89,7 +90,7 @@ build-constraint-dependencies = []
 extra-build-variables = { vllm = { VLLM_TARGET_DEVICE = "empty" } }
 
 [tool.uv.sources]
-vllm = { git = "https://github.com/vllm-project/vllm", rev = "v0.21.0" }
+vllm = { git = "https://github.com/vllm-project/vllm", rev = "v0.23.0" }
 torch = [
   { index = "pytorch-cpu" },
 ]
@@ -163,6 +164,11 @@ ignore = [
     # Zip
     "B905",
 ]
+
+[tool.typos.default.extend-words]
+# `*.ot` is the file extension for HuggingFace Rust framework model weights
+# (rust_model.ot), referenced in tools/download_model.py.
+ot = "ot"
 
 [tool.codespell]
 ignore-words-list = "dout, te, indicies, subtile, ElementE"
@@ -238,7 +244,7 @@ dev = [
     "pytest-forked>=1.6.0",
     "pytest-timeout==2.3.1",
     "requests==2.32.3",
-    "sentence-transformers==3.4.1",
+    "sentence-transformers>=3.4.1",
     "aiu-fms-testing-utils>=0.8.2",
     "pytest-mock>=3.15.0",
 ]

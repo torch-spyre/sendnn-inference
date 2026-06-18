@@ -7,7 +7,12 @@ Run `python -m pytest tests/e2e/test_spyre_cp_inference_steps.py`.
 """
 
 import pytest
-from scheduling_utils import check_scheduler_inference_steps
+from scheduling_utils import (
+    check_scheduler_inference_steps,
+    create_request_for_scheduler_test,
+    random_prompt,
+    validate_scheduler_steps,
+)
 from spyre_util import ModelInfo
 
 
@@ -28,23 +33,38 @@ def test_prefill_tkv_too_big(
     max_num_batched_tokens: int,
     available_blocks: int,
 ):
-    """Scenario where the requested prompt is too long for current tkv value
+    """Here we ensure that the tkv never goes beyond max_model_len, even in an
+    edge case.
 
-    Note that as we could prefill the prompt straight away, however,
-    in this test the max model length is decreased to a value where
-    the tkv of the decode batch would be shifted beyond the max model length,
-    we therefore have to wait with scheduling.
+    Edge case: due to a long-prompt joining the decode batch, the currently
+    decoding request needs to be left-padded, bringing the max-tokens beyond
+    max-model-len. We make sure the left-padding is removed on time when
+    expanding to a new block, keeping the tkv in acceptable range always.
 
     Configuration:
         * max_num_seqs: 2
         * number of prompts: 2
-            * 0: len = 49, max tokens = 17, step joining = 0
-            * 1: len = 70, max tokens = 17, step joining = 0
+            * 0: len = 60, max tokens = 10, step joining = 0
+            * 1: len = 111, max tokens = 17, step joining = 0
     """
 
-    seqs_max_tokens = [17, 17]
-    prompts_lengths = [49, 70]
-    steps_add_reqs = [0, 0]
+    request1 = create_request_for_scheduler_test(
+        model=model,
+        request_id=0,
+        add_step=0,
+        max_tokens=10,
+        prompt=random_prompt(model=model, seed=0, length=60),
+        use_golden_token_injection=True,
+    )
+
+    request2 = create_request_for_scheduler_test(
+        model=model,
+        request_id=1,
+        add_step=0,
+        max_tokens=17,
+        prompt=random_prompt(model=model, seed=0, length=111),
+        use_golden_token_injection=True,
+    )
 
     checked_steps = [
         {
@@ -57,90 +77,119 @@ def test_prefill_tkv_too_big(
         },
         {
             # Prefill sequence 0
-            # total blocks in use: 1
             "step": 1,
-            "tkv": 49,  # prompt len
+            "tkv": 60,
             "waiting": ["1"],
             "running": ["0"],
             "request_outputs": ["0"],
             "n_used_blocks": 1,
+            "n_reserved_blocks": 1,
         },
-        # Here we cannot schedule sequence 1. By shifting sequence 0 by
-        # 1 block its max tkv would exceed the max model length
         {
             # Decode sequence 0
-            # total blocks in use: 1 (writing into right pads)
             "step": 2,
-            "tkv": 50,
+            "tkv": 61,
             "waiting": ["1"],
             "running": ["0"],
             "request_outputs": ["0"],
             "n_used_blocks": 1,
+            "n_reserved_blocks": 1,
         },
         {
-            # Prefill sequence 1, tkv large enough to prefill w/o tkv shift
-            # total blocks in use: 1 + 2
-            "step": 17,
-            # add 64 to tkv of seq 0 (64) to have it in the same block as seq 1
-            "tkv": 128,
+            # Prefill sequence 1
+            # Due to left-padding of sequence 0, we now have tkv = 64 + 61
+            "step": 3,
+            "tkv": 125,
             "waiting": [],
             "running": ["1", "0"],
             "request_outputs": ["1"],
-            # 2 + 2 (prefill (2 block) + 17 decodes in the last block)
             "n_used_blocks": 3,
+            "n_reserved_blocks": 1,
+        },
+        {
+            # Decode sequences 0 and 1
+            "step": 4,
+            "tkv": 126,
+            "waiting": [],
+            "running": ["1", "0"],
+            "request_outputs": ["1", "0"],
+            "n_used_blocks": 3,
+            "n_reserved_blocks": 1,
+        },
+        {
+            # Decode sequences 0 and 1
+            # Last step before tkv would overflow max_context_length
+            "step": 6,
+            "tkv": 128,
+            "waiting": [],
+            "running": ["1", "0"],
+            "request_outputs": ["1", "0"],
+            "n_used_blocks": 3,
+            "n_reserved_blocks": 1,
+        },
+        {
+            # Decode sequences 0 and 1
+            # Sequence 0 now needs two blocks. Instead of adding one on the
+            # right (which would overflow the tkv), we remove it's left-padding
+            # block, bringing back the tkv to a satisfactory value
+            "step": 7,
+            "tkv": 115,  # corresponds now to tkv of request 1
+            "waiting": [],
+            "running": ["1", "0"],
+            "request_outputs": ["1", "0"],
+            "n_used_blocks": 4,
+            "n_reserved_blocks": 0,
         },
         {
             # Decode sequences 0 and 1
             # Sequence 0 finishes
-            "step": 18,
-            # remove left padding of seq 0, and keep its tkv in the same block
-            # as seq 1: 129 - 64 = 65
-            # tkv of seq 1 is now max
-            "tkv": 71,
+            "step": 11,
+            "tkv": 119,
             "waiting": [],
             "running": ["1"],
             "request_outputs": ["1", "0"],
             "finished_requests": ["0"],
-            "n_used_blocks": 2,  # seq 0 needs another block for the last token
+            "n_used_blocks": 2,
+            "n_reserved_blocks": 0,
         },
         {
-            # Decode sequence 1
-            # total blocks in use: 4 - 2 = 2
-            "step": 19,
-            "tkv": 72,
+            # Decode sequences 1
+            "step": 12,
+            "tkv": 120,
             "waiting": [],
             "running": ["1"],
             "request_outputs": ["1"],
             "n_used_blocks": 2,
+            "n_reserved_blocks": 0,
         },
         {
-            # Sequence 1 finishes at step 33
-            "step": 33,
-            "tkv": 86,
+            # Sequence 1 finishes
+            "step": 19,
+            "tkv": 127,
             "waiting": [],
             "running": [],
             "request_outputs": ["1"],
             "finished_requests": ["1"],
             "n_used_blocks": 0,
+            "n_reserved_blocks": 0,
         },
         {
             # Tkv should be cleared one step later
-            "step": 34,
+            "step": 20,
             "tkv": 0,
             "waiting": [],
             "running": [],
             "request_outputs": [],
             "n_used_blocks": 0,
+            "n_reserved_blocks": 0,
         },
     ]
 
-    check_scheduler_inference_steps(
+    validate_scheduler_steps(
         model=model,
         backend=backend,
         monkeypatch=monkeypatch,
-        seqs_max_tokens=seqs_max_tokens,
-        prompts_lengths=prompts_lengths,
-        steps_add_reqs=steps_add_reqs,
+        requests=[request1, request2],
         checked_steps=checked_steps,
         max_num_seqs=max_num_seqs,
         max_model_len=max_model_len,
@@ -201,6 +250,7 @@ def test_requests_exceed_batch_tkv_limit(
             "running": ["0"],
             "request_outputs": ["0"],
             "n_used_blocks": 1,
+            "n_reserved_blocks": 1,
         },
         # Note: we cannot prefill seq 1 as the volumetric limit
         # max_batch_tkv_limit is exceeded: 129 < 130
@@ -216,6 +266,7 @@ def test_requests_exceed_batch_tkv_limit(
             "request_outputs": ["0"],
             "finished_requests": ["0"],
             "n_used_blocks": 0,
+            "n_reserved_blocks": 0,
         },
         {
             # Prefill sequence 1
@@ -226,6 +277,7 @@ def test_requests_exceed_batch_tkv_limit(
             "running": ["1"],
             "request_outputs": ["1"],
             "n_used_blocks": 2,  # 2 - 2 + 2
+            "n_reserved_blocks": 0,
         },
         {
             # Decode sequence 1
@@ -238,6 +290,7 @@ def test_requests_exceed_batch_tkv_limit(
             "request_outputs": ["1"],
             "finished_requests": ["1"],
             "n_used_blocks": 0,
+            "n_reserved_blocks": 0,
         },
         {
             # Tkv should be cleared one step later
@@ -248,6 +301,7 @@ def test_requests_exceed_batch_tkv_limit(
             "running": [],
             "request_outputs": [],
             "n_used_blocks": 0,
+            "n_reserved_blocks": 0,
         },
     ]
 
@@ -320,6 +374,7 @@ def test_single_cp_prefill(
             "running": ["0"],
             "request_outputs": [],
             "n_used_blocks": 2,
+            "n_reserved_blocks": 7,
         },
         {
             # Prefill sequence 0 chunk 1
@@ -329,6 +384,7 @@ def test_single_cp_prefill(
             "running": ["0"],
             "request_outputs": [],
             "n_used_blocks": 4,
+            "n_reserved_blocks": 5,
         },
         {
             # Prefill sequence 0 chunk 2
@@ -339,6 +395,7 @@ def test_single_cp_prefill(
             "running": ["0"],
             "request_outputs": [],
             "n_used_blocks": 6,
+            "n_reserved_blocks": 3,
         },
         {
             # Prefill sequence 0 chunk 3
@@ -349,6 +406,7 @@ def test_single_cp_prefill(
             "running": ["0"],
             "request_outputs": ["0"],
             "n_used_blocks": 8,
+            "n_reserved_blocks": 1,
         },
         {
             # Decode sequence 0
@@ -360,6 +418,7 @@ def test_single_cp_prefill(
             "request_outputs": ["0"],
             "finished_requests": ["0"],
             "n_used_blocks": 0,
+            "n_reserved_blocks": 0,
         },
         {
             # Tkv should be cleared one step later
@@ -369,6 +428,7 @@ def test_single_cp_prefill(
             "running": [],
             "request_outputs": [],
             "n_used_blocks": 0,
+            "n_reserved_blocks": 0,
         },
     ]
 
@@ -438,6 +498,7 @@ def test_cp_prefill_interleave1(
             "running": ["0"],
             "request_outputs": ["0"],
             "n_used_blocks": 1,
+            "n_reserved_blocks": 0,
         },
         {
             # Request 0 starts decoding.
@@ -449,6 +510,7 @@ def test_cp_prefill_interleave1(
             "running": ["0"],
             "request_outputs": ["0"],
             "n_used_blocks": 1,
+            "n_reserved_blocks": 0,
         },
         {
             # Chunk 0 of request 1 prefill
@@ -458,6 +520,7 @@ def test_cp_prefill_interleave1(
             "running": ["1", "0"],
             "request_outputs": [],
             "n_used_blocks": 3,
+            "n_reserved_blocks": 7,
         },
         {
             # Decode 2 of request 0.
@@ -467,6 +530,7 @@ def test_cp_prefill_interleave1(
             "running": ["0", "1"],
             "request_outputs": ["0"],
             "n_used_blocks": 3,
+            "n_reserved_blocks": 7,
         },
         {
             # Chunk 1 of request 1 prefill
@@ -477,6 +541,7 @@ def test_cp_prefill_interleave1(
             "running": ["1", "0"],
             "request_outputs": [],
             "n_used_blocks": 5,
+            "n_reserved_blocks": 5,
         },
         {
             # Decode 3 of request 0.
@@ -486,6 +551,7 @@ def test_cp_prefill_interleave1(
             "running": ["0", "1"],
             "request_outputs": ["0"],
             "n_used_blocks": 5,
+            "n_reserved_blocks": 5,
         },
         {
             # Chunk 2 of request 1 prefill
@@ -496,6 +562,7 @@ def test_cp_prefill_interleave1(
             "running": ["1", "0"],
             "request_outputs": [],
             "n_used_blocks": 7,
+            "n_reserved_blocks": 3,
         },
         {
             # Decode 4 of request 0.
@@ -505,6 +572,7 @@ def test_cp_prefill_interleave1(
             "running": ["0", "1"],
             "request_outputs": ["0"],
             "n_used_blocks": 7,
+            "n_reserved_blocks": 3,
         },
         {
             # Chunk 3 of request 1 prefill.
@@ -516,6 +584,7 @@ def test_cp_prefill_interleave1(
             "running": ["1", "0"],
             "request_outputs": ["1"],
             "n_used_blocks": 9,
+            "n_reserved_blocks": 1,
         },
         {
             # Decode 5 of request 0.
@@ -526,6 +595,7 @@ def test_cp_prefill_interleave1(
             "running": ["1", "0"],
             "request_outputs": ["1", "0"],
             "n_used_blocks": 10,
+            "n_reserved_blocks": 0,
         },
         {
             # Decode 6 of request 0.
@@ -536,6 +606,7 @@ def test_cp_prefill_interleave1(
             "running": ["1", "0"],
             "request_outputs": ["1", "0"],
             "n_used_blocks": 10,
+            "n_reserved_blocks": 0,
         },
         {
             # Decode 7 of request 0.
@@ -548,6 +619,7 @@ def test_cp_prefill_interleave1(
             "finished_requests": ["1", "0"],
             "request_outputs": ["1", "0"],
             "n_used_blocks": 0,
+            "n_reserved_blocks": 0,
         },
         {
             # Tkv should be cleared one step later
@@ -557,6 +629,7 @@ def test_cp_prefill_interleave1(
             "running": [],
             "request_outputs": [],
             "n_used_blocks": 0,
+            "n_reserved_blocks": 0,
         },
     ]
 
@@ -626,6 +699,7 @@ def test_cp_prefill_no_interleave(
             "running": ["0"],
             "request_outputs": ["0"],
             "n_used_blocks": 1,
+            "n_reserved_blocks": 0,
         },
         {
             # Chunk 0 of request 1 prefill
@@ -636,6 +710,7 @@ def test_cp_prefill_no_interleave(
             "running": ["1", "0"],
             "request_outputs": [],
             "n_used_blocks": 3,
+            "n_reserved_blocks": 7,
         },
         {
             # Chunk 1 of request 1 prefill
@@ -646,6 +721,7 @@ def test_cp_prefill_no_interleave(
             "running": ["1", "0"],
             "request_outputs": [],
             "n_used_blocks": 5,
+            "n_reserved_blocks": 5,
         },
         {
             # Chunk 2 of request 1 prefill
@@ -656,6 +732,7 @@ def test_cp_prefill_no_interleave(
             "running": ["1", "0"],
             "request_outputs": [],
             "n_used_blocks": 7,
+            "n_reserved_blocks": 3,
         },
         {
             # Chunk 3 of request 1 prefill.
@@ -667,6 +744,7 @@ def test_cp_prefill_no_interleave(
             "running": ["1", "0"],
             "request_outputs": ["1"],
             "n_used_blocks": 9,
+            "n_reserved_blocks": 1,
         },
         {
             # Both requests start decoding.
@@ -676,6 +754,7 @@ def test_cp_prefill_no_interleave(
             "running": ["1", "0"],
             "request_outputs": ["1", "0"],
             "n_used_blocks": 10,
+            "n_reserved_blocks": 0,
         },
         {
             # Decode 2
@@ -685,6 +764,7 @@ def test_cp_prefill_no_interleave(
             "running": ["1", "0"],
             "request_outputs": ["1", "0"],
             "n_used_blocks": 10,
+            "n_reserved_blocks": 0,
         },
         {
             # Decode 3
@@ -695,6 +775,7 @@ def test_cp_prefill_no_interleave(
             "finished_requests": ["1"],
             "request_outputs": ["1", "0"],
             "n_used_blocks": 1,
+            "n_reserved_blocks": 0,
         },
         {
             # Decode 4 of request 0.
@@ -704,6 +785,7 @@ def test_cp_prefill_no_interleave(
             "running": ["0"],
             "request_outputs": ["0"],
             "n_used_blocks": 1,
+            "n_reserved_blocks": 0,
         },
         {
             # Decode 5 of request 0.
@@ -713,6 +795,7 @@ def test_cp_prefill_no_interleave(
             "running": ["0"],
             "request_outputs": ["0"],
             "n_used_blocks": 1,
+            "n_reserved_blocks": 0,
         },
         {
             # Decode 6 of request 0.
@@ -722,6 +805,7 @@ def test_cp_prefill_no_interleave(
             "running": ["0"],
             "request_outputs": ["0"],
             "n_used_blocks": 1,
+            "n_reserved_blocks": 0,
         },
         {
             # Decode 7 of request 0.
@@ -732,6 +816,7 @@ def test_cp_prefill_no_interleave(
             "finished_requests": ["0"],
             "request_outputs": ["0"],
             "n_used_blocks": 0,
+            "n_reserved_blocks": 0,
         },
         {
             # Tkv should be cleared one step later
@@ -741,6 +826,7 @@ def test_cp_prefill_no_interleave(
             "running": [],
             "request_outputs": [],
             "n_used_blocks": 0,
+            "n_reserved_blocks": 0,
         },
     ]
 
@@ -809,6 +895,7 @@ def test_cp_prefill_interleave2(
             "running": ["0"],
             "request_outputs": ["0"],
             "n_used_blocks": 1,
+            "n_reserved_blocks": 0,
         },
         {
             # Decode 1 of request 0.
@@ -818,6 +905,7 @@ def test_cp_prefill_interleave2(
             "running": ["0"],
             "request_outputs": ["0"],
             "n_used_blocks": 1,
+            "n_reserved_blocks": 0,
         },
         {
             # Decode 2 of request 0.
@@ -827,6 +915,7 @@ def test_cp_prefill_interleave2(
             "running": ["0"],
             "request_outputs": ["0"],
             "n_used_blocks": 1,
+            "n_reserved_blocks": 0,
         },
         {
             # Chunk 0 of request 1 prefill
@@ -837,6 +926,7 @@ def test_cp_prefill_interleave2(
             "running": ["1", "0"],
             "request_outputs": [],
             "n_used_blocks": 3,
+            "n_reserved_blocks": 7,
         },
         {
             # Decode 3 of request 0.
@@ -846,6 +936,7 @@ def test_cp_prefill_interleave2(
             "running": ["0", "1"],
             "request_outputs": ["0"],
             "n_used_blocks": 3,
+            "n_reserved_blocks": 7,
         },
         {
             # Chunk 1 of request 1 prefill
@@ -856,6 +947,7 @@ def test_cp_prefill_interleave2(
             "running": ["1", "0"],
             "request_outputs": [],
             "n_used_blocks": 5,
+            "n_reserved_blocks": 5,
         },
         {
             # Decode 4 of request 0.
@@ -865,6 +957,7 @@ def test_cp_prefill_interleave2(
             "running": ["0", "1"],
             "request_outputs": ["0"],
             "n_used_blocks": 5,
+            "n_reserved_blocks": 5,
         },
         {
             # Chunk 2 of request 1 prefill
@@ -875,6 +968,7 @@ def test_cp_prefill_interleave2(
             "running": ["1", "0"],
             "request_outputs": [],
             "n_used_blocks": 7,
+            "n_reserved_blocks": 3,
         },
         {
             # Decode 5 of request 0.
@@ -884,6 +978,7 @@ def test_cp_prefill_interleave2(
             "running": ["0", "1"],
             "request_outputs": ["0"],
             "n_used_blocks": 7,
+            "n_reserved_blocks": 3,
         },
         {
             # Chunk 3 of request 1 prefill.
@@ -895,6 +990,7 @@ def test_cp_prefill_interleave2(
             "running": ["1", "0"],
             "request_outputs": ["1"],
             "n_used_blocks": 9,
+            "n_reserved_blocks": 1,
         },
         {
             # Decode 6 of request 0.
@@ -905,6 +1001,7 @@ def test_cp_prefill_interleave2(
             "running": ["1", "0"],
             "request_outputs": ["1", "0"],
             "n_used_blocks": 10,
+            "n_reserved_blocks": 0,
         },
         {
             # Decode 7 of request 0.
@@ -916,6 +1013,7 @@ def test_cp_prefill_interleave2(
             "finished_requests": ["0"],
             "request_outputs": ["1", "0"],
             "n_used_blocks": 9,
+            "n_reserved_blocks": 0,
         },
         {
             "step": 13,
@@ -925,6 +1023,7 @@ def test_cp_prefill_interleave2(
             "finished_requests": ["1"],
             "request_outputs": ["1"],
             "n_used_blocks": 0,
+            "n_reserved_blocks": 0,
         },
         {
             # Tkv should be cleared one step later
@@ -934,6 +1033,7 @@ def test_cp_prefill_interleave2(
             "running": [],
             "request_outputs": [],
             "n_used_blocks": 0,
+            "n_reserved_blocks": 0,
         },
     ]
 
@@ -953,17 +1053,13 @@ def test_cp_prefill_interleave2(
     )
 
 
-# TODO had to move test at the end, having it after test_prefill_tkv_too_big
-# was breaking the ordering ("error in test ordering!")
-# looks like an issue with sorting the runtime configurations
 @pytest.mark.chunked_prefill
 @pytest.mark.full_model
-# These values are all parameterized for test sorting
-@pytest.mark.parametrize("max_num_seqs", [4])
-@pytest.mark.parametrize("max_model_len", [128])  # restricted to violate scheduler condition
-@pytest.mark.parametrize("max_num_batched_tokens", [128])
-@pytest.mark.parametrize("available_blocks", [None])
-def test_prefill_tkv_too_big2(
+@pytest.mark.parametrize("max_num_seqs", [2])
+@pytest.mark.parametrize("max_model_len", [128])
+@pytest.mark.parametrize("max_num_batched_tokens", [64])
+@pytest.mark.parametrize("available_blocks", [2])
+def test_requests_not_enough_blocks(
     model: ModelInfo,
     backend: str,
     monkeypatch: pytest.MonkeyPatch,
@@ -973,147 +1069,95 @@ def test_prefill_tkv_too_big2(
     max_num_batched_tokens: int,
     available_blocks: int,
 ):
-    """Scenario where the requested number of output is too big for current
-    tkv value. We need to wait for a previous long prompt request to finish and
-    have tkv reduced to a previous block before being able to schedule the
-    new request.
+    """Scenario where the number of blocks is smaller than the maximum batch
+    size times the maximum number of blocks per sequence. This means that we
+    cannot schedule all the requests at once
 
     Configuration:
-        * max_num_seqs: 4
-        * number of prompts: 3
-            * 0: len = 20, max tokens = 5, step joining = 0
-            * 1: len = 80, max tokens = 3, step joining = 0
-            * 2: len = 16, max tokens = 50, step joining = 0
+        * max_num_seqs: 2
+        * number of prompts: 2
+            * 1: len = 64, max tokens = 2, step joining = 0
+            * 2: len = 64, max tokens = 2, step joining = 0
     """
 
-    monkeypatch.setenv("SENDNN_INFERENCE_CP_INTERLEAVE_STEPS", "0")
-
-    seqs_max_tokens = [5, 3, 50]
-    prompts_lengths = [20, 80, 16]
-    steps_add_reqs = [0, 0, 0]
+    seqs_max_tokens = [3, 2]
+    prompts_lengths = [64, 64]
+    steps_add_reqs = [0, 0]
 
     checked_steps = [
         {
             "step": 0,
             "tkv": 0,
-            "waiting": ["0", "1", "2"],
+            "waiting": ["0", "1"],
             "running": [],
             "request_outputs": [],
             "n_used_blocks": 0,
         },
         {
             # Prefill sequence 0
+            # total blocks in use: 1
             "step": 1,
-            "tkv": 20,
-            "waiting": ["1", "2"],
+            "tkv": 64,
+            "waiting": ["1"],
             "running": ["0"],
             "request_outputs": ["0"],
             "n_used_blocks": 1,
+            "n_reserved_blocks": 1,
         },
-        # tkv should be updated at the end of the last chunked prefill
-        # here we have only one chunk, so it will be updated directly
+        {
+            # Decode sequence 0
+            "step": 2,
+            "tkv": 65,
+            "waiting": ["1"],
+            "running": ["0"],
+            "request_outputs": ["0"],
+            "n_used_blocks": 2,
+            "n_reserved_blocks": 0,
+        },
+        {
+            # Decode sequence 0
+            "step": 3,
+            "tkv": 66,
+            "waiting": ["1"],
+            "running": [],
+            "request_outputs": ["0"],
+            "finished_requests": ["0"],
+            "n_used_blocks": 0,
+            "n_reserved_blocks": 0,
+        },
         {
             # Prefill sequence 1
-            "step": 2,
-            "tkv": 84,  # 64 (1 block padding) + 20 (prompt of seq 0) = 84
-            "waiting": ["2"],
-            "running": ["1", "0"],
-            "request_outputs": ["1"],
-            # 1 + 2 (prefill (2 block) + 3 decodes in the last block)
-            "n_used_blocks": 3,
-        },
-        # Here we cannot schedule sequence 2. Current tkv being in the second
-        # block, the number of requested tokens can't fit in the remaining space
-        # (64 (full block left padding) + 16 (prompt) + 50 (decode) = 130 > 128)
-        {
-            # Decode 1 of sequence 0
-            # Decode 1 of sequence 1
-            "step": 3,
-            "tkv": 85,
-            "waiting": ["2"],
-            "running": ["1", "0"],
-            "request_outputs": ["1", "0"],
-            "n_used_blocks": 3,
-        },
-        {
-            # Decode 2 of sequence 0
-            # Decode 2 of sequence 1
-            # Sequence 1 finishes
+            # total blocks in use: 1
             "step": 4,
-            "tkv": 86,
-            "waiting": ["2"],
-            "running": ["0"],
-            "request_outputs": ["1", "0"],
-            "finished_requests": ["1"],
+            "tkv": 64,
+            "waiting": [],
+            "running": ["1"],
+            "request_outputs": ["1"],
             "n_used_blocks": 1,
+            "n_reserved_blocks": 1,
         },
-        # The tkv value used here is computed before the model forward pass and
-        # token sampling of this step. As a result, it does not yet reflect
-        # sequences that finish in the current step. In this case, tkv=86 still
-        # includes sequence 1, which completes in this step, and this will only
-        # be accounted for in the next step. Therefore, sequence 2 cannot be
-        # prefilled yet at this point.
         {
-            # Decode 3 of sequence 0
+            # Decode sequence 1
+            # Sequence 1 finishes at step 4
+            # total blocks in use: 0
             "step": 5,
-            "tkv": 23,  # 20 (prompt len) + 3 (decodes) = 23
-            "waiting": ["2"],
-            "running": ["0"],
-            "request_outputs": ["0"],
-            "n_used_blocks": 1,
-        },
-        # Sequence 2 can be scheduled for prefill, now that tkv is moved back to
-        # the first block.
-        {
-            # Prefill sequence 2
-            "step": 6,
-            "tkv": 23,
-            "waiting": [],
-            "running": ["2", "0"],
-            "request_outputs": ["2"],
-            # 3 - 2 (finished seq 1) + 2 (prefill + 50 decodes in new block)
-            "n_used_blocks": 2,
-        },
-        {
-            # Decode 4 of sequence 0
-            # Decode 1 of sequence 2
-            # Sequence 0 finishes
-            "step": 7,
-            "tkv": 24,
-            "waiting": [],
-            "running": ["2"],
-            "request_outputs": ["2", "0"],
-            "finished_requests": ["0"],
-            "n_used_blocks": 1,
-        },
-        {
-            # Decode 2 of sequence 2
-            "step": 8,
-            "tkv": 18,  # 16 (prompt len) + 2 (decodes) = 18
-            "waiting": [],
-            "running": ["2"],
-            "request_outputs": ["2"],
-            "n_used_blocks": 1,
-        },
-        {
-            # Decode 49 of sequence 2
-            # Sequence 2 finishes
-            "step": 55,
-            "tkv": 65,  # 16 (prompt len) + 49 (decodes) = 65
+            "tkv": 65,
             "waiting": [],
             "running": [],
-            "request_outputs": ["2"],
-            "finished_requests": ["2"],
+            "request_outputs": ["1"],
+            "finished_requests": ["1"],
             "n_used_blocks": 0,
+            "n_reserved_blocks": 0,
         },
         {
-            # tkv should be cleared one step later
-            "step": 56,
+            # Tkv should be cleared one step later
+            "step": 6,
             "tkv": 0,
             "waiting": [],
             "running": [],
             "request_outputs": [],
             "n_used_blocks": 0,
+            "n_reserved_blocks": 0,
         },
     ]
 

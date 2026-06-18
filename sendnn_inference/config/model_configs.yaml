@@ -9,6 +9,22 @@
 
 # templates for reuse via YAML anchors
 _templates:
+  granite_41_30b_architecture: &granite_41_30b_architecture
+    model_type: granite
+    num_hidden_layers: 64
+    max_position_embeddings: 131072
+    hidden_size: 4096
+    vocab_size: 100352
+    num_key_value_heads: 8
+    num_attention_heads: 32
+
+  # device config for TP=4 Granite 4.1 30b models
+  granite_41_30b_tp4_device_config: &granite_41_30b_tp4_device_config
+    env_vars:
+      VLLM_DT_MAX_BATCH_TKV_LIMIT: 131072  # 128k
+      FLEX_HDMA_P2PSIZE: 268435456  # 256MB
+      FLEX_HDMA_COLLSIZE: 33554432  # 32MB
+    num_gpu_blocks_override: 2080
 
   granite_4_8b_architecture: &granite_4_8b_architecture
     model_type: granite
@@ -35,7 +51,7 @@ _templates:
       FLEX_HDMA_P2PSIZE: 268435456  # 256MB
       FLEX_HDMA_COLLSIZE: 33554432  # 32MB
     num_gpu_blocks_override: 8192
-  
+
   granite_vision_33_2b_architecture: &granite_vision_33_2b_architecture
    model_type: llava_next
    text_config:
@@ -166,7 +182,7 @@ models:
         max_model_len: 32768
         max_num_seqs: 32
         device_config: *granite_8b_tp4_device_config
-  
+
   # Llama 3.1 8B Instruct
   meta-llama/Llama-3.1-8B-Instruct:
     architecture: *llama3_8b_architecture
@@ -247,6 +263,15 @@ models:
         max_num_seqs: 32
         device_config: *granite_8b_tp4_device_config
 
+  # Granite 4.1 30B
+  ibm-granite/granite-4.1-30b:
+    architecture: *granite_41_30b_architecture
+    continuous_batching_configs:
+      - tp_size: 4
+        max_model_len: 32768
+        max_num_seqs: 32
+        device_config: *granite_41_30b_tp4_device_config
+
   # Granite Vision 3.3 2B
   ibm-granite/granite-vision-3.3-2b:
     architecture: *granite_vision_33_2b_architecture
@@ -255,14 +280,14 @@ models:
         max_model_len: 8192
         max_num_seqs: 16
       - tp_size: 2
-        max_model_len: 16382
+        max_model_len: 16384
         max_num_seqs: 16
         device_config: *granite_vision_2b_tp2_device_config
       - tp_size: 4
         max_model_len: 32768
         max_num_seqs: 32
         device_config: *granite_vision_2b_tp4_device_config
-        
+
   # Mistral Small 3.2 24B Instruct
   mistralai/Mistral-Small-3.2-24B-Instruct-2506:
     architecture: *mistral3_24b_architecture
@@ -303,6 +328,30 @@ models:
       model_type: xlm-roberta
       num_hidden_layers: 12
       vocab_size: 250002
+
+    static_batching_configs:
+      - tp_size: 1
+        warmup_shapes:
+          - prompt_len: 512
+            batch_size: 64
+
+  Qwen/Qwen3-Embedding-0.6B:
+    architecture:
+      model_type: qwen3
+      num_hidden_layers: 28
+      vocab_size: 151669
+
+    static_batching_configs:
+      - tp_size: 1
+        warmup_shapes:
+          - prompt_len: 512
+            batch_size: 64
+
+  Qwen/Qwen3-Embedding-4B:
+    architecture:
+      model_type: qwen3
+      num_hidden_layers: 36
+      vocab_size: 151665
 
     static_batching_configs:
       - tp_size: 1

@@ -1,10 +1,41 @@
-import importlib.metadata
-import json
-from logging.config import dictConfig
-from typing import Any
+import importlib.util
+import os
 
-from vllm.envs import VLLM_CONFIGURE_LOGGING, VLLM_LOGGING_CONFIG_PATH
-from vllm.logger import DEFAULT_LOGGING_CONFIG
+# Disable PyTorch's device-backend autoload, but ONLY when torch_nnpa is
+# installed -- it's torch_nnpa's autoload that breaks worker startup, so we don't
+# change torch's default behaviour on hosts without it. find_spec checks
+# availability without importing torch_nnpa (or torch), leaving the privateuse1
+# backend untouched. This MUST run before torch is imported (autoload fires
+# during `import torch`).
+#
+# With autoload enabled (the default, "1"), `import torch` eagerly imports every
+# package that registers a `torch.backends` entry point -- here torch_nnpa --
+# which renames the privateuse1 backend so torch._C._get_accelerator() resolves
+# to PrivateUse1. In a spawned vLLM worker that backend's
+# PrivateUse1HooksInterface isn't registered at that point, so the first
+# CPU/gloo collective in vLLM's init_distributed_environment
+# (_node_count -> torch.distributed.barrier) crashes with
+# "register PrivateUse1HooksInterface first".
+#
+# We register the backends we actually need explicitly and lazily instead:
+# torch_sendnn via SpyrePlatform.maybe_ensure_sendnn_configured, and torch_nnpa
+# (for the multimodal vision tower) via utils.ensure_nnpa_registered. setdefault
+# lets an explicit operator override win. Spawned workers inherit this value
+# from the engine process that imports this package during plugin loading, so it
+# is in their environment before they `import torch`. The user does not need to
+# set TORCH_DEVICE_BACKEND_AUTOLOAD or SENDNN_INFERENCE_MM_DEVICE manually:
+# autoload is handled here, and SENDNN_INFERENCE_MM_DEVICE defaults to "auto"
+# (use nnpa when available, else CPU).
+if importlib.util.find_spec("torch_nnpa") is not None:
+    os.environ.setdefault("TORCH_DEVICE_BACKEND_AUTOLOAD", "0")
+
+import importlib.metadata  # noqa: E402
+import json  # noqa: E402
+from logging.config import dictConfig  # noqa: E402
+from typing import Any  # noqa: E402
+
+from vllm.envs import VLLM_CONFIGURE_LOGGING, VLLM_LOGGING_CONFIG_PATH  # noqa: E402
+from vllm.logger import DEFAULT_LOGGING_CONFIG  # noqa: E402
 
 __version__ = importlib.metadata.version("sendnn_inference")
 
