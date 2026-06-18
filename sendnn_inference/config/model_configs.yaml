@@ -304,6 +304,9 @@ models:
   mistralai/Ministral-3-14B-Instruct-2512-BF16:
     architecture: *ministral3_14b_architecture
     continuous_batching_configs:
+      - tp_size: 1
+        max_model_len: 4096
+        max_num_seqs: 32
       - tp_size: 4
         max_model_len: 32768
         max_num_seqs: 32
