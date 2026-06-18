@@ -420,13 +420,16 @@ def validate_scheduler_steps(
                 n_cached_blocks = sum(cached_blocks)
                 n_prefix_hits = sum(prefix_hits)
 
+            n_reserved_blocks = scheduler.total_reserved_blocks
+            reserved_blocks_sum = sum(scheduler.reserved_blocks.values())
+
             if step > 0:
                 if DISABLE_ASSERTS:
                     print(
                         f"{step=}, {n_reserved_blocks=}, {n_used_blocks=}, "
                         f"{scheduler.tkv=}, {waiting=}, {out_reqs_finished=}, "
                         f"{running=}, {out_reqs_ids=}, {n_prefix_hits=}, "
-                        f"{n_cached_blocks=}"
+                        f"{n_cached_blocks=}, {n_reserved_blocks=}"
                     )
                 assert (
                     DISABLE_ASSERTS
@@ -447,6 +450,14 @@ def validate_scheduler_steps(
                     or "n_cached_blocks" not in step_ref
                     or (n_cached_blocks == step_ref["n_cached_blocks"])
                 ), f"Step {step}, n_cached_blocks: {n_cached_blocks}"
+                assert DISABLE_ASSERTS or n_reserved_blocks == reserved_blocks_sum, (
+                    f"Step {step}, {n_reserved_blocks=}, {reserved_blocks_sum=}"
+                )
+                assert (
+                    DISABLE_ASSERTS
+                    or "n_reserved_blocks" not in step_ref
+                    or (n_reserved_blocks == step_ref["n_reserved_blocks"])
+                ), f"Step {step}, n_reserved_blocks: {n_reserved_blocks}"
 
             for extra_assert_func in extra_assert_funcs:
                 extra_assert_func(engine_core, step_ref, DISABLE_ASSERTS)
