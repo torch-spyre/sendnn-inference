@@ -252,7 +252,12 @@ def _inject_spyre_metrics_into_result_file(
 
     try:
         with open(file_path, "w", encoding="utf-8") as fh:
-            json.dump(result, fh)
+            fh.write("{\n")
+            items = list(result.items())
+            for i, (k, v) in enumerate(items):
+                comma = "," if i < len(items) - 1 else ""
+                fh.write(f"  {json.dumps(k)}: {json.dumps(v)}{comma}\n")
+            fh.write("}\n")
         logger.info("Spyre metrics injected into %s", file_path)
     except Exception as exc:
         logger.warning("Failed to write Spyre metrics into result JSON %s: %s", file_path, exc)
