@@ -310,7 +310,7 @@ def patch_async_llm_stat_loggers():
 
     @wraps(original_init)
     def new_init(self, *args, **kwargs):
-        logger.debug("Injecting sendnn-inference perf logger factory")
+        logger.info("Injecting sendnn-inference perf logger factory")
         if "custom_stat_loggers" not in kwargs or kwargs["custom_stat_loggers"] is None:
             kwargs["custom_stat_loggers"] = []
 
