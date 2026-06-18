@@ -26,7 +26,6 @@ if TYPE_CHECKING:
     SENDNN_INFERENCE_MODEL_CONFIG_FILE: str | None = None
     SENDNN_INFERENCE_CPU_MM_DTYPE: torch.dtype = torch.float16
     SENDNN_INFERENCE_MM_DEVICE: str = "auto"
-    SENDNN_INFERENCE_DEPLOY_DECODE_AT_WARMUP: bool = True
 
 logger = init_logger(__name__)
 
@@ -171,14 +170,6 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # torch.compile(backend="sendnn") regardless.
     "SENDNN_INFERENCE_MM_DEVICE": lambda: parse_mm_device(
         os.getenv("SENDNN_INFERENCE_MM_DEVICE", "auto")
-    ),
-    # If set, run an extra decode step after the prefill deploy step at the
-    # end of warmup so that the compiled decode program is also installed on
-    # the device before runtime. This avoids the first runtime decode paying
-    # a one-time deploy cost (which shows up as a higher ITL on the very
-    # first decoded token).
-    "SENDNN_INFERENCE_DEPLOY_DECODE_AT_WARMUP": lambda: bool(
-        int(os.getenv("SENDNN_INFERENCE_DEPLOY_DECODE_AT_WARMUP", "1"))
     ),
 }
 # --8<-- [end:env-vars-definition]
