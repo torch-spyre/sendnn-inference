@@ -203,7 +203,7 @@ class SpyrePrometheusStatLogger(AggregateStatLoggerBase):
     def __init__(self, vllm_config: VllmConfig, engine_indexes: list[int] | None = None):
         if engine_indexes is None:
             engine_indexes = [0]
-
+        print("Initializing SpyrePrometheusStatLogger")
         self.engine_indexes = engine_indexes
 
         unregister_spyre_metrics()
@@ -302,7 +302,9 @@ def patch_async_llm_stat_loggers():
     """
     logger.debug("Setting up perf logger injection")
     if getattr(async_llm.StatLoggerManager, "__patched", False):
+        print("Already patched")
         return
+    print("Not patched yet")
     setattr(async_llm.StatLoggerManager, "__patched", True)
     original_init = StatLoggerManager.__init__
 
