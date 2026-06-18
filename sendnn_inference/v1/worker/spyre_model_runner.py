@@ -898,21 +898,40 @@ class ChunkedPrefillModelRunner(
         full_input_tokens: torch.Tensor,
         mm_features: Any,
     ) -> None:
-        """Compute MM embeddings on rank 0 and distribute to all TP ranks.
+        """Compute MM embeddings and cache them on every TP rank.
 
-        For TP > 1 the embeddings are shared via POSIX shared memory with two
-        broadcast collectives acting as sync signals (A = data ready, B = read
-        done).  Both broadcasts are placed in a ``finally`` block so they
-        always execute — even when an exception is raised — preventing any rank
-        from hanging at a collective that the failing rank never reaches.
+        Two modes are supported, controlled by ``SENDNN_INFERENCE_TP_MM_SHARING``:
 
-        A zero ``meta`` tensor is the failure sentinel: rank 0 only writes a
-        non-zero ``meta`` on success; non-rank-0 workers skip the SHM read when
-        they receive all-zeros.
+        **Sharing enabled (default, =1):**
+            Rank 0 runs the vision encoder once and distributes the result to
+            all other TP ranks via POSIX shared memory.  This avoids
+            ``world_size`` redundant encoder calls.
+
+            Synchronisation uses two GLOO broadcast collectives:
+
+            * **Broadcast A** — rank 0 signals that SHM is written and carries
+              the embedding shape + dtype in the ``meta`` tensor.
+            * **Broadcast B** — cleanup barrier; all ranks signal they have
+              finished reading so rank 0 can safely unlink the SHM segment.
+
+            Both broadcasts are placed in a ``finally`` block so they always
+            execute — even when an exception is raised — preventing any rank
+            from hanging at a collective the failing rank never reaches.
+
+            A zero ``meta`` tensor (``[0, 0, 0, 0]``) is the failure sentinel:
+            rank 0 only writes a non-zero ``meta`` on success; non-rank-0
+            workers skip the SHM read when they receive all-zeros.
+
+        **Sharing disabled (=0):**
+            Every TP rank runs the vision encoder independently and caches its
+            own copy.  This is the original behaviour — no SHM or coordination
+            overhead, but ``world_size`` redundant encoder calls per request.
+            Set ``SENDNN_INFERENCE_TP_MM_SHARING=0`` to fall back to this mode
+            if SHM-related failures are observed.
 
         On completion, ``request.cached_mm_embeddings`` is set on every rank.
         """
-        if self.parallel_config.world_size > 1:
+        if self.parallel_config.world_size > 1 and envs_spyre.SENDNN_INFERENCE_TP_MM_SHARING:
             data_shm = None
             full_embeds = None
             meta = torch.zeros(4, dtype=torch.int64)
@@ -983,24 +1002,24 @@ class ChunkedPrefillModelRunner(
                 if data_shm is not None:
                     cleanup_embeddings(data_shm)
         else:
-            # TP = 1: no sharing needed, compute directly on rank 0.
-            full_embeds = None
-            if self.rank == 0:
-                t0 = time.time()
-                full_embeds = self.model.get_maybe_mm_embeddings(
-                    full_input_tokens,
-                    mm_features=mm_features,
-                    is_decode=False,
-                )
-                t_elapsed = time.time() - t0
-                logger.info("maybe_mm_embedding processing time: %.2fms", (t_elapsed * 1000))
-                self.perf_logger.log(
-                    "get_mm_embeddings_time_ms",
-                    t_elapsed * 1000,
-                    phase="prefill",
-                    has_mm_features=True,
-                    req_id=req_id,
-                )
+            # Sharing disabled (TP = 1, or SENDNN_INFERENCE_TP_MM_SHARING not set):
+            # every rank runs the vision encoder independently.  This is the
+            # original behaviour — no SHM, no coordination overhead.
+            t0 = time.time()
+            full_embeds = self.model.get_maybe_mm_embeddings(
+                full_input_tokens,
+                mm_features=mm_features,
+                is_decode=False,
+            )
+            t_elapsed = time.time() - t0
+            logger.info("maybe_mm_embedding processing time: %.2fms", (t_elapsed * 1000))
+            self.perf_logger.log(
+                "get_mm_embeddings_time_ms",
+                t_elapsed * 1000,
+                phase="prefill",
+                has_mm_features=True,
+                req_id=req_id,
+            )
 
         request.cached_mm_embeddings = full_embeds
         logger.debug(
