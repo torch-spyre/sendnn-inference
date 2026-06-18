@@ -12,6 +12,7 @@ Run `python -m pytest tests/e2e/test_spyre_decode_pause_scheduler_steps.py`.
 """
 
 import pytest
+import huggingface_hub
 from prometheus_client import REGISTRY
 from scheduling_utils import (
     validate_scheduler_steps,
@@ -19,6 +20,15 @@ from scheduling_utils import (
     random_prompt,
 )
 from spyre_util import ModelInfo, verify_block_tables
+
+
+from vllm.transformers_utils.repo_utils import get_model_path
+
+
+def normalize_model_name(model: ModelInfo) -> str:
+    if huggingface_hub.constants.HF_HUB_OFFLINE:
+        return get_model_path(model.name, model.revision)
+    return model.name
 
 
 @pytest.mark.chunked_prefill
@@ -264,9 +274,10 @@ def test_max_batch_tkv_decode_pausing(
     )
 
     def get_counter(name: str) -> float:
+        print(f"get_counter {model.name=}")
         return (
             REGISTRY.get_sample_value(
-                f"sendnn:{name}_total", {"engine": "0", "model_name": model.name}
+                f"sendnn:{name}_total", {"engine": "0", "model_name": normalize_model_name(model)}
             )
             or 0.0
         )
@@ -473,7 +484,7 @@ def test_prefill_exceeds_max_batch_tkv(
     def get_counter(name: str) -> float:
         return (
             REGISTRY.get_sample_value(
-                f"sendnn:{name}_total", {"engine": "0", "model_name": model.name}
+                f"sendnn:{name}_total", {"engine": "0", "model_name": normalize_model_name(model)}
             )
             or 0.0
         )
