@@ -162,7 +162,7 @@ class ConditionalDefaultManager:
             namespace: argparse.Namespace | None = None,
         ) -> argparse.Namespace:
             result = original_parse_args(self, args, namespace)
-            assert result is not None  # type: ignore[redundant-expr]
+            assert result is not None
 
             if args is None or len(args) == 0:
                 # Don't override anything if there were no args parsed

@@ -96,6 +96,9 @@ def test_batch_handling(
         * max tokens: [5, 20, 10, 5]
     """
 
+    if model.is_quantized and mode == "pc" and backend == "sendnn":
+        pytest.skip("FP8 quantized models varies compared to cpu")
+
     prompts = get_chicken_soup_prompts(4)
     max_new_tokens = [5, 20, 10, 5]
     vllm_sampling_params = [

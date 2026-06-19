@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     SENDNN_INFERENCE_MODEL_CONFIG_FILE: str | None = None
     SENDNN_INFERENCE_CPU_MM_DTYPE: torch.dtype = torch.float16
     SENDNN_INFERENCE_MM_DEVICE: str = "auto"
+    SENDNN_INFERENCE_TP_MM_SHARING: bool = True
 
 logger = init_logger(__name__)
 
@@ -170,6 +171,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # torch.compile(backend="sendnn") regardless.
     "SENDNN_INFERENCE_MM_DEVICE": lambda: parse_mm_device(
         os.getenv("SENDNN_INFERENCE_MM_DEVICE", "auto")
+    ),
+    # When "1" (default), rank 0 runs the vision encoder and shares the result
+    # with other TP ranks via POSIX shared memory (one encoder call instead of
+    # world_size calls).  Set to "0" to fall back to every TP rank running the
+    # vision encoder independently — the original behaviour, which avoids any
+    # SHM-related failure modes at the cost of redundant CPU work.
+    "SENDNN_INFERENCE_TP_MM_SHARING": lambda: bool(
+        int(os.getenv("SENDNN_INFERENCE_TP_MM_SHARING", "1"))
     ),
 }
 # --8<-- [end:env-vars-definition]
