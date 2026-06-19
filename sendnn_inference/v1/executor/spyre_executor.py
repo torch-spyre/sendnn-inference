@@ -143,6 +143,14 @@ class SpyreMultiprocExecutor(MultiprocExecutor):
         if newly_encoded_req_ids:
             scheduler_output._spyre_newly_encoded_req_ids = newly_encoded_req_ids  # type: ignore[attr-defined]
 
+        # Clear _spyre_mm_encode_requests before dispatching to workers.
+        # The async encoder owns all MM encoding jobs; workers must not run
+        # pre_encode_mm_requests (Phase 1) in parallel — doing so would race
+        # with the encoder subprocess's SHM block and trigger FileExistsError.
+        # The Phase 1 inline path in _prepare_chunked_prefill still serves as
+        # a fallback at prefill time if pending_mm_embeddings is somehow empty.
+        scheduler_output._spyre_mm_encode_requests = []  # type: ignore[attr-defined]
+
         return super().execute_model(scheduler_output, non_block=non_block)
 
     def _try_start_mm_encoder(self) -> None:
