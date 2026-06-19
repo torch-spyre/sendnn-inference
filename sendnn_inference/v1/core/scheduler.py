@@ -204,6 +204,12 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         self.block_size = SpyrePlatform.get_block_size()
         self.max_batch_tkv_limit = SpyrePlatform.get_max_batch_tkv_limit()
 
+        # Track total number of decode steps executed
+        self.total_decode_steps = 0
+        
+        # Store preempted requests temporarily (for decode step 100-200 experiment)
+        self.preempted_requests: list[Request] = []
+
         assert self.max_batch_tkv_limit != -1, (
             "Expecting the env var VLLM_DT_MAX_BATCH_TKV_LIMIT to be set in platform.py"
         )
@@ -311,6 +317,66 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
     def _get_free_blocks(self) -> int:
         return self.kv_cache_manager.block_pool.get_num_free_blocks()
 
+    def _handle_decode_step_preemption(self) -> None:
+        """
+        Handle decode step tracking and preemption logic.
+        
+        This method:
+        - Increments the decode step counter
+        - Validates state at the first decode step
+        - Preempts 2nd and last request at decode step 100
+        - Restores first preempted request at decode step 200
+        - Restores second preempted request at decode step 230
+        """
+        self.total_decode_steps += 1
+        logger.info("Total decode steps executed: %d", self.total_decode_steps)
+        
+        # Assert conditions at the first decode step
+        if self.total_decode_steps == 1:
+            assert len(self.running) == 4, (
+                f"Expected exactly 4 decoding requests in running queue at first decode step, "
+                f"but got {len(self.running)}"
+            )
+            assert len(self.ongoing_prefills) == 0, (
+                f"Expected no requests in prefill queue at first decode step, "
+                f"but got {len(self.ongoing_prefills)}"
+            )
+            assert len(self.waiting) == 0, (
+                f"Expected no requests in waiting queue at first decode step, "
+                f"but got {len(self.waiting)}"
+            )
+        
+        # Preempt 2nd and last request at decode step 100
+        if self.total_decode_steps == 100:
+            assert len(self.running) == 4, f"Expecting four decoding requests at step 100, got {len(self.running)}"
+            
+            # Store the 2nd request (index 1) and last request (index -1)
+            second_request = self.running[1]
+            last_request = self.running[-1]
+            
+            self.preempted_requests = [second_request, last_request]
+            self.running = [r for r in self.running if r not in self.preempted_requests]
+            logger.info("Decode step 100: Preempted 2nd and last request from running queue. "
+                        f"Preempted request IDs: {[r.request_id for r in self.preempted_requests]}")
+        
+        # Restore first preempted request at decode step 200
+        if self.total_decode_steps == 200:
+            assert len(self.preempted_requests) == 2, f"Expecting two preempted requests at step 200, got {len(self.preempted_requests)}"
+            first_request = self.preempted_requests[0]
+            self.running.append(first_request)
+            logger.info("Decode step 200: Restored first preempted request to running queue. "
+                      f"Restored request ID: {first_request.request_id}")
+            self.preempted_requests = self.preempted_requests[1:]
+        
+        # Restore second preempted request at decode step 230
+        if self.total_decode_steps == 230:
+            assert len(self.preempted_requests) == 1, f"Expecting one preempted request at step 230, got {len(self.preempted_requests)}"
+            second_request = self.preempted_requests[0]
+            self.running.append(second_request)
+            logger.info("Decode step 230: Restored second preempted request to running queue. "
+                      f"Restored request ID: {second_request.request_id}")
+            self.preempted_requests = self.preempted_requests[1:]
+
     def schedule(self) -> "SchedulerOutput":
         """
         The chunked prefill scheduling policy is enforced in this method, then
@@ -391,6 +457,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
                 self.running = [r for r in self.running if r not in self.ongoing_prefills]
                 running_holdback = self.ongoing_prefills
                 self.previous_step_was_prefill = False
+                self._handle_decode_step_preemption()
 
         # Check new requests to prefill
         elif len(self.waiting) > 0:
@@ -421,8 +488,10 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
                     holdback_queue.appendleft(self.waiting.pop())
                 running_holdback = []
                 self.previous_step_was_prefill = False
+                self._handle_decode_step_preemption()
         else:
             self.previous_step_was_prefill = False
+            self._handle_decode_step_preemption()
             running_holdback = []
 
         # Cap chunk-0 token count to chunk_size - left_padding so the upstream KV

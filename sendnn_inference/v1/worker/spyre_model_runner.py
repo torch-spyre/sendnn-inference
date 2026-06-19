@@ -1613,6 +1613,29 @@ class ChunkedPrefillModelRunner(
         - Refreshes metadata for logits processors
         """
         req_data = scheduler_output.scheduled_cached_reqs
+        
+        # Synchronize input_batch with scheduler output: remove requests that are not in scheduler output
+        # This handles preemption cases where scheduler temporarily removes requests from running queue
+        scheduled_req_ids = set(req_data.req_ids)
+        current_batch_req_ids = set(self.input_batch.req_id_to_index.keys())
+        
+        # Find requests that are in input_batch but not in scheduler output (preempted)
+        preempted_req_ids = current_batch_req_ids - scheduled_req_ids
+        for req_id in preempted_req_ids:
+            # Only remove if it's not a finished request (finished requests are handled separately)
+            if req_id not in (scheduler_output.finished_req_ids or []):
+                logger.info(f"Removing preempted request {req_id} from input_batch")
+                self.input_batch.remove_request(req_id)
+        
+        # Find requests that are in scheduler output but not in input_batch (restored from preemption)
+        restored_req_ids = scheduled_req_ids - current_batch_req_ids
+        for req_id in restored_req_ids:
+            # Add back the request that was preempted
+            if req_id in self.requests:
+                logger.info(f"Restoring preempted request {req_id} to input_batch")
+                req_state = self.requests[req_id]
+                self.input_batch.add_request(req_state)
+        
         for i, req_id in enumerate(req_data.req_ids):
             req_state: SamplingRequestState = self.requests[req_id]
 
