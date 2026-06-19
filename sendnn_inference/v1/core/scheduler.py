@@ -405,7 +405,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             ready_to_prefill = [
                 r
                 for r in self.waiting
-                if r.status != RequestStatus.WAITING_FOR_STRUCTURED_OUTPUT_GRAMMAR  # type: ignore[attr-defined]
+                if r.status != RequestStatus.WAITING_FOR_STRUCTURED_OUTPUT_GRAMMAR
             ]
             if ready_to_prefill:
                 new_prefill_candidates = list(self.waiting)
