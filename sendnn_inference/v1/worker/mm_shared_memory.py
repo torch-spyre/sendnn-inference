@@ -109,3 +109,19 @@ def cleanup_embeddings(data_shm: SharedMemory) -> None:
         data_shm.close()
     except Exception as exc:
         logger.debug("SHM close skipped (%s): %s", data_shm.name, exc)
+
+
+def cleanup_embeddings_by_name(req_id: str) -> None:
+    """Unlink the shared-memory block for *req_id* by name.
+
+    Used when the caller does not hold the original ``SharedMemory`` handle
+    (e.g. after all TP ranks have independently read the block and rank 0
+    needs to unlink it).  Safe to call even if the block was already removed.
+    """
+    name = _shm_name(req_id)
+    try:
+        shm = SharedMemory(name=name)
+        shm.unlink()
+        shm.close()
+    except Exception as exc:
+        logger.debug("SHM cleanup_by_name skipped (%s): %s", name, exc)

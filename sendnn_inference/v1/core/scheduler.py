@@ -213,6 +213,16 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
 
         self.tkv = 0
         self.block_size = SpyrePlatform.get_block_size()
+
+        # Async MM encoding state.
+        # _mm_encoding_submitted: requests whose encode job has been dispatched to
+        #   the encoder subprocess but whose result has not yet been received.
+        # _mm_encoding_ready: requests whose embeddings are ready in
+        #   pending_mm_embeddings (confirmed via _spyre_newly_encoded_req_ids in
+        #   the model runner output).  Only MM requests in this set are eligible
+        #   for prefill scheduling.
+        self._mm_encoding_submitted: set[str] = set()
+        self._mm_encoding_ready: set[str] = set()
         self.max_batch_tkv_limit = SpyrePlatform.get_max_batch_tkv_limit()
 
         assert self.max_batch_tkv_limit != -1, (
@@ -223,6 +233,16 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         assert isinstance(model_runner_output, SpyreModelRunnerOutput), (
             "Expecting an instance of CPSpyreModelRunnerOutput when doing chunked prefill."
         )
+
+        # Update async MM encoding state: move newly encoded requests from
+        # "submitted" to "ready" so they become eligible for prefill.
+        # Read from scheduler_output (set by SpyreMultiprocExecutor.execute_model)
+        # rather than model_runner_output — the executor uses non_block=True which
+        # returns a Future, so attributes set on the Future never reach the resolved
+        # ModelRunnerOutput.  scheduler_output is the same object in both places.
+        for req_id in getattr(scheduler_output, "_spyre_newly_encoded_req_ids", []):
+            self._mm_encoding_submitted.discard(req_id)
+            self._mm_encoding_ready.add(req_id)
 
         # Update the correct num_computed_tokens value given left-padding and
         # prefix cache hit info
@@ -368,26 +388,29 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             self.previous_step_was_prefill = False
             running_holdback = []
 
-        # Collect MM encode requests for waiting multimodal requests before their
-        # Spyre prefill starts, so the model runner can batch-encode them in advance.
-        # Only done when a brand-new prefill is starting (new_prefill_candidates non-empty).
+        # Collect MM encode requests for ALL waiting multimodal requests that
+        # have not yet been submitted to the encoder subprocess.  Emitted on
+        # every schedule() call (prefill AND decode steps) so the encoder can
+        # stay ahead of the prefill queue.  The executor submits each request
+        # exactly once (tracked here via _mm_encoding_submitted).
         mm_encode_requests: list[MMEncodeRequest] = []
-        if new_prefill_candidates:
-            prefill_ids = {r.request_id for r in new_prefill_candidates}
-            for req in holdback_queue:
-                if req.request_id in prefill_ids:
-                    continue
-                if getattr(req, "mm_features", None):
-                    mm_encode_requests.append(
-                        MMEncodeRequest(
-                            request_id=req.request_id,
-                            prompt_token_ids=list(req.prompt_token_ids),
-                            mm_features=req.mm_features,
-                        )
-                    )
-                    prefill_ids.add(req.request_id)
-                    if len(mm_encode_requests) >= self.max_num_running_reqs - 1:
-                        break
+        for req in holdback_queue:
+            if not getattr(req, "mm_features", None):
+                continue
+            if req.request_id in self._mm_encoding_submitted:
+                continue
+            if req.request_id in self._mm_encoding_ready:
+                continue
+            mm_encode_requests.append(
+                MMEncodeRequest(
+                    request_id=req.request_id,
+                    prompt_token_ids=list(req.prompt_token_ids),
+                    mm_features=req.mm_features,
+                )
+            )
+            self._mm_encoding_submitted.add(req.request_id)
+            if len(mm_encode_requests) >= self.max_num_running_reqs:
+                break
 
         # delegate to super of SpyreScheduler: base V1 Scheduler
         outputs = super(SpyreScheduler, self).schedule()
@@ -423,6 +446,12 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         return outputs
 
     def can_schedule_prefill(self, request: Request) -> bool:
+        # MM requests must wait until their vision embedding is ready.
+        # Text-only requests are completely unaffected by this check.
+        if getattr(request, "mm_features", None):
+            if request.request_id not in self._mm_encoding_ready:
+                return False
+
         # running and waiting queues are both empty, we can start a new batch
         # which can always be scheduled
         if len(self.running) + len(self.waiting) == 0:
@@ -618,11 +647,17 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         )
 
         # request_ids None means all requests are finished
-        self.ongoing_prefills = (
-            []
-            if request_ids is None
-            else [r for r in self.ongoing_prefills if r.request_id not in request_ids]
-        )
+        if request_ids is None:
+            self.ongoing_prefills = []
+            self._mm_encoding_submitted.clear()
+            self._mm_encoding_ready.clear()
+        else:
+            self.ongoing_prefills = [
+                r for r in self.ongoing_prefills if r.request_id not in request_ids
+            ]
+            for rid in request_ids:
+                self._mm_encoding_submitted.discard(rid)
+                self._mm_encoding_ready.discard(rid)
 
         return aborted_requests
 

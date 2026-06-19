@@ -732,8 +732,9 @@ class ChunkedPrefillModelRunner(
         self.perf_logger = create_perf_metric_logger(rank=rank)
 
         # Pre-computed MM embeddings for waiting requests (keyed by request_id).
-        # Populated by pre_encode_mm_requests() before a prefill step; consumed
-        # and removed by add_new_request() when the request begins its prefill.
+        # Populated by store_mm_embeddings() (async path via executor) or by
+        # pre_encode_mm_requests() (Phase 1 inline fallback).
+        # Consumed and removed by add_new_request() when the request begins prefill.
         self.pending_mm_embeddings: dict[str, torch.Tensor] = {}
 
     def load_model(self) -> None:
@@ -899,6 +900,27 @@ class ChunkedPrefillModelRunner(
                     enc_req.request_id,
                     self.rank,
                 )
+
+    def store_mm_embeddings(self, results: list[tuple]) -> None:
+        """Read completed async MM embeddings from POSIX SHM and cache them.
+
+        Called on all TP ranks via collective_rpc by SpyreMultiprocExecutor
+        after the encoder subprocess has written embeddings to SHM.  Each rank
+        reads independently — no rank-0 tensor broadcast is needed.
+
+        ``results`` is a list of ``(req_id, shape, dtype)`` tuples.  The SHM
+        blocks are kept alive by the executor until this call returns.
+        """
+        for req_id, shape, dtype in results:
+            embeds = read_embeddings(req_id, shape, dtype)
+            self.pending_mm_embeddings[req_id] = embeds
+            logger.debug(
+                "Stored async MM embeddings for req '%s' (rank %d): shape=%s dtype=%s",
+                req_id,
+                self.rank,
+                shape,
+                dtype,
+            )
 
     def get_supported_tasks(self) -> tuple[SupportedTask, ...]:
         tasks = list[SupportedTask]()

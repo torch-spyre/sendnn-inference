@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     SENDNN_INFERENCE_MODEL_CONFIG_FILE: str | None = None
     SENDNN_INFERENCE_CPU_MM_DTYPE: torch.dtype = torch.float16
     SENDNN_INFERENCE_MM_DEVICE: str = "auto"
+    SENDNN_INFERENCE_ASYNC_MM_ENCODER: bool = False
 
 logger = init_logger(__name__)
 
@@ -170,6 +171,16 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # torch.compile(backend="sendnn") regardless.
     "SENDNN_INFERENCE_MM_DEVICE": lambda: parse_mm_device(
         os.getenv("SENDNN_INFERENCE_MM_DEVICE", "auto")
+    ),
+    # Enable the async vision encoder subprocess (Phase 2).
+    # When set to 1, SpyreMultiprocExecutor spawns a separate process that loads
+    # only the vision model via get_model(..., vision_only=True) and pre-encodes
+    # MM requests in parallel with AIU prefill/decode.  The scheduler gates MM
+    # request prefill on encoding readiness so a request only starts prefill once
+    # its embedding is available.  Only effective for decoder models with TP > 1.
+    # Defaults to 0 (disabled) — uses the Phase 1 blocking encode path.
+    "SENDNN_INFERENCE_ASYNC_MM_ENCODER": lambda: bool(
+        int(os.getenv("SENDNN_INFERENCE_ASYNC_MM_ENCODER", "0"))
     ),
 }
 # --8<-- [end:env-vars-definition]
