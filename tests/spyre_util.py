@@ -178,7 +178,7 @@ class RemoteOpenAIServer:
         return f"http://{self.host}:{self.port}"
 
     def url_for(self, *parts: str) -> str:
-        return self.url_root + "/" + "/".join(parts)
+        return self.url_root + "/" + "/".join(p.strip("/") for p in parts)
 
     def get_client(self, **kwargs):
         if "timeout" not in kwargs:
@@ -276,6 +276,10 @@ register_model_info(
     revision="cf74d8acd4f198de950bf004b262e6accfed5d2c",
 )
 register_model_info(
+    name="Qwen/Qwen3-Embedding-0.6B",
+    revision="97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
+)
+register_model_info(
     name="cross-encoder/stsb-roberta-large",
     revision="2b12c2c0088918e76151fd5937b7bba986ef1f98",
 )
@@ -319,8 +323,13 @@ def _default_test_models(
 ):
     """Return the default set of test models as pytest parameterizations"""
     if isEmbeddings:
-        model = REFERENCE_MODELS["sentence-transformers/all-roberta-large-v1"]
-        return [pytest.param(model, marks=[pytest.mark.embedding], id=model.name)]
+        roberta = REFERENCE_MODELS["sentence-transformers/all-roberta-large-v1"]
+        qwen3 = REFERENCE_MODELS["Qwen/Qwen3-Embedding-0.6B"]
+        params = [
+            pytest.param(roberta, marks=[pytest.mark.embedding], id=roberta.name),
+            pytest.param(qwen3, marks=[pytest.mark.embedding], id=qwen3.name),
+        ]
+        return params
 
     if isScoring:
         model = REFERENCE_MODELS["cross-encoder/stsb-roberta-large"]

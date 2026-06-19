@@ -1,0 +1,17 @@
+# Models pre-fetched into the GHA HuggingFace cache for the Test workflow.
+#
+# Adding/removing/changing an entry here changes the cache key and will trigger
+# a fresh download + cache save on the next push to main. Total uncompressed
+# size of all entries must stay under 8 GiB (GHA cache limit is 10 GiB).
+
+models:
+  - repo: ibm-ai-platform/micro-g3.3-8b-instruct-1b
+    revision: 6e9c6465a9d7e5e9fa35004a29f0c90befa7d23f
+  - repo: ibm-ai-platform/micro-g3.3-8b-instruct-1b-FP8
+    revision: 0dff8bacb968836dbbc7c2895c6d9ead0a05dc9e
+  - repo: sentence-transformers/all-roberta-large-v1
+    revision: cf74d8acd4f198de950bf004b262e6accfed5d2c
+  - repo: cross-encoder/stsb-roberta-large
+    revision: 2b12c2c0088918e76151fd5937b7bba986ef1f98
+  - repo: Qwen/Qwen3-Embedding-0.6B
+    revision: 97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3
