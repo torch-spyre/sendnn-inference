@@ -72,6 +72,7 @@ class SpyreCausalLM(nn.Module):
         self.parallel_config = vllm_config.parallel_config
         self.cache_config = vllm_config.cache_config
         self.scheduler_config = vllm_config.scheduler_config
+        self.load_config = vllm_config.load_config
         self.dtype = self.get_dtype()
 
         # Wrappers for utils for multimodal
@@ -171,16 +172,27 @@ class SpyreCausalLM(nn.Module):
                     self.dtype,
                 )
 
-        is_local = os.path.isdir(model_config.model)
-        model_path = model_config.model
-        # Get location of model from HF cache.
-        if not is_local:
-            model_path = download_weights_from_hf(
-                model_name_or_path=model_path,
-                cache_dir=None,
-                allow_patterns=["*.safetensors", "*.bin", "*.pt"],
-                revision=model_config.revision,
-            )
+        # `--load-format dummy` is the trigger for random-init: skip the
+        # checkpoint download and pass model_path=None to FMS, which will
+        # initialize the model with random weights
+        load_dummy_weights = getattr(self.load_config, "load_format", None) == "dummy"
+
+        if load_dummy_weights:
+            logger.info("Loading dummy weights (random init): skipping HF download")
+            model_path = None
+            source_arg: str | None = None
+        else:
+            is_local = os.path.isdir(model_config.model)
+            model_path = model_config.model
+            # Get location of model from HF cache.
+            if not is_local:
+                model_path = download_weights_from_hf(
+                    model_name_or_path=model_path,
+                    cache_dir=None,
+                    allow_patterns=["*.safetensors", "*.bin", "*.pt"],
+                    revision=model_config.revision,
+                )
+            source_arg = "hf"
 
         # Get any fixes needed that must be patched into the kwargs;
         # currently this is only use for multimodal models / llava next
@@ -199,12 +211,17 @@ class SpyreCausalLM(nn.Module):
                     architecture="granite_swa",
                     variant="3b",
                     model_path=model_path,
-                    source="hf",
+                    source=source_arg,
                     distributed_strategy=distributed_strategy,
                     group=dist.group.WORLD,
                     fused_weights=False,
                 )
             else:
+                if load_dummy_weights:
+                    raise NotImplementedError(
+                        "load_dummy_weights is only supported for explicitly routed "
+                        "architectures (currently: granite_swa)."
+                    )
                 self.fms_model = get_model(
                     architecture="hf_pretrained",
                     model_path=model_path,
