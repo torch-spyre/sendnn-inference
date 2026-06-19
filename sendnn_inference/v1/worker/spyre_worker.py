@@ -416,7 +416,7 @@ class SpyreWorker(WorkerBase):
         logger.info("load model took %.3fs", load_model_total_t)
 
     def _gen_warmup_block_ids(self, num_tokens: int) -> tuple[list[int]]:
-        num_blocks = math.ceil(num_tokens / 64)
+        num_blocks = math.ceil(num_tokens / SpyrePlatform.get_block_size())
         start = self.warmup_block_ids
         end = start + num_blocks
         self.warmup_block_ids = end
@@ -519,8 +519,34 @@ class SpyreWorker(WorkerBase):
             finished_req_ids=set(),
             **_get_extra_args(),
         )
-        logger.info("[WARMUP] Deploying to device...")
+        logger.info("[WARMUP] Deploying prefill to device...")
         self.execute_model(scheduler_output)
+
+        # Mirror the prefill deploy with a decode deploy: ensure the compiled
+        # decode program is also installed on the device before runtime, so
+        # the first runtime decode does not pay a one-time deploy cost
+        # (observed as elevated ITL on the very first decoded token).
+        decode_cached = CachedRequestData.make_empty()
+        decode_cached.req_ids = [deploy_req.req_id]
+        if prompt_len % SpyrePlatform.get_block_size() == 0:
+            decode_cached.new_block_ids = [self._gen_warmup_block_ids(1)]
+        else:
+            decode_cached.new_block_ids = [([],)]
+        random_idx = int(torch.randint(0, len(valid_token_ids_tensor), (1,)).item())
+        decode_cached.new_token_ids = [[int(valid_token_ids_tensor[random_idx].item())]]
+        decode_cached.num_computed_tokens = [prompt_len]
+
+        decode_scheduler_output = SchedulerOutput(
+            scheduled_new_reqs=[],
+            scheduled_cached_reqs=decode_cached,
+            num_scheduled_tokens={deploy_req.req_id: 1},
+            total_num_scheduled_tokens=1,
+            finished_req_ids=set(),
+            **_get_extra_args(),
+        )
+        logger.info("[WARMUP] Deploying decode to device...")
+        self.execute_model(decode_scheduler_output)
+
         self._cleanup_model_runner(request=[deploy_req])
 
         model_runner.complete_warmup()
@@ -697,7 +723,7 @@ class SpyreWorker(WorkerBase):
         cached_request_data.req_ids = [req.req_id for req in requests]
         cached_request_data.new_block_ids = []
         for req in requests:
-            if len(req.prompt_token_ids) % 64 == 0:
+            if len(req.prompt_token_ids) % SpyrePlatform.get_block_size() == 0:
                 cached_request_data.new_block_ids.append(self._gen_warmup_block_ids(1))
             else:
                 cached_request_data.new_block_ids.append(([],))
