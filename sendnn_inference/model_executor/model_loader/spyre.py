@@ -44,6 +44,23 @@ class SpyreAttentionMetadata:
     is_prefill: bool
 
 
+def _granite_swa_variant_from_hf(cfg: PretrainedConfig) -> str:
+    """Pick the FMS granite_swa variant string from the HF config dimensions.
+
+    Mirrors the registrations in fms/models/granite_swa.py:
+      3b:  hidden_size=2560, num_hidden_layers=24
+      20b: hidden_size=4096, num_hidden_layers=44
+    """
+    if cfg.hidden_size == 4096 and cfg.num_hidden_layers == 44:
+        return "20b"
+    if cfg.hidden_size == 2560 and cfg.num_hidden_layers == 24:
+        return "3b"
+    raise ValueError(
+        f"No registered granite_swa variant for "
+        f"hidden_size={cfg.hidden_size}, num_hidden_layers={cfg.num_hidden_layers}"
+    )
+
+
 class SpyreCausalLM(nn.Module):
     def __init__(
         self,
@@ -209,7 +226,7 @@ class SpyreCausalLM(nn.Module):
                 # granite_swa (which resolves to GraniteSWAForCausalLM)
                 self.fms_model = get_model(
                     architecture="granite_swa",
-                    variant="3b",
+                    variant=_granite_swa_variant_from_hf(self.config),
                     model_path=model_path,
                     source=source_arg,
                     distributed_strategy=distributed_strategy,
