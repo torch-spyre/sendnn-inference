@@ -1007,7 +1007,7 @@ class ChunkedPrefillModelRunner(
             # every rank runs the vision encoder independently.  This is the
             # original behaviour — no SHM, no coordination overhead.
             t0 = time.time()
-             with torch.inference_mode():
+            with torch.inference_mode():
                 full_embeds = self.model.get_maybe_mm_embeddings(
                     full_input_tokens,
                     mm_features=mm_features,
