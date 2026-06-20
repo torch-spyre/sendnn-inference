@@ -13,3 +13,5 @@ models:
     revision: cf74d8acd4f198de950bf004b262e6accfed5d2c
   - repo: cross-encoder/stsb-roberta-large
     revision: 2b12c2c0088918e76151fd5937b7bba986ef1f98
+  - repo: Qwen/Qwen3-Embedding-0.6B
+    revision: 97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3

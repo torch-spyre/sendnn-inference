@@ -24,18 +24,37 @@ _DTYPE_TO_IDX: dict[torch.dtype, int] = {
 _IDX_TO_DTYPE: dict[int, torch.dtype] = {v: k for k, v in _DTYPE_TO_IDX.items()}
 
 
+def dtype_to_idx(dtype: torch.dtype) -> int:
+    """Encode a torch dtype as a compact integer for the broadcast metadata tensor."""
+    if dtype not in _DTYPE_TO_IDX:
+        raise ValueError(f"Unsupported dtype for SHM transfer: {dtype}")
+    return _DTYPE_TO_IDX[dtype]
+
+
+def idx_to_dtype(idx: int) -> torch.dtype:
+    """Decode a compact integer back to the corresponding torch dtype."""
+    if idx not in _IDX_TO_DTYPE:
+        raise ValueError(f"Unknown dtype index: {idx}")
+    return _IDX_TO_DTYPE[idx]
+
+
 def _shm_name(req_id: str) -> str:
     """Generate a short, deterministic POSIX SHM name for a request.
 
-    Linux NAME_MAX is 255; the shortest common constraint (macOS) is 31 chars
-    for the full '/name' string, leaving 29 for the name itself.  We use
-    'sm' + 20 hex chars = 22 chars, which is safe everywhere.
+    Uses an MD5 hash of the *full* req_id so that requests which share a
+    common prefix (e.g. all benchmark requests in a run share the
+    ``chatcmpl-bench-<uuid>-`` prefix) still get distinct SHM names.
 
-    We hash the full req_id rather than truncating it so that requests sharing
-    a common prefix (e.g. 'chatcmpl-bench-...') produce distinct names when
-    multiple are batch-encoded simultaneously.
+    Truncating the req_id (the previous approach) caused silent collisions:
+    ``chatcmpl-bench-34e3ed2d-1-…`` and ``chatcmpl-bench-34e3ed2d-39-…``
+    both hash to the same 20-char prefix, so every request in the benchmark
+    wrote to the same SHM segment — corrupting each other's embeddings.
+
+    Linux NAME_MAX is 255; macOS requires ≤ 30 chars for the name itself
+    (the kernel prefixes it with ``/``).  'sm' + 16 hex chars = 18 chars,
+    safely within every platform's limit.
     """
-    digest = hashlib.sha1(req_id.encode(), usedforsecurity=False).hexdigest()[:20]
+    digest = hashlib.md5(req_id.encode(), usedforsecurity=False).hexdigest()[:16]
     return f"sm{digest}"
 
 

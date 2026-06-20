@@ -124,13 +124,14 @@ class VisionEncoderRunner:
         input_ids = torch.tensor(
             request.prompt_token_ids, dtype=torch.int64
         ).unsqueeze(0)
-        embeds = self.mm_utils_cls.get_maybe_mm_embeddings(
-            self.fms_model,
-            input_ids,
-            request.mm_features,
-            is_decode=False,
-            mm_device=self.mm_device,
-        )
+        with torch.inference_mode():
+            embeds = self.mm_utils_cls.get_maybe_mm_embeddings(
+                self.fms_model,
+                input_ids,
+                request.mm_features,
+                is_decode=False,
+                mm_device=self.mm_device,
+            )
         return embeds.cpu().contiguous()
 
 

@@ -27,7 +27,7 @@ concurrency:
 
 jobs:
   test:
-    timeout-minutes: 20
+    timeout-minutes: 25
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -108,6 +108,15 @@ jobs:
               flags: "--timeout=300"
             os: "ubuntu-latest"
             python_version: "3.12"
+          - vllm_version:
+              name: "vLLM:0.22.0"
+              repo: "git+https://github.com/vllm-project/vllm --tag v0.22.0"
+            test_suite:
+              name: "backward compat"
+              markers: "compat or (cpu and basic and not quantized)"
+              flags: "--timeout=300"
+            os: "ubuntu-latest"
+            python_version: "3.12"
 
 
         # Only run vllm:main jobs on PRs with `vllm:main` label
@@ -126,10 +135,14 @@ jobs:
     steps:
       - name: "Lightweight disk cleanup"
         # super lightweight cleanup, not nearly as much as actions/free-up-disk-space
+        # all rm -rf, no apt/docker — completes in < 1s and frees ~20 GB
         shell: bash
         run: |
-          rm -rf /usr/share/swift
-          rm -rf /user/local/share/chromium
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc /usr/local/.ghcup
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/share/swift
+          sudo rm -rf /usr/local/share/chromium
           sudo rm -rf /usr/local/share/powershell
 
       - name: "Checkout"
