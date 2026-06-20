@@ -112,10 +112,12 @@ class VisionEncoderRunner:
                 mm_device = "cpu"
 
         logger.info(
-            "encoder_process: loading vision-only model from %r (device=%s, dtype=%s)",
+            "encoder_process: loading vision-only model from %r "
+            "(device=%s, dtype=%s, output_dtype=%s)",
             model_path,
             mm_device,
             mm_dtype,
+            self._decoder_dtype,
         )
         t0 = time.time()
         self.fms_model = get_model(
@@ -139,6 +141,10 @@ class VisionEncoderRunner:
         # .to(device=mm_device) would move text_embedding to NNPA, making
         # text_embeds an NNPA tensor that does not support fancy indexed
         # assignment.
+        # text_embedding stays on CPU in mm_dtype so that _merge_multimodal_embeddings
+        # produces a CPU tensor matching what the Spyre decoder expects.
+        # On s390x (NNPA), SENDNN_INFERENCE_CPU_MM_DTYPE defaults to float32 via
+        # _CPU_MM_DTYPE_PLATFORM_DEFAULTS so mm_dtype is already float32 here.
         self.fms_model.to(dtype=mm_dtype).eval()
         if mm_device != "cpu":
             mm_prefixes = self.mm_utils_cls.mm_parameter_prefixes
