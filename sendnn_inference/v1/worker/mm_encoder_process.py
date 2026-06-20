@@ -138,7 +138,9 @@ class VisionEncoderRunner:
 # ── Process entry point ───────────────────────────────────────────────────────
 
 
-def encoder_process_main(vllm_config: VllmConfig, job_queue, result_queue) -> None:
+def encoder_process_main(
+    vllm_config: VllmConfig, job_queue, result_queue, stop_event
+) -> None:
     """Entry point for the vision encoder subprocess.
 
     Loads the vision-only model, signals READY, then serves encode jobs.
@@ -146,9 +148,13 @@ def encoder_process_main(vllm_config: VllmConfig, job_queue, result_queue) -> No
     is put on the result queue so all TP workers can read the embedding
     independently without a rank-0 tensor broadcast.
 
+    ``stop_event`` is a ``multiprocessing.Event`` set by the executor on
+    shutdown.  The job loop polls it via a timeout on ``job_queue.get`` so
+    the process exits cleanly on both graceful and abrupt server termination.
+
     Job loop:
       get(MMEncodeRequest) → encode → write SHM → put (req_id, shape, dtype)
-    Exits on None sentinel.
+    Exits when stop_event is set or None sentinel is received.
     """
     logger.info("encoder_process: starting")
 
@@ -165,8 +171,15 @@ def encoder_process_main(vllm_config: VllmConfig, job_queue, result_queue) -> No
     result_queue.put("READY")
     logger.info("encoder_process: ready, waiting for jobs")
 
-    while True:
-        job = job_queue.get()
+    while not stop_event.is_set():
+        try:
+            job = job_queue.get(timeout=1.0)
+        except KeyboardInterrupt:
+            logger.info("encoder_process: interrupted, exiting")
+            break
+        except Exception:
+            # queue.Empty from timeout — loop back and re-check stop_event.
+            continue
         if job is None:
             logger.info("encoder_process: shutdown received")
             break

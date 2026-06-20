@@ -23,7 +23,6 @@ prefill time.
 
 import multiprocessing
 import queue as queue_mod
-from multiprocessing.managers import SyncManager
 from typing import Any, Callable
 
 from vllm.logger import init_logger
@@ -41,9 +40,9 @@ class SpyreMultiprocExecutor(MultiprocExecutor):
     def _init_executor(self) -> None:
         logger.info("SpyreMultiprocExecutor._init_executor: custom executor active")
         self._mm_encoder_proc: multiprocessing.Process | None = None
-        self._mm_manager: SyncManager | None = None
-        self._mm_job_queue = None
-        self._mm_result_queue = None
+        self._mm_job_queue: multiprocessing.Queue | None = None
+        self._mm_result_queue: multiprocessing.Queue | None = None
+        self._mm_stop_event: multiprocessing.Event | None = None
         # Number of encode jobs submitted but not yet collected.
         self._mm_in_flight: int = 0
         super()._init_executor()
@@ -178,18 +177,32 @@ class SpyreMultiprocExecutor(MultiprocExecutor):
         from sendnn_inference.v1.worker.mm_encoder_process import encoder_process_main
 
         try:
-            # Create queues (Manager queues are picklable proxy objects).
-            self._mm_manager = SyncManager()
-            self._mm_manager.start()
-            self._mm_job_queue = self._mm_manager.Queue()
-            self._mm_result_queue = self._mm_manager.Queue()
+            # Plain multiprocessing queues and event — no extra server process,
+            # automatically closed when the executor (their owner) exits.
+            ctx_q = multiprocessing.get_context("spawn")
+            self._mm_job_queue = ctx_q.Queue()
+            self._mm_result_queue = ctx_q.Queue()
+            self._mm_stop_event = ctx_q.Event()
 
-            # Spawn as non-daemon (executor is non-daemon; workers are daemon).
+            # Spawn as daemon so the process is automatically killed when the
+            # executor (its parent) exits — including unclean server termination.
+            # Using daemon=True is safe here because the encoder process never
+            # spawns children of its own (Python forbids daemon processes from
+            # doing so, but the encoder process only loads a model and serves
+            # encode jobs, so that restriction is irrelevant).
+            # Note: workers are daemon too; we needed non-daemon in earlier
+            # approaches that tried to spawn from inside the workers — here the
+            # spawn is from the non-daemon executor, so daemon=True is fine.
             ctx = multiprocessing.get_context("spawn")
             self._mm_encoder_proc = ctx.Process(
                 target=encoder_process_main,
-                args=(self.vllm_config, self._mm_job_queue, self._mm_result_queue),
-                daemon=False,
+                args=(
+                    self.vllm_config,
+                    self._mm_job_queue,
+                    self._mm_result_queue,
+                    self._mm_stop_event,
+                ),
+                daemon=True,
                 name="mm-encoder",
             )
             self._mm_encoder_proc.start()
@@ -217,38 +230,23 @@ class SpyreMultiprocExecutor(MultiprocExecutor):
             self._cleanup_encoder()
 
     def _cleanup_encoder(self) -> None:
+        if self._mm_stop_event is not None:
+            self._mm_stop_event.set()
         if self._mm_encoder_proc and self._mm_encoder_proc.is_alive():
-            try:
-                if self._mm_job_queue:
-                    self._mm_job_queue.put(None)
-                self._mm_encoder_proc.join(timeout=5)
-            finally:
-                if self._mm_encoder_proc.is_alive():
-                    self._mm_encoder_proc.terminate()
+            self._mm_encoder_proc.join(timeout=5)
+            if self._mm_encoder_proc.is_alive():
+                self._mm_encoder_proc.terminate()
         self._mm_encoder_proc = None
-        if self._mm_manager:
-            try:
-                self._mm_manager.shutdown()
-            except Exception:
-                pass
-        self._mm_manager = None
+        self._mm_stop_event = None
         self._mm_job_queue = None
         self._mm_result_queue = None
         self._mm_in_flight = 0
 
     def shutdown(self) -> None:
-        if self._mm_job_queue is not None:
-            try:
-                self._mm_job_queue.put(None)  # sentinel
-            except Exception:
-                pass
+        if self._mm_stop_event is not None:
+            self._mm_stop_event.set()
         if self._mm_encoder_proc and self._mm_encoder_proc.is_alive():
             self._mm_encoder_proc.join(timeout=10)
             if self._mm_encoder_proc.is_alive():
                 self._mm_encoder_proc.terminate()
-        if self._mm_manager:
-            try:
-                self._mm_manager.shutdown()
-            except Exception:
-                pass
         super().shutdown()
