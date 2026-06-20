@@ -119,7 +119,20 @@ class VisionEncoderRunner:
             model_path=model_path,
             vision_only=True,
         )
-        self.fms_model.to(device=mm_device, dtype=mm_dtype).eval()
+        # Replicate _cast_params_for_spyre's selective device placement:
+        # cast everything to mm_dtype on CPU first, then move only the vision
+        # processing modules to mm_device.  text_embedding must stay on CPU so
+        # that _merge_multimodal_embeddings produces a CPU tensor matching what
+        # the Spyre decoder was compiled for.  A blanket .to(device=mm_device)
+        # would move text_embedding to NNPA, making text_embeds an NNPA tensor
+        # which does not support fancy indexed assignment and would corrupt the
+        # merged output dtype/device relative to what the decoder expects.
+        self.fms_model.to(dtype=mm_dtype).eval()
+        if mm_device != "cpu":
+            for module_name in ["vision_tower", "multi_modal_projector"]:
+                module = getattr(self.fms_model, module_name, None)
+                if module is not None:
+                    module.to(device=mm_device, dtype=mm_dtype)
 
         # Resolve utils class AFTER get_model() so FMS has registered its adapters.
         # Importing sendnn_inference.multimodal before that triggers llava_next.py's
@@ -205,6 +218,10 @@ def encoder_process_main(
         )
         try:
             embeds = runner.execute_model(job)
+            logger.debug(
+                "[parallel-check] encoder_proc: embeds shape=%s dtype=%s device=%s",
+                tuple(embeds.shape), embeds.dtype, embeds.device,
+            )
 
             # Write embedding to POSIX SHM; close our handle without unlinking
             # so all TP workers can still open it by name.  Rank 0 will unlink
