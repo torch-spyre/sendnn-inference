@@ -76,6 +76,10 @@ class VisionEncoderRunner:
 
     def __init__(self, vllm_config: VllmConfig) -> None:
         from fms.models import get_model
+        # Spyre always compiles the LLM decoder in float16 (see SpyreCausalLM.get_dtype()).
+        # NNPA may return float32 embeddings even when model weights are float16;
+        # cast to float16 before writing to SHM so the decoder sees the compiled dtype.
+        self._decoder_dtype = torch.float16
 
         model_config = vllm_config.model_config
         model_path = model_config.model
@@ -119,25 +123,29 @@ class VisionEncoderRunner:
             model_path=model_path,
             vision_only=True,
         )
-        # Replicate _cast_params_for_spyre's selective device placement:
-        # cast everything to mm_dtype on CPU first, then move only the vision
-        # processing modules to mm_device.  text_embedding must stay on CPU so
-        # that _merge_multimodal_embeddings produces a CPU tensor matching what
-        # the Spyre decoder was compiled for.  A blanket .to(device=mm_device)
-        # would move text_embedding to NNPA, making text_embeds an NNPA tensor
-        # which does not support fancy indexed assignment and would corrupt the
-        # merged output dtype/device relative to what the decoder expects.
-        self.fms_model.to(dtype=mm_dtype).eval()
-        if mm_device != "cpu":
-            for module_name in ["vision_tower", "multi_modal_projector"]:
-                module = getattr(self.fms_model, module_name, None)
-                if module is not None:
-                    module.to(device=mm_device, dtype=mm_dtype)
 
         # Resolve utils class AFTER get_model() so FMS has registered its adapters.
         # Importing sendnn_inference.multimodal before that triggers llava_next.py's
         # module-level extend_adapter call which requires the base FMS adapter.
         self.mm_utils_cls = _resolve_mm_utils_cls(model_config.hf_config)
+
+        # Replicate _cast_params_for_spyre's selective device placement using
+        # mm_parameter_prefixes from the MM utils — the same source of truth as
+        # SpyreCausalLM uses.  Cast everything to mm_dtype on CPU first, then
+        # move only the vision processing modules (vision_tower,
+        # multi_modal_projector) to mm_device.  text_embedding must stay on CPU
+        # so that _merge_multimodal_embeddings produces a CPU tensor matching
+        # what the Spyre decoder was compiled for.  A blanket
+        # .to(device=mm_device) would move text_embedding to NNPA, making
+        # text_embeds an NNPA tensor that does not support fancy indexed
+        # assignment.
+        self.fms_model.to(dtype=mm_dtype).eval()
+        if mm_device != "cpu":
+            mm_prefixes = self.mm_utils_cls.mm_parameter_prefixes
+            mm_module_names = {p.rstrip(".") for p in mm_prefixes}
+            for module_name, module in self.fms_model.named_modules():
+                if module_name in mm_module_names:
+                    module.to(device=mm_device, dtype=mm_dtype)
         logger.info("encoder_process: mm_utils=%s", self.mm_utils_cls.__name__)
         torch.set_grad_enabled(False)
         self.mm_device = mm_device
@@ -158,7 +166,11 @@ class VisionEncoderRunner:
                 is_decode=False,
                 mm_device=self.mm_device,
             )
-        return embeds.cpu().contiguous()
+        # Cast to the Spyre decoder's dtype before moving to CPU.  NNPA computes
+        # in float32 internally and returns float32 even when model weights are
+        # float16; the Spyre decoder was compiled for model_config.dtype (float16)
+        # so a dtype mismatch would trigger recompilation → "Insufficient sengraphs".
+        return embeds.to(dtype=self._decoder_dtype).cpu().contiguous()
 
 
 # ── Process entry point ───────────────────────────────────────────────────────
@@ -218,10 +230,6 @@ def encoder_process_main(
         )
         try:
             embeds = runner.execute_model(job)
-            logger.debug(
-                "[parallel-check] encoder_proc: embeds shape=%s dtype=%s device=%s",
-                tuple(embeds.shape), embeds.dtype, embeds.device,
-            )
 
             # Write embedding to POSIX SHM; close our handle without unlinking
             # so all TP workers can still open it by name.  Rank 0 will unlink

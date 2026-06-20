@@ -44,7 +44,6 @@ from sendnn_inference.utils import exact_div
 from sendnn_inference.v1.sample.spyre_logits_processor import build_logitsprocs_for_cb
 from sendnn_inference.v1.worker.mm_shared_memory import (
     cleanup_embeddings,
-    cleanup_embeddings_by_name,
     dtype_to_idx,
     idx_to_dtype,
     read_embeddings,
