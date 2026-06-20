@@ -95,6 +95,18 @@ class VisionEncoderRunner:
         mm_device = envs_spyre.SENDNN_INFERENCE_MM_DEVICE
         mm_dtype = envs_spyre.SENDNN_INFERENCE_CPU_MM_DTYPE
 
+        # Register the nnpa privateuse1 backend before any model operations.
+        # The main worker processes do this via _cast_params_for_spyre(), but
+        # the encoder subprocess is spawned fresh and has no such path.
+        if mm_device == "nnpa":
+            from sendnn_inference.utils import ensure_nnpa_registered
+
+            if not ensure_nnpa_registered():
+                logger.warning(
+                    "encoder_process: nnpa device unavailable — falling back to CPU"
+                )
+                mm_device = "cpu"
+
         logger.info(
             "encoder_process: loading vision-only model from %r (device=%s, dtype=%s)",
             model_path,

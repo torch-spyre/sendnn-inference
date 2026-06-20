@@ -1183,6 +1183,11 @@ class ChunkedPrefillModelRunner(
                     mm_features=mm_features,
                     is_decode=False,
                 )
+            # Ensure embeddings are on CPU before passing to the Spyre decoder.
+            # When the vision tower runs on NNPA, get_maybe_mm_embeddings returns
+            # an NNPA tensor; slicing it into a CPU input_embeds in
+            # _prepare_chunked_prefill would fail without this explicit move.
+            full_embeds = full_embeds.cpu().contiguous()
             t_elapsed = time.time() - t0
             logger.info("maybe_mm_embedding processing time: %.2fms", (t_elapsed * 1000))
             self.perf_logger.log(
