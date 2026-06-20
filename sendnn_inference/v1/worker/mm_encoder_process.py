@@ -36,7 +36,7 @@ def _resolve_mm_utils_cls(hf_config):
 
     Tries exact class match first (MM_HF_CFG_REGISTRY), then falls back to a
     scan by ``model_type`` string — needed when hf_config is deserialized as the
-    base ``PreTrainedConfig`` in the encoder subprocess.
+    base ``PreTrainedConfig`` in the vision encoder subprocess.
     """
     from sendnn_inference.multimodal import MM_HF_CFG_REGISTRY
 
@@ -71,9 +71,10 @@ class VisionEncoderRunner:
 
     Uses ``get_model("hf_pretrained", model_path=..., vision_only=True)`` so
     only the vision tower, projector, and text embedding are loaded from disk.
+    Model loading happens in ``__init__`` so construction raises on failure.
     """
 
-    def load_model(self, vllm_config: VllmConfig) -> None:
+    def __init__(self, vllm_config: VllmConfig) -> None:
         from fms.models import get_model
 
         model_config = vllm_config.model_config
@@ -119,7 +120,7 @@ class VisionEncoderRunner:
             "encoder_process: vision model loaded in %.2fs", time.time() - t0
         )
 
-    def encode(self, request) -> torch.Tensor:
+    def execute_model(self, request) -> torch.Tensor:
         """Encode a single MMEncodeRequest and return a CPU-contiguous tensor."""
         input_ids = torch.tensor(
             request.prompt_token_ids, dtype=torch.int64
@@ -143,7 +144,7 @@ def encoder_process_main(
 ) -> None:
     """Entry point for the vision encoder subprocess.
 
-    Loads the vision-only model, signals READY, then serves encode jobs.
+    Loads the vision-only model, signals READY, then serves execute_model jobs.
     Results are written to POSIX SHM; only ``(req_id, shape, dtype)`` metadata
     is put on the result queue so all TP workers can read the embedding
     independently without a rank-0 tensor broadcast.
@@ -153,14 +154,13 @@ def encoder_process_main(
     the process exits cleanly on both graceful and abrupt server termination.
 
     Job loop:
-      get(MMEncodeRequest) → encode → write SHM → put (req_id, shape, dtype)
+      get(MMEncodeRequest) → execute_model → write SHM → put (req_id, shape, dtype)
     Exits when stop_event is set or None sentinel is received.
     """
     logger.info("encoder_process: starting")
 
-    runner = VisionEncoderRunner()
     try:
-        runner.load_model(vllm_config)
+        runner = VisionEncoderRunner(vllm_config)
     except Exception as exc:
         logger.error(
             "encoder_process: failed to load vision model: %s", exc, exc_info=True
@@ -192,7 +192,7 @@ def encoder_process_main(
             t0,
         )
         try:
-            embeds = runner.encode(job)
+            embeds = runner.execute_model(job)
 
             # Write embedding to POSIX SHM; close our handle without unlinking
             # so all TP workers can still open it by name.  Rank 0 will unlink
@@ -211,6 +211,6 @@ def encoder_process_main(
             )
         except Exception as exc:
             logger.error(
-                "encoder_process: failed to encode '%s': %s", req_id, exc, exc_info=True
+                "encoder_process: failed to execute_model '%s': %s", req_id, exc, exc_info=True
             )
             result_queue.put((req_id, None, None))
