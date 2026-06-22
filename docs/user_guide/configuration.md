@@ -128,7 +128,7 @@ For multimodal models, vision encoding is offloaded to the CPU. In order to prev
 Text-only models set the number of available threads through dividing the number of available CPUs available by number of worker and only assigning that per worker.
 Multimodal models currently set the number of available threads to the number of available cpus available, ignoring the number of workers. This may be changed in the future.
 
-The maximum available number of CPUs also can be set using `SENDNN_INFERENCE_NUM_CPUS`. 
+The maximum available number of CPUs also can be set using `SENDNN_INFERENCE_NUM_CPUS`.
 
 ## Pooling Models
 
