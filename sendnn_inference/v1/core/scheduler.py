@@ -632,7 +632,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             requests_by_step.append((req, self.last_step[req.request_id]))
             was_paused.add(req.request_id)
 
-        for req in self.paused_decoding_requests:
+        for req in decoding_requests:
             requests_by_step.append((req, self.last_step[req.request_id]))
             was_running.add(req.request_id)
 
