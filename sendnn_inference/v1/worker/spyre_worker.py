@@ -275,9 +275,13 @@ class SpyreWorker(WorkerBase):
                 self.vllm_config.scheduler_config
             )
         else:
-            self.model_runner = ChunkedPrefillModelRunner(
-                self.vllm_config, self.is_driver_worker, self.rank
-            )
+            if envs_spyre.SENDNN_INFERENCE_SIM_MODE:
+                from sendnn_inference.v1.sim import SimulatedChunkedPrefillModelRunner
+
+                runner_cls = SimulatedChunkedPrefillModelRunner
+            else:
+                runner_cls = ChunkedPrefillModelRunner
+            self.model_runner = runner_cls(self.vllm_config, self.is_driver_worker, self.rank)
 
         self._env_initialized = False
         # Torch profiler. Enabled and configured through ProfilerConfig. Set via:

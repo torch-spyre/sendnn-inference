@@ -773,6 +773,12 @@ class ChunkedPrefillModelRunner(
             rank=self.rank,
         )
 
+    def _after_forward_step(self, *args, **kwargs) -> None:
+        """Hook for SimulatedChunkedPrefillModelRunner. No-op by default."""
+
+    def _on_request_finished(self, *args, **kwargs) -> None:
+        """Hook for SimulatedChunkedPrefillModelRunner. No-op by default."""
+
     @property
     def vocab_size(self) -> int:
         model_cfg = self.model.fms_model.config
@@ -1629,6 +1635,8 @@ class ChunkedPrefillModelRunner(
 
         if scheduler_output.finished_req_ids:
             for req_id in scheduler_output.finished_req_ids:
+                # no-op here (hook only for sim mode)
+                self._on_request_finished(req_id)
                 self.input_batch.remove_request(req_id)
                 # TODO: Processing multiple removals at once can break alignment
                 # of logitprocs. Refactor so that we can batch removals to the
@@ -1725,6 +1733,8 @@ class ChunkedPrefillModelRunner(
                 masks=None,
                 is_prompt=model_input.is_prompt,
             )
+        # no-op here (hook only for sim mode)
+        self._after_forward_step(model_input, scheduler_output)
 
         # If the prompt is being prefilled we don't have to sample
         # and generate a new token.

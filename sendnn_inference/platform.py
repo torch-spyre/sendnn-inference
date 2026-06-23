@@ -242,6 +242,18 @@ class SpyrePlatform(Platform):
         if not is_decoder and not is_pooling:
             raise ValueError("Only the 'generate' and 'pooling' runners are supported")
 
+        if envs_spyre.SENDNN_INFERENCE_SIM_MODE:
+            if parallel_config.tensor_parallel_size != 1:
+                raise ValueError(
+                    "SENDNN_INFERENCE_SIM_MODE only supports tensor_parallel_size=1, "
+                    f"got {parallel_config.tensor_parallel_size}."
+                )
+            if envs_spyre.SENDNN_INFERENCE_DYNAMO_BACKEND != "eager":
+                raise ValueError(
+                    "SENDNN_INFERENCE_SIM_MODE requires SENDNN_INFERENCE_DYNAMO_BACKEND=eager, "
+                    f"got '{envs_spyre.SENDNN_INFERENCE_DYNAMO_BACKEND}'."
+                )
+
         if parallel_config.worker_cls == "auto":
             parallel_config.worker_cls = "sendnn_inference.v1.worker.spyre_worker.SpyreWorker"
 
@@ -260,9 +272,14 @@ class SpyrePlatform(Platform):
             os.environ["FLEX_DEVICE"] = "COMPILE"
 
         if is_decoder:
-            scheduler_config.scheduler_cls = (
-                "sendnn_inference.v1.core.scheduler.ChunkedPrefillSpyreScheduler"
-            )
+            if envs_spyre.SENDNN_INFERENCE_SIM_MODE:
+                scheduler_config.scheduler_cls = (
+                    "sendnn_inference.v1.sim.SimulatedChunkedPrefillSpyreScheduler"
+                )
+            else:
+                scheduler_config.scheduler_cls = (
+                    "sendnn_inference.v1.core.scheduler.ChunkedPrefillSpyreScheduler"
+                )
 
             if (
                 vllm_config.model_config.quantization
