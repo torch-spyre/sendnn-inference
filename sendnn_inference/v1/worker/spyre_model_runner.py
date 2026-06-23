@@ -768,10 +768,15 @@ class ChunkedPrefillModelRunner(
         self.perf_logger = create_perf_metric_logger(rank=rank)
 
         # Pre-computed MM embeddings for waiting requests (keyed by request_id).
-        # Populated by store_mm_embeddings() (async path via executor) or by
-        # pre_encode_mm_requests() (Phase 1 inline fallback).
+        # Populated by store_mm_embeddings() (async path via executor).
         # Consumed and removed by add_new_request() when the request begins prefill.
         self.pending_mm_embeddings: dict[str, torch.Tensor] = {}
+
+        # Request IDs that finished (aborted/completed) while their encode job
+        # was still in-flight.  store_mm_embeddings() checks this set and discards
+        # late-arriving results rather than letting them leak in pending_mm_embeddings.
+        # Entries are removed once the late result arrives (self-cleaning).
+        self._finished_encode_req_ids: set[str] = set()
 
     def load_model(self) -> None:
         self._model = SpyreCausalLM(
@@ -806,6 +811,14 @@ class ChunkedPrefillModelRunner(
         blocks are kept alive by the executor until this call returns.
         """
         for req_id, shape, dtype in results:
+            if req_id in self._finished_encode_req_ids:
+                # Request finished while its encode was in-flight; discard the
+                # late result and clean up the tombstone entry.
+                self._finished_encode_req_ids.discard(req_id)
+                logger.debug(
+                    "Discarding late async MM embeddings for finished req '%s'", req_id
+                )
+                continue
             embeds = read_embeddings(req_id, shape, dtype)
             self.pending_mm_embeddings[req_id] = embeds
             logger.debug(
@@ -1674,8 +1687,11 @@ class ChunkedPrefillModelRunner(
         if scheduler_output.finished_req_ids:
             for req_id in scheduler_output.finished_req_ids:
                 self.input_batch.remove_request(req_id)
-                # Discard any pending pre-encoded embeddings for aborted requests
-                self.pending_mm_embeddings.pop(req_id, None)
+                # If the embedding was already delivered, discard it now.
+                # If the encode is still in-flight, mark the req_id so that
+                # store_mm_embeddings() discards the late result when it arrives.
+                if self.pending_mm_embeddings.pop(req_id, None) is None:
+                    self._finished_encode_req_ids.add(req_id)
                 # TODO: Processing multiple removals at once can break alignment
                 # of logitprocs. Refactor so that we can batch removals to the
                 # `input_batch`

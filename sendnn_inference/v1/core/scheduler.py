@@ -246,7 +246,11 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         # ModelRunnerOutput.  scheduler_output is the same object in both places.
         for req_id in getattr(scheduler_output, "_spyre_newly_encoded_req_ids", []):
             self._mm_encoding_submitted.discard(req_id)
-            self._mm_encoding_ready.add(req_id)
+            # Only promote to ready if the request is still known to the scheduler.
+            # If it was aborted while encoding was in-flight, finish_requests already
+            # removed it — skip to avoid a stale _mm_encoding_ready entry.
+            if req_id in self.requests:
+                self._mm_encoding_ready.add(req_id)
         # Abort any request whose encode job failed — no retries.
         for req_id in getattr(scheduler_output, "_spyre_failed_encode_req_ids", []):
             logger.error("MM encode failed for req '%s' — aborting request", req_id)

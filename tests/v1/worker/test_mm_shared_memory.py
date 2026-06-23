@@ -344,6 +344,7 @@ class TestStoreMmEmbeddings:
         runner.rank = 0
         runner.requests = {}
         runner.pending_mm_embeddings = {}
+        runner._finished_encode_req_ids = set()
         return runner
 
     def test_stores_embedding_for_waiting_request(self):
@@ -391,3 +392,23 @@ class TestStoreMmEmbeddings:
 
         assert req_id in runner.pending_mm_embeddings
         assert runner.pending_mm_embeddings[req_id].shape == torch.Size(shape)
+
+    def test_discards_late_result_for_finished_request(self):
+        """If a request finishes while its encode is in-flight, the late-arriving
+        result must be discarded and the tombstone entry removed."""
+        runner = self._make_runner()
+        runner._finished_encode_req_ids = {"late-req"}  # marked finished by _update_batch
+
+        req_id = "late-req"
+        shape = (1, 4, 8)
+        dtype = torch.float16
+        t = torch.zeros(shape, dtype=dtype)
+        shm = write_embeddings(t, req_id)
+        try:
+            runner.store_mm_embeddings([(req_id, shape, dtype)])
+        finally:
+            cleanup_embeddings(shm)
+            _cleanup_if_exists(req_id)
+
+        assert req_id not in runner.pending_mm_embeddings
+        assert req_id not in runner._finished_encode_req_ids  # self-cleaned

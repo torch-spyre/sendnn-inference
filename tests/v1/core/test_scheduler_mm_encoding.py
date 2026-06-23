@@ -62,6 +62,7 @@ def scheduler():
     sched.total_reserved_blocks = 0
     sched.reserved_blocks = {}
     sched.max_batch_tkv_limit = "8192"
+    sched.requests = {}  # vLLM base Scheduler attribute: req_id → Request
     sched._mm_encoding_submitted = set()
     sched._mm_encoding_ready = set()
     sched._get_required_blocks = lambda req, *a, **k: (0, 0)
@@ -269,10 +270,12 @@ class TestUpdateFromOutput:
         return out
 
     def test_newly_encoded_moves_to_ready(self, scheduler):
-        """_spyre_newly_encoded_req_ids must move req_ids to _mm_encoding_ready."""
+        """_spyre_newly_encoded_req_ids must move req_ids to _mm_encoding_ready
+        when the request is still live (present in scheduler.requests)."""
         scheduler._mm_encoding_submitted = {"req-A"}
         scheduler._mm_encoding_ready = set()
         scheduler.finished_req_ids = set()
+        scheduler.requests["req-A"] = Mock()  # request still alive
 
         scheduler.update_from_output(
             self._make_sched_out(newly_encoded=["req-A"]),
@@ -281,6 +284,22 @@ class TestUpdateFromOutput:
 
         assert "req-A" in scheduler._mm_encoding_ready
         assert "req-A" not in scheduler._mm_encoding_submitted
+
+    def test_newly_encoded_skips_ready_for_aborted_request(self, scheduler):
+        """If a request was aborted while encoding, its late result must NOT
+        add a stale entry to _mm_encoding_ready."""
+        scheduler._mm_encoding_submitted = {"req-aborted"}
+        scheduler._mm_encoding_ready = set()
+        scheduler.finished_req_ids = set()
+        # req-aborted is NOT in scheduler.requests (already removed by finish_requests)
+
+        scheduler.update_from_output(
+            self._make_sched_out(newly_encoded=["req-aborted"]),
+            self._make_model_output(),
+        )
+
+        assert "req-aborted" not in scheduler._mm_encoding_ready
+        assert "req-aborted" not in scheduler._mm_encoding_submitted
 
     def test_failed_encode_aborts_request(self, scheduler):
         """_spyre_failed_encode_req_ids must abort the request immediately."""
