@@ -40,7 +40,6 @@ def _make_mm_encode_request(req_id="req-1"):
 
 
 class TestResolveMmUtilsCls:
-
     def test_model_type_scan_fallback_for_base_pretrained_config(self):
         """When hf_config is a base PretrainedConfig (Pydantic serialization loss),
         the fallback scan by model_type string must still find the right class."""

@@ -205,7 +205,5 @@ def encoder_process_main(
             result_queue.put((req_id, tuple(embeds.shape), embeds.dtype))
             logger.info("maybe_mm_embedding processing time: %.2fms", t_elapsed * 1000)
         except Exception as exc:
-            logger.exception(
-                "encoder_process: failed to execute_model '%s': %s", req_id, exc
-            )
+            logger.exception("encoder_process: failed to execute_model '%s': %s", req_id, exc)
             result_queue.put((req_id, None, None))

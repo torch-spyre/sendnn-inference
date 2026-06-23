@@ -99,8 +99,10 @@ class TestCanSchedulePrefill:
         # Even with async encoder enabled and nothing in _mm_encoding_ready:
         with patch("sendnn_inference.envs.SENDNN_INFERENCE_ASYNC_MM_ENCODER", True):
             # Stub remaining checks so only the MM gate matters
-            with patch.object(scheduler, "_has_scheduling_priority", return_value=True), \
-                 patch.object(scheduler, "_satisfies_constraints", return_value=True):
+            with (
+                patch.object(scheduler, "_has_scheduling_priority", return_value=True),
+                patch.object(scheduler, "_satisfies_constraints", return_value=True),
+            ):
                 scheduler.running = []
                 scheduler.waiting.append(Mock())  # non-empty so len check triggers
                 assert scheduler.can_schedule_prefill(req) is True
@@ -118,9 +120,11 @@ class TestCanSchedulePrefill:
         req = _make_request("mm-ready", mm_features=[Mock()])
         scheduler._mm_encoding_ready = {"mm-ready"}
 
-        with patch("sendnn_inference.envs.SENDNN_INFERENCE_ASYNC_MM_ENCODER", True), \
-             patch.object(scheduler, "_has_scheduling_priority", return_value=True), \
-             patch.object(scheduler, "_satisfies_constraints", return_value=True):
+        with (
+            patch("sendnn_inference.envs.SENDNN_INFERENCE_ASYNC_MM_ENCODER", True),
+            patch.object(scheduler, "_has_scheduling_priority", return_value=True),
+            patch.object(scheduler, "_satisfies_constraints", return_value=True),
+        ):
             scheduler.running = []
             assert scheduler.can_schedule_prefill(req) is True
 
@@ -129,9 +133,11 @@ class TestCanSchedulePrefill:
         req = _make_request("mm-sync", mm_features=[Mock()])
         scheduler._mm_encoding_ready = set()  # nothing ready
 
-        with patch("sendnn_inference.envs.SENDNN_INFERENCE_ASYNC_MM_ENCODER", False), \
-             patch.object(scheduler, "_has_scheduling_priority", return_value=True), \
-             patch.object(scheduler, "_satisfies_constraints", return_value=True):
+        with (
+            patch("sendnn_inference.envs.SENDNN_INFERENCE_ASYNC_MM_ENCODER", False),
+            patch.object(scheduler, "_has_scheduling_priority", return_value=True),
+            patch.object(scheduler, "_satisfies_constraints", return_value=True),
+        ):
             scheduler.running = []
             assert scheduler.can_schedule_prefill(req) is True
 
@@ -167,15 +173,18 @@ class TestScheduleMixedQueue:
         self._mock_output.num_scheduled_tokens = {}
         self._mock_output.scheduled_new_reqs = []
         from vllm.v1.core.sched.output import CachedRequestData
+
         self._mock_output.scheduled_cached_reqs = CachedRequestData.make_empty()
 
-        with patch("sendnn_inference.envs.SENDNN_INFERENCE_ASYNC_MM_ENCODER", True), \
-             patch.object(scheduler, "_has_scheduling_priority", return_value=True), \
-             patch.object(scheduler, "_satisfies_constraints", return_value=True), \
-             patch(
-                 "vllm.v1.core.sched.scheduler.Scheduler.schedule",
-                 side_effect=lambda: self._capture_prefill_candidates(scheduler),
-             ):
+        with (
+            patch("sendnn_inference.envs.SENDNN_INFERENCE_ASYNC_MM_ENCODER", True),
+            patch.object(scheduler, "_has_scheduling_priority", return_value=True),
+            patch.object(scheduler, "_satisfies_constraints", return_value=True),
+            patch(
+                "vllm.v1.core.sched.scheduler.Scheduler.schedule",
+                side_effect=lambda: self._capture_prefill_candidates(scheduler),
+            ),
+        ):
             scheduler.schedule()
 
         scheduled_ids = {r.request_id for r in self._waiting_at_super_call}
@@ -193,15 +202,18 @@ class TestScheduleMixedQueue:
         self._mock_output.num_scheduled_tokens = {}
         self._mock_output.scheduled_new_reqs = []
         from vllm.v1.core.sched.output import CachedRequestData
+
         self._mock_output.scheduled_cached_reqs = CachedRequestData.make_empty()
 
-        with patch("sendnn_inference.envs.SENDNN_INFERENCE_ASYNC_MM_ENCODER", True), \
-             patch.object(scheduler, "_has_scheduling_priority", return_value=True), \
-             patch.object(scheduler, "_satisfies_constraints", return_value=True), \
-             patch(
-                 "vllm.v1.core.sched.scheduler.Scheduler.schedule",
-                 side_effect=lambda: self._capture_prefill_candidates(scheduler),
-             ):
+        with (
+            patch("sendnn_inference.envs.SENDNN_INFERENCE_ASYNC_MM_ENCODER", True),
+            patch.object(scheduler, "_has_scheduling_priority", return_value=True),
+            patch.object(scheduler, "_satisfies_constraints", return_value=True),
+            patch(
+                "vllm.v1.core.sched.scheduler.Scheduler.schedule",
+                side_effect=lambda: self._capture_prefill_candidates(scheduler),
+            ),
+        ):
             scheduler.schedule()
 
         scheduled_ids = {r.request_id for r in self._waiting_at_super_call}
@@ -215,8 +227,10 @@ class TestScheduleMixedQueue:
         scheduler._mm_encoding_submitted = set()
 
         with patch("sendnn_inference.envs.SENDNN_INFERENCE_ASYNC_MM_ENCODER", True):
-            with patch.object(scheduler, "_has_scheduling_priority", return_value=True), \
-                 patch.object(scheduler, "_satisfies_constraints", return_value=True):
+            with (
+                patch.object(scheduler, "_has_scheduling_priority", return_value=True),
+                patch.object(scheduler, "_satisfies_constraints", return_value=True),
+            ):
                 output = scheduler.schedule()
 
         encode_reqs = getattr(output, "_spyre_mm_encode_requests", [])
@@ -232,8 +246,10 @@ class TestScheduleMixedQueue:
         scheduler._mm_encoding_ready = set()
 
         with patch("sendnn_inference.envs.SENDNN_INFERENCE_ASYNC_MM_ENCODER", True):
-            with patch.object(scheduler, "_has_scheduling_priority", return_value=True), \
-                 patch.object(scheduler, "_satisfies_constraints", return_value=True):
+            with (
+                patch.object(scheduler, "_has_scheduling_priority", return_value=True),
+                patch.object(scheduler, "_satisfies_constraints", return_value=True),
+            ):
                 output = scheduler.schedule()
 
         encode_reqs = getattr(output, "_spyre_mm_encode_requests", [])

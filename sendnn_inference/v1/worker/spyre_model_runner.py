@@ -815,9 +815,7 @@ class ChunkedPrefillModelRunner(
                 # Request finished while its encode was in-flight; discard the
                 # late result and clean up the tombstone entry.
                 self._finished_encode_req_ids.discard(req_id)
-                logger.debug(
-                    "Discarding late async MM embeddings for finished req '%s'", req_id
-                )
+                logger.debug("Discarding late async MM embeddings for finished req '%s'", req_id)
                 continue
             embeds = read_embeddings(req_id, shape, dtype)
             self.pending_mm_embeddings[req_id] = embeds
