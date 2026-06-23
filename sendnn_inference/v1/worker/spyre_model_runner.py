@@ -1907,12 +1907,6 @@ class ChunkedPrefillModelRunner(
             else model_input.input_tokens
         )
 
-        import time as _time
-        _aiu_t0 = _time.time()
-        logger.info(
-            "[parallel-check] aiu_forward: START  rank=%d is_prompt=%s  t=%.3f",
-            self.rank, is_prefill, _aiu_t0,
-        )
         with set_forward_context(attn_metadata, self.vllm_config):
             assert (
                 self.tkv * len(scheduler_output.num_scheduled_tokens)
@@ -1928,11 +1922,6 @@ class ChunkedPrefillModelRunner(
                 masks=None,
                 is_prompt=model_input.is_prompt,
             )
-        _aiu_t1 = _time.time()
-        logger.info(
-            "[parallel-check] aiu_forward: END    rank=%d is_prompt=%s  t=%.3f  duration=%.2fs",
-            self.rank, is_prefill, _aiu_t1, _aiu_t1 - _aiu_t0,
-        )
 
         # If the prompt is being prefilled we don't have to sample
         # and generate a new token.

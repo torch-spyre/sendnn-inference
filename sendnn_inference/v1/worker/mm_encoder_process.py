@@ -21,6 +21,7 @@ from vllm.config import VllmConfig
 from vllm.model_executor.model_loader.weight_utils import download_weights_from_hf
 
 import sendnn_inference.envs as envs_spyre
+from sendnn_inference.model_executor.model_loader.spyre import cast_params_for_spyre
 from sendnn_inference.v1.worker.mm_shared_memory import write_embeddings
 
 logger = logging.getLogger(__name__)
@@ -82,6 +83,14 @@ class VisionEncoderRunner:
         self._decoder_dtype = torch.float16
 
         model_config = vllm_config.model_config
+
+        # Must be called before any NNPA or model operations.  torch_sendnn is
+        # imported inside this call and captures env vars (thread affinity, memory
+        # bandwidth) at import time.  If called after ensure_nnpa_registered() the
+        # configuration has no effect on NNPA, causing ~18× performance regression.
+        from sendnn_inference.platform import SpyrePlatform
+        SpyrePlatform.maybe_ensure_sendnn_configured(model_config)
+
         model_path = model_config.model
 
         if not os.path.isdir(model_path):
@@ -96,27 +105,12 @@ class VisionEncoderRunner:
                 revision=model_config.revision,
             )
 
-        mm_device = envs_spyre.SENDNN_INFERENCE_MM_DEVICE
-        mm_dtype = envs_spyre.SENDNN_INFERENCE_CPU_MM_DTYPE
-
-        # Register the nnpa privateuse1 backend before any model operations.
-        # The main worker processes do this via _cast_params_for_spyre(), but
-        # the encoder subprocess is spawned fresh and has no such path.
-        if mm_device == "nnpa":
-            from sendnn_inference.utils import ensure_nnpa_registered
-
-            if not ensure_nnpa_registered():
-                logger.warning(
-                    "encoder_process: nnpa device unavailable — falling back to CPU"
-                )
-                mm_device = "cpu"
-
         logger.info(
             "encoder_process: loading vision-only model from %r "
-            "(device=%s, dtype=%s, output_dtype=%s)",
+            "(mm_device=%s, mm_dtype=%s, output_dtype=%s)",
             model_path,
-            mm_device,
-            mm_dtype,
+            envs_spyre.SENDNN_INFERENCE_MM_DEVICE,
+            envs_spyre.SENDNN_INFERENCE_CPU_MM_DTYPE,
             self._decoder_dtype,
         )
         t0 = time.time()
@@ -124,6 +118,10 @@ class VisionEncoderRunner:
             "hf_pretrained",
             model_path=model_path,
             vision_only=True,
+            # Required for AIU/NNPA: fused QKV is not handled efficiently by
+            # NNPA hardware; unfused weights use the optimised NNPA path.
+            # Workers also pass fused_weights=False (see spyre.py load_weights).
+            fused_weights=False,
         )
 
         # Resolve utils class AFTER get_model() so FMS has registered its adapters.
@@ -131,30 +129,14 @@ class VisionEncoderRunner:
         # module-level extend_adapter call which requires the base FMS adapter.
         self.mm_utils_cls = _resolve_mm_utils_cls(model_config.hf_config)
 
-        # Replicate _cast_params_for_spyre's selective device placement using
-        # mm_parameter_prefixes from the MM utils — the same source of truth as
-        # SpyreCausalLM uses.  Cast everything to mm_dtype on CPU first, then
-        # move only the vision processing modules (vision_tower,
-        # multi_modal_projector) to mm_device.  text_embedding must stay on CPU
-        # so that _merge_multimodal_embeddings produces a CPU tensor matching
-        # what the Spyre decoder was compiled for.  A blanket
-        # .to(device=mm_device) would move text_embedding to NNPA, making
-        # text_embeds an NNPA tensor that does not support fancy indexed
-        # assignment.
-        # text_embedding stays on CPU in mm_dtype so that _merge_multimodal_embeddings
-        # produces a CPU tensor matching what the Spyre decoder expects.
-        # On s390x (NNPA), SENDNN_INFERENCE_CPU_MM_DTYPE defaults to float32 via
-        # _CPU_MM_DTYPE_PLATFORM_DEFAULTS so mm_dtype is already float32 here.
-        self.fms_model.to(dtype=mm_dtype).eval()
-        if mm_device != "cpu":
-            mm_prefixes = self.mm_utils_cls.mm_parameter_prefixes
-            mm_module_names = {p.rstrip(".") for p in mm_prefixes}
-            for module_name, module in self.fms_model.named_modules():
-                if module_name in mm_module_names:
-                    module.to(device=mm_device, dtype=mm_dtype)
+        self.fms_model.eval()
+        self.mm_device = cast_params_for_spyre(
+            self.fms_model,
+            self.mm_utils_cls.mm_parameter_prefixes,
+            is_fp8_model=False,
+        )
         logger.info("encoder_process: mm_utils=%s", self.mm_utils_cls.__name__)
         torch.set_grad_enabled(False)
-        self.mm_device = mm_device
         logger.info(
             "encoder_process: vision model loaded in %.2fs", time.time() - t0
         )
@@ -172,10 +154,6 @@ class VisionEncoderRunner:
                 is_decode=False,
                 mm_device=self.mm_device,
             )
-        # Cast to the Spyre decoder's dtype before moving to CPU.  NNPA computes
-        # in float32 internally and returns float32 even when model weights are
-        # float16; the Spyre decoder was compiled for model_config.dtype (float16)
-        # so a dtype mismatch would trigger recompilation → "Insufficient sengraphs".
         return embeds.to(dtype=self._decoder_dtype).cpu().contiguous()
 
 
@@ -183,7 +161,7 @@ class VisionEncoderRunner:
 
 
 def encoder_process_main(
-    vllm_config: VllmConfig, job_queue, result_queue, stop_event
+    vllm_config: VllmConfig, job_queue, result_queue, stop_event,
 ) -> None:
     """Entry point for the vision encoder subprocess.
 
@@ -212,7 +190,12 @@ def encoder_process_main(
         return
 
     result_queue.put("READY")
-    logger.info("encoder_process: ready, waiting for jobs")
+    logger.info(
+        "encoder_process: ready, waiting for jobs "
+        "(torch_num_threads=%d, OMP_NUM_THREADS=%s)",
+        torch.get_num_threads(),
+        os.environ.get("OMP_NUM_THREADS", "unset"),
+    )
 
     while not stop_event.is_set():
         try:
