@@ -109,27 +109,6 @@ class MMUtilsBase(ABC):
         """
         pass
 
-    @staticmethod
-    @abstractmethod
-    def get_mm_embeddings_batch(
-        fms_model: torch.nn.Module,
-        batch_input_ids: list[torch.Tensor],
-        batch_mm_features: list[list[MultiModalFeatureSpec]],
-        mm_device: str,
-    ) -> list[torch.Tensor]:
-        """Run the vision encoder once for all requests in the batch and return
-        per-request full-sequence embedding tensors, each of shape
-        [1, seq_len_i, emb_dim].
-
-        ``batch_input_ids[i]`` is the 1-D token-id tensor for request i.
-        ``batch_mm_features[i]`` is the mm_features list for request i (must
-        be non-empty; purely text requests must not be included).
-
-        Implementations must concatenate all images' pixel_values before the
-        single vision-tower forward pass so the encoder runs exactly once.
-        """
-        pass
-
     @abstractmethod
     def get_warmup_inputs(self, req_count: int) -> MMWarmupInputs:
         pass

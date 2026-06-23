@@ -256,8 +256,6 @@ class SpyrePlatform(Platform):
         # Use SpyreMultiprocExecutor when async MM encoding is enabled via
         # SENDNN_INFERENCE_ASYNC_MM_ENCODER=1.  The executor manages a separate
         # vision encoder subprocess that runs in parallel with AIU inference.
-        # Only meaningful for decoder models with TP > 1; for other configs the
-        # executor is a no-op (encoder subprocess is not started).
         # Pass the class object directly — Executor.get_class handles
         # isinstance(backend, type) before string-based dispatch, which avoids
         # Pydantic's Literal validator silently dropping a string class path.

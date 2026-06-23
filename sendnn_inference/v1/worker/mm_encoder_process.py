@@ -2,7 +2,7 @@
 
 The encoder process loads only the vision components of the multimodal model
 (vision_tower + multi_modal_projector + text_embedding) using FMS's
-``get_model(..., vision_only=True)``, which selectively loads ~4 GB of vision
+``get_model(..., vision_only=True)``, which selectively loads vision
 weights from the checkpoint — skipping the LLM decoder entirely.
 
 This process is non-daemon (started by the non-daemon SpyreMultiprocExecutor)
@@ -18,10 +18,10 @@ import time
 
 import torch
 from vllm.config import VllmConfig
-from vllm.model_executor.model_loader.weight_utils import download_weights_from_hf
 
 import sendnn_inference.envs as envs_spyre
-from sendnn_inference.model_executor.model_loader.spyre import cast_params_for_spyre
+from sendnn_inference.model_executor.model_loader.spyre import SpyreCausalLM, cast_params_for_spyre
+from sendnn_inference.platform import SpyrePlatform
 from sendnn_inference.v1.worker.mm_shared_memory import write_embeddings
 
 logger = logging.getLogger(__name__)
@@ -30,14 +30,11 @@ logger = logging.getLogger(__name__)
 def _resolve_mm_utils_cls(hf_config):
     """Return the MMUtils class for *hf_config*.
 
-    MUST be called after ``get_model()`` has run so that FMS has registered
-    its adapters — importing ``sendnn_inference.multimodal`` before that
-    triggers ``llava_next.py``'s module-level ``extend_adapter`` call, which
-    requires the base FMS adapter to already be registered.
-
-    Tries exact class match first (MM_HF_CFG_REGISTRY), then falls back to a
-    scan by ``model_type`` string — needed when hf_config is deserialized as the
-    base ``PreTrainedConfig`` in the vision encoder subprocess.
+    Callers should first pass *hf_config* through
+    ``SpyreCausalLM.resolve_hf_config()`` so that format-specific conversions
+    (e.g. Mistral-format pixtral → Mistral3Config) are applied before the
+    registry lookup.  The model_type scan below handles any remaining cases
+    where Pydantic serialization loses the specific subclass.
     """
     from sendnn_inference.multimodal import MM_HF_CFG_REGISTRY
 
@@ -45,17 +42,12 @@ def _resolve_mm_utils_cls(hf_config):
     if utils_cls is not None:
         return utils_cls
 
+    # Fallback: scan by model_type string for when hf_config is still a base
+    # PretrainedConfig after Pydantic deserialization (e.g. HF-format Mistral3
+    # whose class was lost in transit to the encoder subprocess).
     model_type = getattr(hf_config, "model_type", "")
-
-    # Some checkpoints use model_type values that differ from the canonical name
-    # stored on the transformers config class (e.g. pixtral checkpoints report
-    # model_type="pixtral" but share MM utils with Mistral3Config whose
-    # model_type is "mistral3").  Map to the canonical name before scanning.
-    _CANONICAL = {"pixtral": "mistral3"}
-    canonical = _CANONICAL.get(model_type, model_type)
-
     for cfg_cls, cls in MM_HF_CFG_REGISTRY.items():
-        if getattr(cfg_cls, "model_type", None) == canonical:
+        if getattr(cfg_cls, "model_type", None) == model_type:
             return cls
 
     raise ValueError(
@@ -85,32 +77,23 @@ class VisionEncoderRunner:
 
         model_config = vllm_config.model_config
 
-        # Must be called before any NNPA or model operations.  torch_sendnn is
-        # imported inside this call and captures env vars (thread affinity, memory
-        # bandwidth) at import time.  If called after ensure_nnpa_registered() the
-        # configuration has no effect on NNPA, causing ~18× performance regression.
-        from sendnn_inference.platform import SpyrePlatform
-
+        # Must be called before any NNPA or model operations
         SpyrePlatform.maybe_ensure_sendnn_configured(model_config)
 
-        model_path = model_config.model
-
-        if not os.path.isdir(model_path):
-            logger.info(
-                "encoder_process: %r is not a local directory — resolving from HF cache",
-                model_path,
-            )
-            model_path = download_weights_from_hf(
-                model_name_or_path=model_path,
-                cache_dir=None,
-                allow_patterns=["*.safetensors", "*.bin", "*.pt"],
-                revision=model_config.revision,
-            )
+        model_name = model_config.model
+        # FMS hf_pretrained + variant resolves from HF cache without a separate
+        # download step — the workers already downloaded the weights, so FMS finds
+        # them in the local HF snapshot cache.  Use model_path instead when the
+        # model is already a local directory (avoids an unnecessary cache lookup).
+        is_local = os.path.isdir(model_name)
+        fms_kwargs: dict = (
+            {"model_path": model_name} if is_local else {"variant": model_name}
+        )
 
         logger.info(
-            "encoder_process: loading vision-only model from %r "
+            "encoder_process: loading vision-only model %r "
             "(mm_device=%s, mm_dtype=%s, output_dtype=%s)",
-            model_path,
+            model_name,
             envs_spyre.SENDNN_INFERENCE_MM_DEVICE,
             envs_spyre.SENDNN_INFERENCE_CPU_MM_DTYPE,
             self._decoder_dtype,
@@ -118,18 +101,19 @@ class VisionEncoderRunner:
         t0 = time.time()
         self.fms_model = get_model(
             "hf_pretrained",
-            model_path=model_path,
             vision_only=True,
             # Required for AIU/NNPA: fused QKV is not handled efficiently by
             # NNPA hardware; unfused weights use the optimised NNPA path.
             # Workers also pass fused_weights=False (see spyre.py load_weights).
             fused_weights=False,
+            **fms_kwargs,
         )
 
-        # Resolve utils class AFTER get_model() so FMS has registered its adapters.
-        # Importing sendnn_inference.multimodal before that triggers llava_next.py's
-        # module-level extend_adapter call which requires the base FMS adapter.
-        self.mm_utils_cls = _resolve_mm_utils_cls(model_config.hf_config)
+        # resolve_hf_config normalises format-specific configs (e.g. Mistral-format
+        # pixtral → Mistral3Config) so the MM_HF_CFG_REGISTRY lookup in
+        # _resolve_mm_utils_cls succeeds directly via class-type match.
+        normalized_hf_config = SpyreCausalLM.resolve_hf_config(vllm_config)
+        self.mm_utils_cls = _resolve_mm_utils_cls(normalized_hf_config)
 
         self.fms_model.eval()
         self.mm_device = cast_params_for_spyre(

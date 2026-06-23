@@ -169,32 +169,6 @@ class Mistral3MMUtils(MMUtilsBase):
         )
 
     @staticmethod
-    def get_mm_embeddings_batch(
-        fms_model,
-        batch_input_ids: list,
-        batch_mm_features: list,
-        mm_device: str,
-    ) -> list:
-        """Return per-request embeddings each of shape [1, seq_len_i, emb_dim].
-
-        Pixtral uses global self-attention over all patches as a single flat
-        sequence, so concatenating patches from N independent requests would
-        give O((N*P)²) attention cost — quadratically worse than N independent
-        calls of O(P²).  We therefore call prepare_inputs_for_generation once
-        per request (sequential, correct).  The batching benefit is the single
-        SHM broadcast round for all N embeddings instead of N separate rounds.
-        """
-        results = []
-        for input_ids_1d, mm_features in zip(batch_input_ids, batch_mm_features):
-            embeds, _ = fms_model.prepare_inputs_for_generation(
-                iteration=0,
-                input_ids=input_ids_1d.unsqueeze(0),
-                kwargs=Mistral3MMUtils._build_fms_kwargs(mm_features, mm_device),
-            )
-            results.append(embeds)
-        return results
-
-    @staticmethod
     def _build_fms_kwargs(mm_features: list, mm_device: str) -> dict:
         """Build the fms_kwargs dict consumed by prepare_inputs_for_generation."""
         fms_kwargs: dict = {"use_cache": True}

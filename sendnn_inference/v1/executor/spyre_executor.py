@@ -5,9 +5,7 @@ vLLM spawns worker processes as daemon processes, which means workers
 cannot themselves spawn child processes.  By starting the encoder process
 here (from the non-daemon executor), we sidestep that restriction.
 
-The encoder subprocess loads only the vision components from disk via
-``get_model(..., vision_only=True)`` and writes completed embeddings to
-POSIX shared memory.  The executor owns the job/result queues:
+The executor owns the job/result queues:
 
 - submit jobs from ``_spyre_mm_encode_requests`` in each execute_model call
 - collect completed (req_id, shape, dtype) metadata from the result queue
@@ -52,6 +50,7 @@ class SpyreMultiprocExecutor(MultiprocExecutor):
         # collective_rpc("compile_or_warm_up_model") and spawning a subprocess
         # while distributed collectives are active corrupts SHM broadcasts.
         # _try_start_mm_encoder is called from collective_rpc below instead.
+        # Currently, the warmup step doesn't consume MM encoder process.
 
     def collective_rpc(  # ty: ignore[invalid-method-override]
         self,
@@ -141,11 +140,7 @@ class SpyreMultiprocExecutor(MultiprocExecutor):
             scheduler_output._spyre_newly_encoded_req_ids = newly_encoded_req_ids
 
         # Clear _spyre_mm_encode_requests before dispatching to workers.
-        # The async encoder owns all MM encoding jobs; workers must not run
-        # pre_encode_mm_requests (Phase 1) in parallel — doing so would race
-        # with the encoder subprocess's SHM block and trigger FileExistsError.
-        # The Phase 1 inline path in _prepare_chunked_prefill still serves as
-        # a fallback at prefill time if pending_mm_embeddings is somehow empty.
+        # The async encoder owns all MM encoding jobs
         scheduler_output._spyre_mm_encode_requests = []
 
         return super().execute_model(scheduler_output, non_block=non_block)
@@ -175,7 +170,7 @@ class SpyreMultiprocExecutor(MultiprocExecutor):
         from sendnn_inference.v1.worker.mm_encoder_process import encoder_process_main
 
         try:
-            # Plain multiprocessing queues and event — no extra server process,
+            # Plain multiprocessing queues and event,
             # automatically closed when the executor (their owner) exits.
             ctx_q = multiprocessing.get_context("spawn")
             self._mm_job_queue = ctx_q.Queue()
@@ -185,12 +180,8 @@ class SpyreMultiprocExecutor(MultiprocExecutor):
             # Spawn as daemon so the process is automatically killed when the
             # executor (its parent) exits — including unclean server termination.
             # Using daemon=True is safe here because the encoder process never
-            # spawns children of its own (Python forbids daemon processes from
-            # doing so, but the encoder process only loads a model and serves
-            # encode jobs, so that restriction is irrelevant).
-            # Note: workers are daemon too; we needed non-daemon in earlier
-            # approaches that tried to spawn from inside the workers — here the
-            # spawn is from the non-daemon executor, so daemon=True is fine.
+            # spawns children of its own.
+            # Note: workers are daemon too.
             ctx = multiprocessing.get_context("spawn")
             self._mm_encoder_proc = ctx.Process(
                 target=encoder_process_main,
