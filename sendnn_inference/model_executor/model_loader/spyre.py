@@ -189,15 +189,15 @@ class SpyreCausalLM(nn.Module):
                     self.dtype,
                 )
 
-        # `--load-format dummy` is the trigger for random-init: skip the
-        # checkpoint download and pass model_path=None to FMS, which will
-        # initialize the model with random weights
-        load_dummy_weights = getattr(self.load_config, "load_format", None) == "dummy"
+        # `--load-format dummy` skips the checkpoint download and random-inits
+        # the model. The explicitly-routed granite_swa architecture achieves this
+        # via source=None; every other architecture routes through FMS's
+        # `hf_configured` path (fetches only config.json, then reset_parameters()).
+        load_dummy_weights = self.load_config.load_format == "dummy"
 
         if load_dummy_weights:
-            logger.info("Loading dummy weights (random init): skipping HF download")
-            model_path = None
-            source_arg: str | None = None
+            logger.info("Loading model %s with random weights.", model_config.model)
+            model_path: str | None = None
         else:
             is_local = os.path.isdir(model_config.model)
             model_path = model_config.model
@@ -209,7 +209,6 @@ class SpyreCausalLM(nn.Module):
                     allow_patterns=["*.safetensors", "*.bin", "*.pt"],
                     revision=model_config.revision,
                 )
-            source_arg = "hf"
 
         # Get any fixes needed that must be patched into the kwargs;
         # currently this is only use for multimodal models / llava next
@@ -224,22 +223,30 @@ class SpyreCausalLM(nn.Module):
                 # Use explicit architecture: SpyrePlatform.pre_register_and_update aliases
                 # GraniteSWAForCausalLM to GraniteForCausalLM in vLLM's ModelRegistry (vLLM has no
                 # GraniteSWA impl, and only needs the class for metadata). To FMS we pass
-                # granite_swa which resolves to GraniteSWAForCausalLM.
+                # granite_swa which resolves to GraniteSWAForCausalLM. source=None random-inits.
                 self.fms_model = get_model(
                     architecture="granite_swa",
                     variant=_granite_swa_variant_from_hf(self.config),
                     model_path=model_path,
-                    source=source_arg,
+                    source=None if load_dummy_weights else "hf",
                     distributed_strategy=distributed_strategy,
                     group=dist.group.WORLD,
                     fused_weights=False,
                 )
+            elif load_dummy_weights:
+                # General random-init path: FMS infers the model config from the
+                # HF id (variant) and random-inits via reset_parameters().
+                self.fms_model = get_model(
+                    architecture="hf_configured",
+                    variant=model_config.model,
+                    model_path=None,
+                    distributed_strategy=distributed_strategy,
+                    group=dist.group.WORLD,
+                    fused_weights=False,
+                    trust_remote_code=model_config.trust_remote_code,
+                    **model_kwargs,
+                )
             else:
-                if load_dummy_weights:
-                    raise NotImplementedError(
-                        "load_dummy_weights is only supported for explicitly routed "
-                        "architectures (currently: granite_swa)."
-                    )
                 self.fms_model = get_model(
                     architecture="hf_pretrained",
                     model_path=model_path,
