@@ -346,18 +346,19 @@ class TestStoreMmEmbeddings:
         runner.pending_mm_embeddings = {}
         return runner
 
-    def test_discards_embedding_for_aborted_request(self):
-        """Embedding for a request no longer in self.requests must be discarded.
+    def test_stores_embedding_for_waiting_request(self):
+        """Embedding for a request not yet in self.requests (still waiting in
+        scheduler queue) must be written to pending_mm_embeddings so that
+        add_new_request can consume it when the request begins prefill.
 
-        If a request is aborted while its encode job is in-flight, the result
-        arrives after _update_batch already removed it from self.requests.
-        store_mm_embeddings must not write to pending_mm_embeddings — otherwise
-        the tensor leaks indefinitely.
+        self.requests only contains requests currently in prefill/decode.
+        A request waiting in the scheduler has not called add_new_request yet
+        and must not be treated as aborted.
         """
         runner = self._make_runner()
-        runner.requests = {}  # request already aborted
+        runner.requests = {}  # not yet scheduled — waiting in scheduler queue
 
-        req_id = "aborted-req"
+        req_id = "waiting-req"
         shape = (1, 4, 8)
         dtype = torch.float16
         t = torch.zeros(shape, dtype=dtype)
@@ -368,7 +369,7 @@ class TestStoreMmEmbeddings:
             cleanup_embeddings(shm)
             _cleanup_if_exists(req_id)
 
-        assert req_id not in runner.pending_mm_embeddings
+        assert req_id in runner.pending_mm_embeddings
 
     def test_stores_embedding_for_active_request(self):
         """Embedding for an active request must be written to pending_mm_embeddings."""

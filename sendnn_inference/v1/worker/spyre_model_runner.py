@@ -806,11 +806,6 @@ class ChunkedPrefillModelRunner(
         blocks are kept alive by the executor until this call returns.
         """
         for req_id, shape, dtype in results:
-            if req_id not in self.requests:
-                logger.debug(
-                    "Discarding async MM embeddings for already-aborted req '%s'", req_id
-                )
-                continue
             embeds = read_embeddings(req_id, shape, dtype)
             self.pending_mm_embeddings[req_id] = embeds
             logger.debug(
@@ -1529,9 +1524,6 @@ class ChunkedPrefillModelRunner(
 
         self.requests[req_id] = req_state
 
-        # Consume pre-computed embeddings if they were encoded in advance by
-        # pre_encode_mm_requests().  With cached_mm_embeddings already set,
-        # _prepare_chunked_prefill skips its encoding block entirely.
         # Consume pre-computed embeddings if they were encoded in advance by
         # pre_encode_mm_requests().  With cached_mm_embeddings already set,
         # _prepare_chunked_prefill skips its encoding block entirely.
