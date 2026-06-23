@@ -86,9 +86,7 @@ class VisionEncoderRunner:
         # them in the local HF snapshot cache.  Use model_path instead when the
         # model is already a local directory (avoids an unnecessary cache lookup).
         is_local = os.path.isdir(model_name)
-        fms_kwargs: dict = (
-            {"model_path": model_name} if is_local else {"variant": model_name}
-        )
+        fms_kwargs: dict = {"model_path": model_name} if is_local else {"variant": model_name}
 
         logger.info(
             "encoder_process: loading vision-only model %r "
@@ -168,7 +166,7 @@ def encoder_process_main(
     try:
         runner = VisionEncoderRunner(vllm_config)
     except Exception as exc:
-        logger.error("encoder_process: failed to load vision model: %s", exc, exc_info=True)
+        logger.exception("encoder_process: failed to load vision model: %s", exc)
         result_queue.put(f"ERROR: {exc}")
         return
 
@@ -207,7 +205,7 @@ def encoder_process_main(
             result_queue.put((req_id, tuple(embeds.shape), embeds.dtype))
             logger.info("maybe_mm_embedding processing time: %.2fms", t_elapsed * 1000)
         except Exception as exc:
-            logger.error(
-                "encoder_process: failed to execute_model '%s': %s", req_id, exc, exc_info=True
+            logger.exception(
+                "encoder_process: failed to execute_model '%s': %s", req_id, exc
             )
             result_queue.put((req_id, None, None))
