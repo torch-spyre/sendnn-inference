@@ -109,7 +109,7 @@ class SpyreMultiprocExecutor(MultiprocExecutor):
                     else:
                         # Encoder failed for this request.
                         logger.warning(
-                            "Encoder process returned error for req '%s',
+                            "Encoder process returned error for req '%s'",
                             req_id,
                         )
                         failed_encode_req_ids.append(req_id)

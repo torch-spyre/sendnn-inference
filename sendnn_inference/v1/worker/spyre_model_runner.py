@@ -795,51 +795,6 @@ class ChunkedPrefillModelRunner(
         assert request.prompt_token_ids is not None, "prompt token ids are required"
         return len(request.prompt_token_ids)
 
-    def _broadcast_mm_embeddings(
-        self, full_embeds: torch.Tensor | None, req_id: str
-    ) -> torch.Tensor | None:
-        """Broadcast MM embeddings from rank 0 to all other ranks via shared memory.
-
-        Rank 0 writes embeddings to POSIX SHM and broadcasts a 4-element metadata
-        tensor (shape + dtype) as sync signal A. Non-rank-0 workers read from SHM
-        after that signal. A second broadcast acts as sync signal B so rank 0 can
-        safely unlink the SHM block.
-
-        Returns the embeddings tensor on all ranks (None-safe: returns None when
-        world_size == 1 and full_embeds is None, which should not happen in practice).
-        """
-        data_shm = None
-        try:
-            if self.rank == 0:
-                assert full_embeds is not None
-                full_embeds = full_embeds.cpu().contiguous()
-                data_shm = write_embeddings(full_embeds, req_id)
-                meta = torch.tensor(
-                    [
-                        full_embeds.shape[0],
-                        full_embeds.shape[1],
-                        full_embeds.shape[2],
-                        dtype_to_idx(full_embeds.dtype),
-                    ],
-                    dtype=torch.int64,
-                )
-            else:
-                meta = torch.zeros(4, dtype=torch.int64)
-
-            torch.distributed.broadcast(meta, src=0)
-
-            if self.rank != 0:
-                shape = (int(meta[0]), int(meta[1]), int(meta[2]))
-                dtype = idx_to_dtype(int(meta[3]))
-                full_embeds = read_embeddings(req_id, shape, dtype)
-
-            torch.distributed.broadcast(meta, src=0)
-        finally:
-            if data_shm is not None:
-                cleanup_embeddings(data_shm)
-
-        return full_embeds
-
     def store_mm_embeddings(self, results: list[tuple]) -> None:
         """Read completed async MM embeddings from POSIX SHM and cache them.
 
