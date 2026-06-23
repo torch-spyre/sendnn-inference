@@ -851,6 +851,11 @@ class ChunkedPrefillModelRunner(
         blocks are kept alive by the executor until this call returns.
         """
         for req_id, shape, dtype in results:
+            if req_id not in self.requests:
+                logger.debug(
+                    "Discarding async MM embeddings for already-aborted req '%s'", req_id
+                )
+                continue
             embeds = read_embeddings(req_id, shape, dtype)
             self.pending_mm_embeddings[req_id] = embeds
             logger.debug(

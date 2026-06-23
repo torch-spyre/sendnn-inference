@@ -326,3 +326,67 @@ class TestDataIntegrity:
         _cleanup_if_exists(req_id)
 
         assert torch.equal(result, t)
+
+
+# ---------------------------------------------------------------------------
+# store_mm_embeddings: aborted-request guard
+# ---------------------------------------------------------------------------
+
+
+class TestStoreMmEmbeddings:
+    """Tests for ChunkedPrefillModelRunner.store_mm_embeddings."""
+
+    def _make_runner(self):
+        """Build a ChunkedPrefillModelRunner instance bypassing __init__."""
+        from sendnn_inference.v1.worker.spyre_model_runner import ChunkedPrefillModelRunner
+
+        runner = ChunkedPrefillModelRunner.__new__(ChunkedPrefillModelRunner)
+        runner.rank = 0
+        runner.requests = {}
+        runner.pending_mm_embeddings = {}
+        return runner
+
+    def test_discards_embedding_for_aborted_request(self):
+        """Embedding for a request no longer in self.requests must be discarded.
+
+        If a request is aborted while its encode job is in-flight, the result
+        arrives after _update_batch already removed it from self.requests.
+        store_mm_embeddings must not write to pending_mm_embeddings — otherwise
+        the tensor leaks indefinitely.
+        """
+        runner = self._make_runner()
+        runner.requests = {}  # request already aborted
+
+        req_id = "aborted-req"
+        shape = (1, 4, 8)
+        dtype = torch.float16
+        t = torch.zeros(shape, dtype=dtype)
+        shm = write_embeddings(t, req_id)
+        try:
+            runner.store_mm_embeddings([(req_id, shape, dtype)])
+        finally:
+            cleanup_embeddings(shm)
+            _cleanup_if_exists(req_id)
+
+        assert req_id not in runner.pending_mm_embeddings
+
+    def test_stores_embedding_for_active_request(self):
+        """Embedding for an active request must be written to pending_mm_embeddings."""
+        from unittest.mock import MagicMock
+
+        runner = self._make_runner()
+        runner.requests = {"active-req": MagicMock()}
+
+        req_id = "active-req"
+        shape = (1, 4, 8)
+        dtype = torch.float16
+        t = torch.ones(shape, dtype=dtype)
+        shm = write_embeddings(t, req_id)
+        try:
+            runner.store_mm_embeddings([(req_id, shape, dtype)])
+        finally:
+            cleanup_embeddings(shm)
+            _cleanup_if_exists(req_id)
+
+        assert req_id in runner.pending_mm_embeddings
+        assert runner.pending_mm_embeddings[req_id].shape == torch.Size(shape)
