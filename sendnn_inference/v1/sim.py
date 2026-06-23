@@ -179,10 +179,6 @@ class SimState:
                 self._fp = path.open("a", buffering=1)
             yield self._fp
 
-    def has_record(self, req_id: str) -> bool:
-        with self._lock:
-            return req_id in self._records
-
     def mark_arrival(self, req_id: str) -> None:
         """Stamp the current virtual time as the request's arrival.
 
@@ -211,11 +207,10 @@ class SimState:
             )
             assert len(req_ids) == 1, "Expected exactly one request in prefill step."
             with self._lock:
+                # The record is created by the scheduler's mark_arrival before any
+                # prefill step runs; warmup steps are skipped before reaching here.
                 rec = self._records.get(req_ids[0])
-                if rec is None:
-                    # This fallback covers warmup-style synthetic reqs that bypass the scheduler
-                    rec = _RequestSimRecord(virtual_arrival=self.virtual_clock_seconds)
-                    self._records[req_ids[0]] = rec
+                assert rec is not None, f"Request {req_ids[0]} not found in records"
                 rec.num_prefill_chunks += 1
                 rec.last_prefill_end = end_t
                 self.virtual_clock_seconds = end_t
@@ -334,12 +329,18 @@ class SimulatedChunkedPrefillModelRunner(ChunkedPrefillModelRunner):
         model_input: SamplingForwardInputs,
         scheduler_output: SchedulerOutput,
     ) -> None:
+        # Skip warmup forward passes to not inflate the time of the first real request.
+        if self.warmup_mode:
+            return
         self._sim_state.record_step(
             is_prompt=model_input.is_prompt,
             scheduler_output=scheduler_output,
         )
 
     def _on_request_finished(self, req_id: str) -> None:
+        # Skip warmup forward passes to not inflate the time of the first real request.
+        if self.warmup_mode:
+            return
         finished_state = self.requests.get(req_id)
         num_prompt_tokens = (
             len(finished_state.prompt_token_ids) if finished_state is not None else 0
