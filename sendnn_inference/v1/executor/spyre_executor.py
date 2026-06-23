@@ -96,6 +96,7 @@ class SpyreMultiprocExecutor(MultiprocExecutor):
                 except Exception as exc:
                     logger.debug("MM job queue error for req '%s': %s", req.request_id, exc)
 
+        failed_encode_req_ids: list[str] = []
         if self._mm_result_queue is not None and self._mm_in_flight > 0:
             # Collect completed results (non-blocking drain).
             newly_encoded_metadata: list[tuple] = []
@@ -106,11 +107,12 @@ class SpyreMultiprocExecutor(MultiprocExecutor):
                     if shape is not None and dtype is not None:
                         newly_encoded_metadata.append((req_id, shape, dtype))
                     else:
+                        # Encoder failed for this request.
                         logger.warning(
-                            "Encoder process returned error for req '%s' — "
-                            "will fall back to inline encoding",
+                            "Encoder process returned error for req '%s',
                             req_id,
                         )
+                        failed_encode_req_ids.append(req_id)
                 except queue_mod.Empty:
                     break
 
@@ -138,6 +140,8 @@ class SpyreMultiprocExecutor(MultiprocExecutor):
         # the scheduler will see it regardless of the async/sync execution path.
         if newly_encoded_req_ids:
             scheduler_output._spyre_newly_encoded_req_ids = newly_encoded_req_ids
+        if failed_encode_req_ids:
+            scheduler_output._spyre_failed_encode_req_ids = failed_encode_req_ids
 
         # Clear _spyre_mm_encode_requests before dispatching to workers.
         # The async encoder owns all MM encoding jobs

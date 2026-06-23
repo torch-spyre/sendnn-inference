@@ -139,8 +139,9 @@ class TestExecuteModel:
         assert sched._spyre_newly_encoded_req_ids == ["req-done"]
         assert executor._mm_in_flight == 0
 
-    def test_error_result_skips_store_no_crash(self, executor):
-        """(req_id, None, None) from encoder must be handled without crashing."""
+    def test_error_result_sets_failed_req_ids_for_scheduler_retry(self, executor):
+        """(req_id, None, None) must be collected into _spyre_failed_encode_req_ids
+        so the scheduler can clear _mm_encoding_submitted and allow retry."""
         _install_queues(executor, result_items=[("req-err", None, None)])
         executor._mm_in_flight = 1
 
@@ -151,6 +152,8 @@ class TestExecuteModel:
 
         # collective_rpc must NOT be called (no valid metadata)
         executor._parent_collective_rpc.assert_not_called()
+        # Failed req_id must be surfaced so scheduler can clear submitted state
+        assert sched._spyre_failed_encode_req_ids == ["req-err"]
 
     def test_in_flight_zero_skips_result_drain(self, executor):
         """When _mm_in_flight == 0, the result queue must not be polled."""

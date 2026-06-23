@@ -217,7 +217,7 @@ class TestEncoderProcessMain:
         with patch("sendnn_inference.v1.worker.mm_encoder_process.VisionEncoderRunner"):
             encoder_process_main(_make_vllm_config(), jq, rq, stop)
 
-        assert rq.get_nowait() == "READY"
+        assert rq.get(timeout=2) == "READY"
         assert rq.empty()
 
     def test_error_signal_on_load_failure(self):
@@ -267,8 +267,8 @@ class TestEncoderProcessMain:
         ):
             encoder_process_main(_make_vllm_config(), jq, rq, stop)
 
-        assert rq.get_nowait() == "READY"
-        req_id, shape, dtype = rq.get_nowait()
+        assert rq.get(timeout=2) == "READY"
+        req_id, shape, dtype = rq.get(timeout=2)
         assert req_id == "req-job"
         assert shape == tuple(fake_embeds.shape)
         assert dtype == fake_embeds.dtype
@@ -294,8 +294,8 @@ class TestEncoderProcessMain:
         ):
             encoder_process_main(_make_vllm_config(), jq, rq, stop)
 
-        assert rq.get_nowait() == "READY"
-        req_id, shape, dtype = rq.get_nowait()
+        assert rq.get(timeout=2) == "READY"
+        req_id, shape, dtype = rq.get(timeout=2)
         assert req_id == "req-fail"
         assert shape is None
         assert dtype is None

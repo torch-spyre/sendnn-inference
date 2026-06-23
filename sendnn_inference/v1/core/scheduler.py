@@ -247,6 +247,10 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         for req_id in getattr(scheduler_output, "_spyre_newly_encoded_req_ids", []):
             self._mm_encoding_submitted.discard(req_id)
             self._mm_encoding_ready.add(req_id)
+        # Abort any request whose encode job failed — no retries.
+        for req_id in getattr(scheduler_output, "_spyre_failed_encode_req_ids", []):
+            logger.error("MM encode failed for req '%s' — aborting request", req_id)
+            self.finish_requests([req_id], RequestStatus.FINISHED_ABORTED)
 
         # Update the correct num_computed_tokens value given left-padding and
         # prefix cache hit info
