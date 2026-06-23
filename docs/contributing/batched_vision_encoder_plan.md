@@ -24,10 +24,6 @@ The scheduler submits MM requests for encoding on every step and gates prefill o
 FMS changes to stack same-resolution images instead of
 concatenating. See [Phase 3](#phase-3-true-vision-encoder-batching-requires-fms-change) below.
 
----
-
-## Architecture Diagram
-
 ### Current Flow
 
 ```
