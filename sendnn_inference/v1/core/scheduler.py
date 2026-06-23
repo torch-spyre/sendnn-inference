@@ -637,9 +637,11 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             was_running.add(req.request_id)
 
         # Sort is stable, so requests with the same last
-        # step will be sorted by how long the need to finish
+        # step will be sorted by how many tokens they have already generated
         request_order = sorted(
-            requests_by_step, key=lambda x: x[0].num_computed_tokens - x[0].num_prompt_tokens
+            requests_by_step,
+            key=lambda x: x[0].num_computed_tokens - x[0].num_prompt_tokens,
+            reverse=True,
         )
         request_order.sort(key=lambda x: x[1])
 
@@ -651,17 +653,17 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
                 decoding_requests.append(req)
                 if req.request_id in was_paused:
                     self.running.append(req)
-                    logger.info(
-                        "Request %s resumed (batch TKV capacity available).",
-                        req.request_id,
-                    )
                     self.resume_events += 1
             else:
                 self.paused_decoding_requests.append(req)
                 if req.request_id in was_running:
                     self.running.remove(req)
-                    logger.info("Request %s paused due to batch TKV limit ", req.request_id)
-                    self.pause_events += 1
+
+        pause_inc = len(self.paused_decoding_requests) - len(was_paused)
+        if pause_inc >= 0:
+            self.pause_events += pause_inc
+        else:
+            self.resume_events -= pause_inc
 
     def predict_next_decode_tkv(self, running_requests: list[Request]) -> int:
         """
