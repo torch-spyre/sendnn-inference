@@ -586,9 +586,12 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
 
     def can_schedule_prefill(self, request: Request) -> bool:
         # MM requests must wait until their vision embedding is ready.
+        # Only applies in async encoder mode; in non-async mode nothing ever
+        # populates _mm_encoding_ready so the gate would block all MM requests.
         # Text-only requests are completely unaffected by this check.
         if getattr(request, "mm_features", None):
-            if request.request_id not in self._mm_encoding_ready:
+            if (envs_spyre.SENDNN_INFERENCE_ASYNC_MM_ENCODER
+                    and request.request_id not in self._mm_encoding_ready):
                 return False
 
         # running and waiting queues are both empty, we can start a new batch

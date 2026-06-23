@@ -537,25 +537,6 @@ class SpyreCausalLM(nn.Module):
 
         return logits
 
-    def get_mm_embeddings_batch(
-        self,
-        batch_input_ids: list,
-        batch_mm_features: list,
-    ) -> list:
-        """Run the vision encoder once for all requests and return a list of
-        per-request embedding tensors, each of shape [1, seq_len_i, emb_dim].
-
-        Only valid for multimodal models; raises if the model is not multimodal
-        or if any entry in batch_mm_features is empty.
-        """
-        if not self.is_multimodal or self.mm_model_utils is None:
-            raise ValueError("get_mm_embeddings_batch called on a non-multimodal model")
-        return self.mm_model_utils.get_mm_embeddings_batch(
-            self.fms_model,
-            batch_input_ids,
-            batch_mm_features,
-            self.mm_device,
-        )
 
     def get_maybe_mm_embeddings(self, input_ids, mm_features, is_decode):
         """If the model is multimodal, get the (maybe) multimodal embeddings.
