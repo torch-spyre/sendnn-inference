@@ -403,16 +403,23 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         # req_id -> cached_blocks, new_blocks
         required_blocks = dict[str, tuple[int, int]]()
 
-        # Check if new requests can be scheduled for prefill
+        # Check if new requests can be scheduled for prefill.
+        # Per-request ineligibility (MM encoding not ready, shape mismatch, …)
+        # is collected in skipped_requests and restored to holdback_queue after
+        # the loop so they remain available for future schedule() calls.
+        # Block-count capacity is the only FIFO-correct reason to stop early:
+        # if the front request exceeds available blocks, later requests are
+        # unlikely to fit either.
         available_blocks = self._get_free_blocks() - self.total_reserved_blocks
+        skipped_requests: list[Request] = []
         while holdback_queue:
-            new_request = holdback_queue[0]
+            new_request = holdback_queue.popleft()
             cached, blocks = self._get_required_blocks(new_request, True)
             if blocks > available_blocks:
+                holdback_queue.appendleft(new_request)
                 break
 
             if self.can_schedule_prefill(new_request):
-                holdback_queue.popleft()
                 required_blocks[new_request.request_id] = (cached, blocks)
                 available_blocks -= blocks
 
@@ -425,9 +432,14 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
                 # Add request to the waiting queue
                 self.waiting.append(new_request)
             else:
-                # Otherwise, we simply stop here so that the scheduler
-                # can work with the batch we have
-                break
+                # Per-request reason (e.g. MM encoding still in-flight): skip
+                # this request and keep checking later ones.
+                skipped_requests.append(new_request)
+
+        # Restore skipped requests at the front of holdback_queue so they
+        # are returned to self.waiting (line below) in their original order.
+        for req in reversed(skipped_requests):
+            holdback_queue.appendleft(req)
 
         assert len(self.ongoing_prefills) <= 1, (
             "Only one request can be prefilled at a time, but got %d" % len(self.ongoing_prefills)
