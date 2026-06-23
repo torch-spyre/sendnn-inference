@@ -212,11 +212,6 @@ def encoder_process_main(
 
         req_id = job.request_id
         t0 = time.time()
-        logger.info(
-            "[parallel-check] encoder_proc: ENCODE START  req='%s'  t=%.3f",
-            req_id,
-            t0,
-        )
         try:
             embeds = runner.execute_model(job)
 
@@ -226,15 +221,9 @@ def encoder_process_main(
             shm = write_embeddings(embeds, req_id)
             shm.close()
 
-            t1 = time.time()
+            t_elapsed = time.time() - t0
             result_queue.put((req_id, tuple(embeds.shape), embeds.dtype))
-            logger.info(
-                "[parallel-check] encoder_proc: ENCODE END    req='%s'  t=%.3f  "
-                "duration=%.2fs",
-                req_id,
-                t1,
-                t1 - t0,
-            )
+            logger.info("maybe_mm_embedding processing time: %.2fms", t_elapsed * 1000)
         except Exception as exc:
             logger.error(
                 "encoder_process: failed to execute_model '%s': %s", req_id, exc, exc_info=True
