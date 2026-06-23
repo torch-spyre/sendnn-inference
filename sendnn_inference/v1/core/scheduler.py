@@ -265,7 +265,6 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
                     prefix_cache_len=prefix_cache_len,
                 )
 
-
         # Remove completed prefills
         self.ongoing_prefills = [
             req for req in self.ongoing_prefills if req.num_computed_tokens < req.num_prompt_tokens
@@ -507,7 +506,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             mm_encode_requests.append(
                 MMEncodeRequest(
                     request_id=req.request_id,
-                    prompt_token_ids=list(req.prompt_token_ids),
+                    prompt_token_ids=list(req.prompt_token_ids or []),
                     mm_features=req.mm_features,
                 )
             )
@@ -590,8 +589,10 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         # populates _mm_encoding_ready so the gate would block all MM requests.
         # Text-only requests are completely unaffected by this check.
         if getattr(request, "mm_features", None):
-            if (envs_spyre.SENDNN_INFERENCE_ASYNC_MM_ENCODER
-                    and request.request_id not in self._mm_encoding_ready):
+            if (
+                envs_spyre.SENDNN_INFERENCE_ASYNC_MM_ENCODER
+                and request.request_id not in self._mm_encoding_ready
+            ):
                 return False
 
         # running and waiting queues are both empty, we can start a new batch

@@ -261,7 +261,11 @@ class SpyrePlatform(Platform):
         # Pass the class object directly — Executor.get_class handles
         # isinstance(backend, type) before string-based dispatch, which avoids
         # Pydantic's Literal validator silently dropping a string class path.
-        if is_decoder and parallel_config.world_size > 1 and envs_spyre.SENDNN_INFERENCE_ASYNC_MM_ENCODER:
+        if (
+            is_decoder
+            and parallel_config.world_size > 1
+            and envs_spyre.SENDNN_INFERENCE_ASYNC_MM_ENCODER
+        ):
             from sendnn_inference.v1.executor.spyre_executor import SpyreMultiprocExecutor
 
             parallel_config.distributed_executor_backend = SpyreMultiprocExecutor

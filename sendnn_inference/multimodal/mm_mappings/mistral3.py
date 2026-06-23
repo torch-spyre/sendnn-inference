@@ -225,13 +225,9 @@ class Mistral3MMUtils(MMUtilsBase):
                     (image_sizes_tensor[0].item(), image_sizes_tensor[1].item())
                 ]
             else:
-                fms_kwargs["image_sizes"] = [
-                    (h.item(), w.item()) for h, w in image_sizes_tensor
-                ]
+                fms_kwargs["image_sizes"] = [(h.item(), w.item()) for h, w in image_sizes_tensor]
         else:
-            fms_kwargs["image_sizes"] = [
-                (img.shape[-2], img.shape[-1]) for img in pixel_values
-            ]
+            fms_kwargs["image_sizes"] = [(img.shape[-2], img.shape[-1]) for img in pixel_values]
         return fms_kwargs
 
     def get_multimodal_token_id(self) -> int:

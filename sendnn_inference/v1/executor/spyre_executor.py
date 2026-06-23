@@ -22,6 +22,8 @@ prefill time.
 """
 
 import multiprocessing
+import multiprocessing.process
+import multiprocessing.synchronize
 import queue as queue_mod
 from typing import Any, Callable
 
@@ -39,10 +41,10 @@ class SpyreMultiprocExecutor(MultiprocExecutor):
 
     def _init_executor(self) -> None:
         logger.info("SpyreMultiprocExecutor._init_executor: custom executor active")
-        self._mm_encoder_proc: multiprocessing.Process | None = None
+        self._mm_encoder_proc: multiprocessing.process.BaseProcess | None = None
         self._mm_job_queue: multiprocessing.Queue | None = None
         self._mm_result_queue: multiprocessing.Queue | None = None
-        self._mm_stop_event: multiprocessing.Event | None = None
+        self._mm_stop_event: multiprocessing.synchronize.Event | None = None
         # Number of encode jobs submitted but not yet collected.
         self._mm_in_flight: int = 0
         super()._init_executor()
@@ -51,7 +53,7 @@ class SpyreMultiprocExecutor(MultiprocExecutor):
         # while distributed collectives are active corrupts SHM broadcasts.
         # _try_start_mm_encoder is called from collective_rpc below instead.
 
-    def collective_rpc(
+    def collective_rpc(  # ty: ignore[invalid-method-override]
         self,
         method: str | Callable,
         timeout: float | None = None,
@@ -65,9 +67,7 @@ class SpyreMultiprocExecutor(MultiprocExecutor):
         # Start the encoder process after warmup completes — all distributed
         # collectives are done at this point so the subprocess spawn is safe.
         if method == "compile_or_warm_up_model" and self._mm_encoder_proc is None:
-            logger.info(
-                "SpyreMultiprocExecutor: warmup complete, starting encoder process"
-            )
+            logger.info("SpyreMultiprocExecutor: warmup complete, starting encoder process")
             self._try_start_mm_encoder()
         return result
 
@@ -95,9 +95,7 @@ class SpyreMultiprocExecutor(MultiprocExecutor):
                     self._mm_in_flight += 1
                     logger.debug("Submitted MM encode job for req '%s'", req.request_id)
                 except Exception as exc:
-                    logger.debug(
-                        "MM job queue error for req '%s': %s", req.request_id, exc
-                    )
+                    logger.debug("MM job queue error for req '%s': %s", req.request_id, exc)
 
         if self._mm_result_queue is not None and self._mm_in_flight > 0:
             # Collect completed results (non-blocking drain).
@@ -140,7 +138,7 @@ class SpyreMultiprocExecutor(MultiprocExecutor):
         # is passed to scheduler.update_from_output(), so setting it here means
         # the scheduler will see it regardless of the async/sync execution path.
         if newly_encoded_req_ids:
-            scheduler_output._spyre_newly_encoded_req_ids = newly_encoded_req_ids  # type: ignore[attr-defined]
+            scheduler_output._spyre_newly_encoded_req_ids = newly_encoded_req_ids
 
         # Clear _spyre_mm_encode_requests before dispatching to workers.
         # The async encoder owns all MM encoding jobs; workers must not run
@@ -148,7 +146,7 @@ class SpyreMultiprocExecutor(MultiprocExecutor):
         # with the encoder subprocess's SHM block and trigger FileExistsError.
         # The Phase 1 inline path in _prepare_chunked_prefill still serves as
         # a fallback at prefill time if pending_mm_embeddings is somehow empty.
-        scheduler_output._spyre_mm_encode_requests = []  # type: ignore[attr-defined]
+        scheduler_output._spyre_mm_encode_requests = []
 
         return super().execute_model(scheduler_output, non_block=non_block)
 

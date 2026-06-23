@@ -227,7 +227,9 @@ class LlavaNextMMUtils(MMUtilsBase):
         max_patches = max(pv.shape[0] for pv in all_pixel_values)
         n = len(all_pixel_values)
         stacked_pv = torch.zeros(
-            n, max_patches, *all_pixel_values[0].shape[1:],
+            n,
+            max_patches,
+            *all_pixel_values[0].shape[1:],
             dtype=all_pixel_values[0].dtype,
             device=all_pixel_values[0].device,
         )
@@ -243,7 +245,9 @@ class LlavaNextMMUtils(MMUtilsBase):
             stacked_image_sizes,
             image_newline=fms_model.image_newline,
         )
-        packed_features = packed_features.to(dtype=fms_model.language_model.base_model.embedding.weight.dtype)
+        packed_features = packed_features.to(
+            dtype=fms_model.language_model.base_model.embedding.weight.dtype
+        )
 
         # Build per-request embeddings: embed tokens and insert image features.
         # The updated prepare_inputs_for_generation loops over batch rows, so we
@@ -257,9 +261,9 @@ class LlavaNextMMUtils(MMUtilsBase):
             input_ids_2d = input_ids_1d.unsqueeze(0)  # [1, seq_len]
             embeds = fms_model.language_model.base_model.embedding(input_ids_2d)
 
-            image_positions = (
-                input_ids_1d == fms_model.config.image_token_index
-            ).nonzero(as_tuple=True)[0]
+            image_positions = (input_ids_1d == fms_model.config.image_token_index).nonzero(
+                as_tuple=True
+            )[0]
             n_img_toks = image_positions.shape[0]
             embeds[0, image_positions] = packed_features[offset : offset + n_img_toks]
             offset += n_img_toks

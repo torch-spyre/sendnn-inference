@@ -77,6 +77,7 @@ class VisionEncoderRunner:
 
     def __init__(self, vllm_config: VllmConfig) -> None:
         from fms.models import get_model
+
         # Spyre always compiles the LLM decoder in float16 (see SpyreCausalLM.get_dtype()).
         # NNPA may return float32 embeddings even when model weights are float16;
         # cast to float16 before writing to SHM so the decoder sees the compiled dtype.
@@ -89,6 +90,7 @@ class VisionEncoderRunner:
         # bandwidth) at import time.  If called after ensure_nnpa_registered() the
         # configuration has no effect on NNPA, causing ~18× performance regression.
         from sendnn_inference.platform import SpyrePlatform
+
         SpyrePlatform.maybe_ensure_sendnn_configured(model_config)
 
         model_path = model_config.model
@@ -137,15 +139,11 @@ class VisionEncoderRunner:
         )
         logger.info("encoder_process: mm_utils=%s", self.mm_utils_cls.__name__)
         torch.set_grad_enabled(False)
-        logger.info(
-            "encoder_process: vision model loaded in %.2fs", time.time() - t0
-        )
+        logger.info("encoder_process: vision model loaded in %.2fs", time.time() - t0)
 
     def execute_model(self, request) -> torch.Tensor:
         """Encode a single MMEncodeRequest and return a CPU-contiguous tensor."""
-        input_ids = torch.tensor(
-            request.prompt_token_ids, dtype=torch.int64
-        ).unsqueeze(0)
+        input_ids = torch.tensor(request.prompt_token_ids, dtype=torch.int64).unsqueeze(0)
         with torch.inference_mode():
             embeds = self.mm_utils_cls.get_maybe_mm_embeddings(
                 self.fms_model,
@@ -161,7 +159,10 @@ class VisionEncoderRunner:
 
 
 def encoder_process_main(
-    vllm_config: VllmConfig, job_queue, result_queue, stop_event,
+    vllm_config: VllmConfig,
+    job_queue,
+    result_queue,
+    stop_event,
 ) -> None:
     """Entry point for the vision encoder subprocess.
 
@@ -183,16 +184,13 @@ def encoder_process_main(
     try:
         runner = VisionEncoderRunner(vllm_config)
     except Exception as exc:
-        logger.error(
-            "encoder_process: failed to load vision model: %s", exc, exc_info=True
-        )
+        logger.error("encoder_process: failed to load vision model: %s", exc, exc_info=True)
         result_queue.put(f"ERROR: {exc}")
         return
 
     result_queue.put("READY")
     logger.info(
-        "encoder_process: ready, waiting for jobs "
-        "(torch_num_threads=%d, OMP_NUM_THREADS=%s)",
+        "encoder_process: ready, waiting for jobs (torch_num_threads=%d, OMP_NUM_THREADS=%s)",
         torch.get_num_threads(),
         os.environ.get("OMP_NUM_THREADS", "unset"),
     )

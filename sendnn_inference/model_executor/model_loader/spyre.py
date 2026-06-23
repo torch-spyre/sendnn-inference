@@ -537,7 +537,6 @@ class SpyreCausalLM(nn.Module):
 
         return logits
 
-
     def get_maybe_mm_embeddings(self, input_ids, mm_features, is_decode):
         """If the model is multimodal, get the (maybe) multimodal embeddings.
         If it isn't, return None, since we only use embeddings for multimodal.
