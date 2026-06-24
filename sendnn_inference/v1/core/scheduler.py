@@ -256,23 +256,6 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             logger.error("MM encode failed for req '%s' — aborting request", req_id)
             self.finish_requests([req_id], RequestStatus.FINISHED_ABORTED)
 
-        # Update the correct num_computed_tokens value given left-padding and
-        # prefix cache hit info
-        for req in self.ongoing_prefills:
-            # The number of computed tokens only need to be adapted when it is
-            # the first chunk of a multi-chunk prefill
-            is_first_chunk = req.num_computed_tokens <= self.chunk_size
-            is_last_chunk = req.num_computed_tokens == req.num_prompt_tokens
-            if is_first_chunk and not is_last_chunk:
-                left_padding = model_runner_output.left_padding.get(req.request_id, 0)
-                prefix_cache_len = model_runner_output.prefix_cache_hit_len.get(req.request_id, 0)
-
-                req.num_computed_tokens = self.adjust_computed_tokens(
-                    computed_tokens=req.num_computed_tokens,
-                    left_padding=left_padding,
-                    prefix_cache_len=prefix_cache_len,
-                )
-
         # Remove completed prefills
         self.ongoing_prefills = [
             req for req in self.ongoing_prefills if req.num_computed_tokens < req.num_prompt_tokens
@@ -289,22 +272,6 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             assert self.total_reserved_blocks >= 0
 
         return result
-
-    def adjust_computed_tokens(
-        self, computed_tokens: int, left_padding: int, prefix_cache_len: int
-    ) -> int:
-        """
-        Returns an adjusted `num_computed_tokens` given left padding and prefix
-        cache hit info.
-        """
-        # The prefix cache length is already adjusted for left padding.
-        # If it's bigger than the number of computed tokens, then we hit more
-        # prefix cache than we scheduled.
-        if prefix_cache_len > computed_tokens:
-            assert (prefix_cache_len + left_padding) % self.chunk_size == 0
-            return prefix_cache_len
-        # Otherwise just account for the left padding
-        return computed_tokens - left_padding
 
     def _current_chunk_token_threshold(self, new_prefill_candidates: list[Request]) -> int:
         """Returns the `long_prefill_token_threshold` to use for this step.
