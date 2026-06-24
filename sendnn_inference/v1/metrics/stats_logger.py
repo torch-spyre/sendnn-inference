@@ -1,11 +1,9 @@
 import dataclasses
 import json
-import threading
 import time
 from datetime import datetime
 from functools import wraps
 from pathlib import Path
-from typing import Any
 
 from vllm.config import VllmConfig
 from vllm.logger import init_logger
@@ -21,63 +19,6 @@ from vllm.v1.metrics.stats import (
 from sendnn_inference import envs as envs_spyre
 
 logger = init_logger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Bench metrics registry — only active when SENDNN_INFERENCE_BENCH_METRICS_ENABLED
-# ---------------------------------------------------------------------------
-
-
-@dataclasses.dataclass
-class SpyreRequestMetrics:
-    """Per-request Spyre-specific metrics surfaced to benchmark clients."""
-
-    request_id: str
-    queued_time_s: float
-    num_chunked_prefills: int
-    chunk_prefill_latencies_s: list[float]
-    chunk_prefill_start_times_s: list[float] = dataclasses.field(default_factory=list)
-    decode_latencies_s: list[float] = dataclasses.field(default_factory=list)
-    decode_start_times_s: list[float] = dataclasses.field(default_factory=list)
-    tkvs: list[int] = dataclasses.field(default_factory=list)
-
-
-class SpyreMetricsRegistry:
-    """Thread-safe store of per-request SpyreRequestMetrics, cleared on read."""
-
-    def __init__(self) -> None:
-        self._store: dict[str, SpyreRequestMetrics] = {}
-        self._lock = threading.Lock()
-
-    def put(self, metrics: SpyreRequestMetrics) -> None:
-        with self._lock:
-            self._store[metrics.request_id] = metrics
-
-    def get_and_clear(self, request_id: str) -> SpyreRequestMetrics | None:
-        with self._lock:
-            return self._store.pop(request_id, None)
-
-
-_REGISTRY: SpyreMetricsRegistry | None = None
-_SCHEDULER: Any = None  # set by ChunkedPrefillSpyreScheduler.__init__
-
-
-def enable_registry() -> SpyreMetricsRegistry:
-    global _REGISTRY
-    _REGISTRY = SpyreMetricsRegistry()
-    return _REGISTRY
-
-
-def get_registry() -> SpyreMetricsRegistry | None:
-    return _REGISTRY
-
-
-def register_scheduler(scheduler: Any) -> None:
-    """Called by ChunkedPrefillSpyreScheduler at init time."""
-    global _SCHEDULER, _REGISTRY
-    _SCHEDULER = scheduler
-    if _REGISTRY is None:
-        _REGISTRY = SpyreMetricsRegistry()
 
 
 @dataclasses.dataclass

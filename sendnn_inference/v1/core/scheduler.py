@@ -228,9 +228,6 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
 
         if envs_spyre.SENDNN_INFERENCE_BENCH_METRICS_ENABLED:
             self._bench = SpyreBenchState()
-            from sendnn_inference.v1.metrics.stats_logger import register_scheduler
-
-            register_scheduler(self)
 
         assert self.max_batch_tkv_limit != -1, (
             "Expecting the env var VLLM_DT_MAX_BATCH_TKV_LIMIT to be set in platform.py"
