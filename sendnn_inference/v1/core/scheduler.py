@@ -211,24 +211,29 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         self.reserved_blocks = dict[str, int]()
 
     def update_from_output(self, scheduler_output, model_runner_output):
-        assert isinstance(model_runner_output, SpyreModelRunnerOutput), (
-            "Expecting an instance of CPSpyreModelRunnerOutput when doing chunked prefill."
-        )
+        # model_runner_output can be None when sampling is deferred
+        if model_runner_output is not None:
+            assert isinstance(model_runner_output, SpyreModelRunnerOutput), (
+                "Expecting an instance of CPSpyreModelRunnerOutput when doing chunked prefill."
+            )
 
-        # Remove completed prefills
-        self.ongoing_prefills = [
-            req for req in self.ongoing_prefills if req.num_computed_tokens < req.num_prompt_tokens
-        ]
+            # Remove completed prefills
+            self.ongoing_prefills = [
+                req for req in self.ongoing_prefills if req.num_computed_tokens < req.num_prompt_tokens
+            ]
 
-        self.tkv = model_runner_output.tkv
-        result = super(SpyreScheduler, self).update_from_output(
-            scheduler_output, model_runner_output
-        )
-
-        for finished_request in self.finished_req_ids:
-            blocks = self.reserved_blocks.pop(finished_request, 0)
-            self.total_reserved_blocks -= blocks
-            assert self.total_reserved_blocks >= 0
+            self.tkv = model_runner_output.tkv
+            result = super(SpyreScheduler, self).update_from_output(
+                scheduler_output, model_runner_output
+            )
+            
+            for finished_request in self.finished_req_ids:
+                blocks = self.reserved_blocks.pop(finished_request, 0)
+                self.total_reserved_blocks -= blocks
+                assert self.total_reserved_blocks >= 0
+        else:
+            # When sampling is deferred, we don't update state yet
+            result = None
 
         return result
 
