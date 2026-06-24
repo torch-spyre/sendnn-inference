@@ -242,6 +242,14 @@ class SpyrePlatform(Platform):
         if not is_decoder and not is_pooling:
             raise ValueError("Only the 'generate' and 'pooling' runners are supported")
 
+        if vllm_config.load_config.load_format == "dummy" and (
+            model_config.is_multimodal_model or is_pooling
+        ):
+            raise ValueError(
+                "--load-format dummy is only supported for text generation models; "
+                "random-weight init is not implemented for multimodal or pooling models."
+            )
+
         if parallel_config.worker_cls == "auto":
             parallel_config.worker_cls = "sendnn_inference.v1.worker.spyre_worker.SpyreWorker"
 
@@ -345,7 +353,7 @@ class SpyrePlatform(Platform):
                 scheduler_config.max_num_batched_tokens = (
                     model_config.max_model_len * scheduler_config.max_num_seqs
                 )
-                cache_config.block_size = model_config.max_model_len  # ty: ignore[invalid-assignment]
+                cache_config.block_size = model_config.max_model_len
                 vllm_config.cache_config.enable_prefix_caching = False
 
             else:
@@ -635,7 +643,12 @@ class SpyrePlatform(Platform):
 
         # NOTE: math.ceil can output a number for each worker that sums
         # to a total greater than cpu_count.
-        cpus_per_worker = math.ceil(cpu_count / worker_count) if cpu_count is not None else None
+        thread_factor = worker_count
+        if cls._config.model_config.is_multimodal_model:
+            # thread_factor value/formula subject to further tuning
+            thread_factor = 1
+
+        cpus_per_worker = math.ceil(cpu_count / thread_factor) if cpu_count is not None else None
 
         thread_warning = (
             "Excessive threads may result in CPU contention. "
@@ -821,7 +834,7 @@ class SpyrePlatform(Platform):
     @classmethod
     def _set_batch_tkv_limit_from_env(cls) -> None:
         try:
-            cls._max_batch_tkv_limit = int(os.getenv("VLLM_DT_MAX_BATCH_TKV_LIMIT", "-1"))  #  ty: ignore
+            cls._max_batch_tkv_limit = int(os.getenv("VLLM_DT_MAX_BATCH_TKV_LIMIT", "-1"))
         except ValueError as e:
             raise ValueError("VLLM_DT_MAX_BATCH_TKV_LIMIT must be an integer") from e
 

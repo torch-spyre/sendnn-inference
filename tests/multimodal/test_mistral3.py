@@ -15,7 +15,7 @@ from transformers import AutoConfig, AutoProcessor
 from vllm.multimodal.inputs import MultiModalFeatureSpec
 
 import sendnn_inference.multimodal as spyre_mm
-from tests.spyre_util import REFERENCE_MODELS
+from spyre_util import REFERENCE_MODELS
 
 # MISTRAL3_MODEL = REFERENCE_MODELS["mistralai/Mistral-Small-3.2-24B-Instruct-2506"]
 MISTRAL3_MODEL = REFERENCE_MODELS["mistralai/Mistral-Small-3.1-24B-Instruct-2503"]

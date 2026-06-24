@@ -417,7 +417,7 @@ class SpyreWorker(WorkerBase):
         logger.info("load model took %.3fs", load_model_total_t)
 
     def _gen_warmup_block_ids(self, num_tokens: int) -> tuple[list[int]]:
-        num_blocks = math.ceil(num_tokens / 64)
+        num_blocks = math.ceil(num_tokens / SpyrePlatform.get_block_size())
         start = self.warmup_block_ids
         end = start + num_blocks
         self.warmup_block_ids = end
@@ -520,7 +520,7 @@ class SpyreWorker(WorkerBase):
             finished_req_ids=set(),
             **_get_extra_args(),
         )
-        logger.info("[WARMUP] Deploying to device...")
+        logger.info("[WARMUP] Deploying prefill to device...")
         self.execute_model(scheduler_output)
         # Clear pending sampling state after warmup execution to prevent
         # "Multiple deferred sampling batches" error on next execute_model call
@@ -712,7 +712,7 @@ class SpyreWorker(WorkerBase):
         cached_request_data.req_ids = [req.req_id for req in requests]
         cached_request_data.new_block_ids = []
         for req in requests:
-            if len(req.prompt_token_ids) % 64 == 0:
+            if len(req.prompt_token_ids) % SpyrePlatform.get_block_size() == 0:
                 cached_request_data.new_block_ids.append(self._gen_warmup_block_ids(1))
             else:
                 cached_request_data.new_block_ids.append(([],))

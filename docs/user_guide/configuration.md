@@ -121,6 +121,15 @@ Prefix caching mirrors upstream vLLM, though the requirement for fixed-size pref
 
 When prefix caching is enabled, the `vllm:prefix_cache_queries` and `vllm:prefix_cache_hits` metrics correctly report prefix cache stats in tokens.
 
+### Multimodal Models
+
+For multimodal models, vision encoding is offloaded to the CPU. In order to prevent expensive duplication of vision encoding, prefill during multimodal models is slightly different than that of text-only models. Vision encoding is done once per request instead of per worker so the threading configuration for multimodal models is also slightly different to improve performance.
+
+Text-only models set the number of available threads through dividing the number of available CPUs available by number of worker and only assigning that per worker.
+Multimodal models currently set the number of available threads to the number of available cpus available, ignoring the number of workers. This may be changed in the future.
+
+The maximum available number of CPUs also can be set using `SENDNN_INFERENCE_NUM_CPUS`.
+
 ## Pooling Models
 
 For the embedding, scoring, and reranking tasks, vLLM supports running Pooling Models. More information on Pooling Models can be found in the [vLLM official documentation](https://docs.vllm.ai/en/latest/models/pooling_models/).

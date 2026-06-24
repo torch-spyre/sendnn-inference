@@ -72,6 +72,7 @@ class SpyreCausalLM(nn.Module):
         self.parallel_config = vllm_config.parallel_config
         self.cache_config = vllm_config.cache_config
         self.scheduler_config = vllm_config.scheduler_config
+        self.load_config = vllm_config.load_config
         self.dtype = self.get_dtype()
 
         # Wrappers for utils for multimodal
@@ -90,6 +91,13 @@ class SpyreCausalLM(nn.Module):
         # edge case: prompt will be padded to first block:
         # can produce 1 token with prefill plus rest of model length
         max_decode_length = max_model_len - BLOCK_SIZE + 1
+
+        if self.model_config.quantization:
+            self.attention_name = "spyre_paged_attn_fp8"
+            self.is_fp8_model = True
+        else:
+            self.attention_name = "spyre_paged_attn"
+            self.is_fp8_model = False
 
         # Load the weights from the cached or downloaded files.
         self.load_weights(
@@ -132,13 +140,6 @@ class SpyreCausalLM(nn.Module):
                 f"not supported in ContinuousBatchingFmsModel"
             )
 
-        if self.model_config.quantization:
-            self.attention_name = "spyre_paged_attn_fp8"
-            self.is_fp8_model = True
-        else:
-            self.attention_name = "spyre_paged_attn"
-            self.is_fp8_model = False
-
         self.current_scale: list[tuple] | None = None
         self.past_key_value_states: list[
             tuple[torch.Tensor | ScaledTensor, torch.Tensor | ScaledTensor]
@@ -171,16 +172,30 @@ class SpyreCausalLM(nn.Module):
                     self.dtype,
                 )
 
-        is_local = os.path.isdir(model_config.model)
-        model_path = model_config.model
-        # Get location of model from HF cache.
-        if not is_local:
-            model_path = download_weights_from_hf(
-                model_name_or_path=model_path,
-                cache_dir=None,
-                allow_patterns=["*.safetensors", "*.bin", "*.pt"],
-                revision=model_config.revision,
+        # `--load-format dummy` skips the checkpoint download and routes through
+        # FMS's `hf_configured` path, which fetches only config.json and then
+        # random-inits the model via `reset_parameters()`.
+        variant: str | None = None
+        if self.load_config.load_format == "dummy":
+            logger.info(
+                "Loading model %s with random weights.",
+                model_config.model,
             )
+            architecture = "hf_configured"
+            variant = model_config.model
+            model_path: str | None = None
+        else:
+            architecture = "hf_pretrained"
+            is_local = os.path.isdir(model_config.model)
+            model_path = model_config.model
+            # Get location of model from HF cache.
+            if not is_local:
+                model_path = download_weights_from_hf(
+                    model_name_or_path=model_path,
+                    cache_dir=None,
+                    allow_patterns=["*.safetensors", "*.bin", "*.pt"],
+                    revision=model_config.revision,
+                )
 
         # Get any fixes needed that must be patched into the kwargs;
         # currently this is only use for multimodal models / llava next
@@ -192,7 +207,8 @@ class SpyreCausalLM(nn.Module):
             kwargs["rank"],
         ):
             self.fms_model = get_model(
-                architecture="hf_pretrained",
+                architecture=architecture,
+                variant=variant,
                 model_path=model_path,
                 distributed_strategy=distributed_strategy,
                 group=dist.group.WORLD,
@@ -276,9 +292,8 @@ class SpyreCausalLM(nn.Module):
         (vision_tower / multi_modal_projector) onto SENDNN_INFERENCE_MM_DEVICE
         with SENDNN_INFERENCE_CPU_MM_DTYPE.
 
-        NOTE: the whole non-mm model is cast to fp16, including any fp32
-        params/buffers and the float8 weights of quantized models. This path is
-        only intended for non-quantized (bf16) models.
+        For quantized (e.g. FP8) models we only convert bf16 params/buffers to
+        fp16 — fp8 weights and fp32 scales must be left untouched.
         """
         cpu_mm_dtype = envs_spyre.SENDNN_INFERENCE_CPU_MM_DTYPE
         mm_device = envs_spyre.SENDNN_INFERENCE_MM_DEVICE
@@ -294,13 +309,13 @@ class SpyreCausalLM(nn.Module):
             )
         self.mm_device = mm_device
 
-        # Cast the whole (non-mm) model to fp16 for Spyre, and place the
-        # multimodal submodules on their configured device/dtype. The mm
-        # submodules are moved wholesale with Module.to(...) (required because
+        # Cast the (non-mm) model to fp16 for Spyre, and place the multimodal
+        # submodules on their configured device/dtype. The mm submodules are
+        # moved wholesale with Module.to(...) (required because
         # nn.Parameter.set_data can't swap the CPU->nnpa backend; Module._apply
         # rebuilds the Parameters, and buffers move too). Their descendants must
-        # be skipped so the else branch doesn't re-cast them back to fp16 after
-        # placement (named_modules yields parents before children).
+        # be skipped so the non-mm branch doesn't re-cast them back to fp16
+        # after placement (named_modules yields parents before children).
         mm_prefixes_tuple = tuple(mm_prefixes)
         for module_name, module in self.fms_model.named_modules():
             if module_name in mm_module_names:
@@ -314,6 +329,13 @@ class SpyreCausalLM(nn.Module):
             elif module_name.startswith(mm_prefixes_tuple):
                 # Descendant of an mm submodule; already placed with its ancestor.
                 continue
+            elif self.is_fp8_model:
+                # Per-param cast restricted to bf16: leaves fp8 weights and
+                # fp32 scales alone. recurse=False so each param is visited
+                # once via the outer named_modules() walk.
+                for param in module.parameters(recurse=False):
+                    if param.dtype == torch.bfloat16:
+                        param.data = param.data.to(dtype=torch.float16)
             else:
                 module.to(dtype=torch.float16)
 
@@ -469,11 +491,11 @@ class SpyreCausalLM(nn.Module):
 
         # The second item in the output tuple is the KV cache.
         # However, on spyre these are ghost tensors- the data in these tensors does not reflect the
-        # actual kv cache data on the device. They exist only for proper compilation, so we don't
-        # waste any time assigning these tensors back to anything.
-        logits, kv_cache = output
-        if not self.on_spyre:
-            self.past_key_value_states = kv_cache
+        # actual kv cache data on the device. They exist only for proper compilation.
+        # Assigning self.past_key_value_states results in a minor (~1ms)
+        # performance decrease but avoids a ~20gb memory increase when
+        # the value is conditionally assigned.
+        logits, self.past_key_value_states = output
 
         if is_prompt:
             # assert that indeed received the last block of logits

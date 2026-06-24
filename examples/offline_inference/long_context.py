@@ -45,6 +45,18 @@ if __name__ == "__main__":
     )
     parser.add_argument("--max-num-batched-tokens", type=int, default=1024)
     parser.add_argument("--backend", type=str, default="sendnn", choices=["eager", "sendnn"])
+    parser.add_argument(
+        "--tokenizer",
+        type=str,
+        default=None,
+        help="HF tokenizer id or path. Defaults to --model.",
+    )
+    parser.add_argument(
+        "--load-format",
+        type=str,
+        default="auto",
+        help="vLLM load format: auto, dummy, safetensors, pt, ... `dummy` random-inits weights.",
+    )
 
     args = parser.parse_args()
 
@@ -95,7 +107,7 @@ if __name__ == "__main__":
     prompts = prompts * (args.num_prompts // len(prompts) + 1)
     prompts = prompts[0 : args.num_prompts]
 
-    tokenizer = AutoTokenizer.from_pretrained(args.model)
+    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer or args.model)
 
     tokenized_prompts = tokenizer(prompts)["input_ids"]
     tokenized_prompts = [p[: args.max_prompt_len] for p in tokenized_prompts]
@@ -124,7 +136,8 @@ if __name__ == "__main__":
     # Create an LLM.
     llm = LLM(
         model=args.model,
-        tokenizer=args.model,
+        tokenizer=args.tokenizer or args.model,
+        load_format=args.load_format,
         max_model_len=args.max_model_len,
         max_num_seqs=args.max_num_seqs,
         tensor_parallel_size=args.tp,

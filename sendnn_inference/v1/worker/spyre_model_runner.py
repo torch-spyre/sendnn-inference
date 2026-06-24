@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, TypeVar, Union
 
 import torch
+import torch.distributed
 from transformers import AutoModel, AutoModelForSequenceClassification, AutoTokenizer
 from vllm.config import DeviceConfig, VllmConfig, set_current_vllm_config
 from vllm.forward_context import set_forward_context
@@ -28,6 +29,9 @@ from vllm.v1.structured_output.utils import (
     apply_grammar_bitmask as vllm_apply_grammar_bitmask,
 )
 
+from fms.models import get_model as fms_get_model
+from fms.utils.generation import pad_input_ids as fms_pad_input_ids
+
 import sendnn_inference.envs as envs_spyre
 import sendnn_inference.utils as utils_spyre
 from sendnn_inference.model_executor.model_loader.spyre import (
@@ -39,6 +43,13 @@ from sendnn_inference.perf_metrics import create_perf_metric_logger
 from sendnn_inference.platform import SpyrePlatform
 from sendnn_inference.utils import exact_div
 from sendnn_inference.v1.sample.spyre_logits_processor import build_logitsprocs_for_cb
+from sendnn_inference.v1.worker.mm_shared_memory import (
+    cleanup_embeddings,
+    dtype_to_idx,
+    idx_to_dtype,
+    read_embeddings,
+    write_embeddings,
+)
 
 # yapf conflicts with ruff for this block
 # yapf: disable
@@ -61,6 +72,8 @@ else:
     NewRequestData = None
     SamplingMetadata = None
     GrammarOutput = None
+
+FMS_POOLING_MODEL_LIST = ["Qwen3ForCausalLM"]
 
 logger = init_logger(__name__)
 
@@ -339,7 +352,15 @@ class SpyrePoolingModelRunner(
         )
 
         if task == "embed":
-            self._model = AutoModel.from_pretrained(self.model_config.model)
+            if self.model_config.architecture in FMS_POOLING_MODEL_LIST:
+                self._model = fms_get_model(
+                    "hf_pretrained",
+                    self.model_config.model,
+                    data_type=torch.float16,
+                )
+                self._model = self._model.base_model
+            else:
+                self._model = AutoModel.from_pretrained(self.model_config.model)
         elif task == "classify":
             class_model = AutoModelForSequenceClassification.from_pretrained(
                 self.model_config.model
@@ -389,9 +410,7 @@ class SpyrePoolingModelRunner(
 
         if task == "classify":
             tokenizer = AutoTokenizer.from_pretrained(self.model_config.model)
-            # Assert to satisfy type checker
-            assert tokenizer is not None, "Failed to load tokenizer"
-            output = tokenizer(text="foo", text_pair="bar")
+            output = tokenizer(text="foo", text_pair="bar")  # ty: ignore[call-non-callable]
             self.use_token_type_ids = "token_type_ids" in output
             if self.use_token_type_ids:
                 self.sep_token_id = tokenizer.sep_token_id
@@ -414,7 +433,12 @@ class SpyrePoolingModelRunner(
     @property
     def vocab_size(self) -> int:
         # self.model here is probably a transformers model class
-        return self.model.config.vocab_size  # ty: ignore[invalid-return-type]
+        if self.model_config.architecture in FMS_POOLING_MODEL_LIST:
+            assert isinstance(self.model.config.src_vocab_size, int)
+            return self.model.config.src_vocab_size  # ty: ignore[invalid-return-type]
+        else:
+            assert isinstance(self.model.config.vocab_size, int)
+            return self.model.config.vocab_size  # ty: ignore[invalid-return-type]
 
     def _prepare_pad_input_ids(
         self,
@@ -581,9 +605,17 @@ class SpyrePoolingModelRunner(
             )
 
         # get position ids and attention mask
-        input_tokens, position_ids, mask = self.pad_input_ids(
-            input_token_list, min_pad_length=min_pad_length_batch
-        )
+        if self.model_config.architecture in FMS_POOLING_MODEL_LIST:
+            input_tokens, padding_kwargs = fms_pad_input_ids(
+                input_token_list,
+                min_pad_length=min_pad_length_batch,
+            )
+            position_ids = padding_kwargs["position_ids"]
+            mask = padding_kwargs["mask"]
+        else:
+            input_tokens, position_ids, mask = self.pad_input_ids(
+                input_token_list, min_pad_length=min_pad_length_batch
+            )
 
         token_type_ids = None
         if self.use_token_type_ids:
@@ -664,14 +696,24 @@ class SpyrePoolingModelRunner(
 
         # Execute the model
         with set_forward_context(attn_metadata, self.vllm_config):
-            outputs = self.model(
-                input_ids=model_input.input_tokens,
-                position_ids=model_input.input_positions,
-                attention_mask=model_input.input_masks,
-                **model_kwargs,
-            )
+            if self.model_config.architecture in FMS_POOLING_MODEL_LIST:
+                outputs = self.model(
+                    model_input.input_tokens,
+                    position_ids=model_input.input_positions,
+                    mask=model_input.input_masks,
+                    **model_kwargs,
+                )
 
-            hidden_states = outputs["last_hidden_state"]
+                hidden_states = outputs[0]
+            else:
+                outputs = self.model(
+                    input_ids=model_input.input_tokens,
+                    position_ids=model_input.input_positions,
+                    attention_mask=model_input.input_masks,
+                    **model_kwargs,
+                )
+
+                hidden_states = outputs["last_hidden_state"]
 
         # Only perform sampling in the driver worker.
         if not self.is_driver_worker:
@@ -894,6 +936,145 @@ class ChunkedPrefillModelRunner(
     def _prepare_prompt(self, new_request_data: list[NewRequestData]) -> SamplingForwardInputs:
         raise NotImplementedError
 
+    def _compute_and_cache_mm_embeddings(
+        self,
+        request: SamplingRequestState,
+        req_id: str,
+        full_input_tokens: torch.Tensor,
+        mm_features: Any,
+    ) -> None:
+        """Compute MM embeddings and cache them on every TP rank.
+
+        Two modes are supported, controlled by ``SENDNN_INFERENCE_TP_MM_SHARING``:
+
+        **Sharing enabled (default, =1):**
+            Rank 0 runs the vision encoder once and distributes the result to
+            all other TP ranks via POSIX shared memory.  This avoids
+            ``world_size`` redundant encoder calls.
+
+            Synchronisation uses two GLOO broadcast collectives:
+
+            * **Broadcast A** — rank 0 signals that SHM is written and carries
+              the embedding shape + dtype in the ``meta`` tensor.
+            * **Broadcast B** — cleanup barrier; all ranks signal they have
+              finished reading so rank 0 can safely unlink the SHM segment.
+
+            Both broadcasts are placed in a ``finally`` block so they always
+            execute — even when an exception is raised — preventing any rank
+            from hanging at a collective the failing rank never reaches.
+
+            A zero ``meta`` tensor (``[0, 0, 0, 0]``) is the failure sentinel:
+            rank 0 only writes a non-zero ``meta`` on success; non-rank-0
+            workers skip the SHM read when they receive all-zeros.
+
+        **Sharing disabled (=0):**
+            Every TP rank runs the vision encoder independently and caches its
+            own copy.  This is the original behaviour — no SHM or coordination
+            overhead, but ``world_size`` redundant encoder calls per request.
+            Set ``SENDNN_INFERENCE_TP_MM_SHARING=0`` to fall back to this mode
+            if SHM-related failures are observed.
+
+        On completion, ``request.cached_mm_embeddings`` is set on every rank.
+        """
+        if self.parallel_config.world_size > 1 and envs_spyre.SENDNN_INFERENCE_TP_MM_SHARING:
+            data_shm = None
+            full_embeds = None
+            meta = torch.zeros(4, dtype=torch.int64)
+
+            try:
+                if self.rank == 0:
+                    # Embedding computation is inside the try so that a failure
+                    # here still reaches the finally → broadcast A → unblocks
+                    # the other ranks that are waiting on broadcast A.
+                    t0 = time.time()
+                    with torch.inference_mode():
+                        full_embeds = self.model.get_maybe_mm_embeddings(
+                            full_input_tokens,
+                            mm_features=mm_features,
+                            is_decode=False,
+                        )
+                    t_elapsed = time.time() - t0
+                    logger.info("maybe_mm_embedding processing time: %.2fms", (t_elapsed * 1000))
+                    self.perf_logger.log(
+                        "get_mm_embeddings_time_ms",
+                        t_elapsed * 1000,
+                        phase="prefill",
+                        has_mm_features=True,
+                        req_id=req_id,
+                    )
+                    full_embeds = full_embeds.cpu().contiguous()
+                    data_shm = write_embeddings(full_embeds, req_id)
+                    # Only set meta to a non-zero value on success; zeros = failure.
+                    meta = torch.tensor(
+                        [
+                            full_embeds.shape[0],
+                            full_embeds.shape[1],
+                            full_embeds.shape[2],
+                            dtype_to_idx(full_embeds.dtype),
+                        ],
+                        dtype=torch.int64,
+                    )
+
+            finally:
+                # ── Broadcast A (always) ──────────────────────────────────────
+                # Carries valid shape/dtype on success, all-zeros on failure.
+                # Must be in finally so it is sent even when rank 0 raises above.
+                torch.distributed.broadcast(meta, src=0)
+
+                # Non-rank-0 reads from SHM only if meta signals success.
+                # Wrapped in try/except so a read failure does not stop
+                # broadcast B from executing on this rank.
+                if self.rank != 0:
+                    try:
+                        if meta.any():
+                            shape = (int(meta[0]), int(meta[1]), int(meta[2]))
+                            dtype = idx_to_dtype(int(meta[3]))
+                            full_embeds = read_embeddings(req_id, shape, dtype)
+                        # else: full_embeds stays None — rank 0 failed; the
+                        # exception will propagate from rank 0 separately.
+                    except Exception as exc:
+                        logger.error(
+                            "[rank %d] SHM read failed for req '%s': %s",
+                            self.rank,
+                            req_id,
+                            exc,
+                        )
+                        full_embeds = None
+
+                # ── Broadcast B (always) ──────────────────────────────────────
+                # Symmetric cleanup barrier. Must be in finally for the same
+                # reason as broadcast A.
+                torch.distributed.broadcast(meta, src=0)
+                if data_shm is not None:
+                    cleanup_embeddings(data_shm)
+        else:
+            # Sharing disabled (TP = 1, or SENDNN_INFERENCE_TP_MM_SHARING not set):
+            # every rank runs the vision encoder independently.  This is the
+            # original behaviour — no SHM, no coordination overhead.
+            t0 = time.time()
+            with torch.inference_mode():
+                full_embeds = self.model.get_maybe_mm_embeddings(
+                    full_input_tokens,
+                    mm_features=mm_features,
+                    is_decode=False,
+                )
+            t_elapsed = time.time() - t0
+            logger.info("maybe_mm_embedding processing time: %.2fms", (t_elapsed * 1000))
+            self.perf_logger.log(
+                "get_mm_embeddings_time_ms",
+                t_elapsed * 1000,
+                phase="prefill",
+                has_mm_features=True,
+                req_id=req_id,
+            )
+
+        request.cached_mm_embeddings = full_embeds
+        logger.debug(
+            "Cached full multimodal embeddings for request '%s' (rank %d)",
+            req_id,
+            self.rank,
+        )
+
     def _prepare_chunked_prefill(self, req_id: str) -> SamplingForwardInputs:
         """
         Cases / Scenarios for the chunked prefill with right padding.
@@ -1027,10 +1208,14 @@ class ChunkedPrefillModelRunner(
             chunk_end = min(chunk_start + chunk_size, prompt_len)
             chunk_left_offset = 0
 
+        # Padding positions are masked by the attention masks — use empty to avoid
+        # zeroing memory that will be either overwritten or never read by the model.
         input_tokens = torch.zeros(chunk_size, dtype=torch.int64, device=self.device)
         input_tokens_np = input_tokens.numpy()
         input_positions = torch.zeros(chunk_size, dtype=torch.int64, device=self.device)
         input_positions_np = input_positions.numpy()
+        # NOTE: keeping zeros for input_tokens/positions since token ID 0 (pad) is needed
+        # for the attention mask logic; only input_embeds padding is safe to skip zeroing.
 
         # Create tensors based on slice
         input_tokens_np[chunk_left_offset : chunk_left_offset + chunk_end - chunk_start] = (
@@ -1079,35 +1264,15 @@ class ChunkedPrefillModelRunner(
         self.model.indices = torch.ones(1, dtype=torch.bool, device="cpu")
 
         # For multimodal requests, compute embeddings once for the full sequence
-        # and cache them, then slice per chunk. This ensures image features are
-        # correctly aligned across all chunks.
+        # and cache them, then slice per chunk.  With tensor parallelism (TP>1) each
+        # worker is a separate process; we avoid running the vision encoder world_size
+        # times by having rank 0 compute and broadcast the result to all other ranks.
+
         if mm_features and request.cached_mm_embeddings is None:
-            # First chunk: compute full multimodal embeddings
             full_input_tokens = torch.tensor(
                 prompt_token_ids, dtype=torch.int64, device=self.device
             ).unsqueeze(0)
-
-            t0 = time.time()
-            full_embeds = self.model.get_maybe_mm_embeddings(
-                full_input_tokens,
-                mm_features=mm_features,
-                is_decode=False,
-            )
-
-            t_elapsed = time.time() - t0
-
-            logger.info("maybe_mm_embedding processing time: %.2fms", (t_elapsed * 1000))
-            self.perf_logger.log(
-                "get_mm_embeddings_time_ms",
-                t_elapsed * 1000,
-                phase="prefill",
-                has_mm_features=True,
-                req_id=req_id,
-            )
-
-            # Cache the full embeddings for subsequent chunks
-            request.cached_mm_embeddings = full_embeds
-            logger.debug("Computed and cached full multimodal embeddings for request '%s'", req_id)
+            self._compute_and_cache_mm_embeddings(request, req_id, full_input_tokens, mm_features)
 
         # Slice the cached embeddings for this chunk
         if request.cached_mm_embeddings is not None:
@@ -1115,8 +1280,9 @@ class ChunkedPrefillModelRunner(
             # Add left padding to align with the chunked token positions
             full_embeds = request.cached_mm_embeddings
 
-            # Create output tensor with chunk size
-            input_embeds = torch.zeros(
+            # Padded positions are masked by left_padded_prompt_mask so the model
+            # ignores them — use empty to skip the zero-fill cost (~40 MB per chunk).
+            input_embeds = torch.empty(
                 (1, chunk_size, full_embeds.shape[-1]),
                 dtype=full_embeds.dtype,
                 device=self.device,
