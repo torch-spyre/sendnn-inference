@@ -434,6 +434,32 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         ):
             logger.debug("Scheduled tokens in this step: %s", outputs.num_scheduled_tokens)
 
+         # As blocks are allocated, we discount them from the reserved blocks.
+        # For prefill blocks we must first subtract the cached blocks.
+        free_blocks = self._get_free_blocks()
+        for new_request in outputs.scheduled_new_reqs:
+            cached, reserved = required_blocks[new_request.req_id]
+            scheduled_blocks = len(new_request.block_ids[0])
+            new_blocks = scheduled_blocks - cached
+            # The first chunk of a prefill that is scheduled
+            # always has at least one new block
+            assert new_blocks >= 1
+            actual_reserved = reserved - new_blocks
+            assert actual_reserved >= 0
+            self.total_reserved_blocks += actual_reserved
+            self.reserved_blocks[new_request.req_id] = actual_reserved
+
+        for req_id, req_new_blocks in zip(
+            outputs.scheduled_cached_reqs.req_ids,
+            outputs.scheduled_cached_reqs.new_block_ids,
+        ):
+            new_blocks = 0 if req_new_blocks is None else len(req_new_blocks[0])
+            self.total_reserved_blocks -= new_blocks
+            self.reserved_blocks[req_id] -= new_blocks
+            assert self.reserved_blocks[req_id] >= 0
+
+        assert 0 <= self.total_reserved_blocks <= free_blocks
+
         return outputs
 
     def can_schedule_prefill(self, request: Request) -> bool:
