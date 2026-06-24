@@ -2,26 +2,18 @@
 
 ## Background
 
-Multimodal models on Spyre compute the vision encoder on CPU (rank 0 only) and broadcast
-embeddings to other ranks via POSIX shared memory. Today this encoding runs serially, once per
-request, at the start of that request's first prefill step. MM encoding is expensive operation and in current implementation its blocking, so no other operation like prefill and decode of other requests can run in parallel affecting overall performance.
+Multimodal models on Spyre compute the vision encoder on CPU (rank 0 only) and broadcast embeddings to other ranks via POSIX shared memory. Today this encoding runs serially, once per request, at the start of that request's first prefill step. MM encoding is expensive operation and in current implementation its blocking, so no other operation like prefill and decode of other requests can run in parallel affecting overall performance.
 
 ## Goal
 
-Overlap CPU / NNPA vision encoding with AIU prefill/decode by running the encoder in a separate
-subprocess. Embeddings are written to POSIX shared memory and all TP workers read them
-independently — no rank-0 broadcast of large tensors. The scheduler gates MM request prefill
-on encoding readiness, so a request only enters prefill once its embedding is available.
+Overlap CPU / NNPA vision encoding with AIU prefill/decode by running the encoder in a separate subprocess. Embeddings are written to POSIX shared memory and all TP workers read them independently — no rank-0 broadcast of large tensors. The scheduler gates MM request prefill on encoding readiness, so a request only enters prefill once its embedding is available.
 
 ## Evolution Path
 
-**Phase 1 and 2:** Combined in current implementation. Vision encoding runs
-in a dedicated non-daemon subprocess (`mm-encoder`) managed by `SpyreMultiprocExecutor`.
-The encoder subprocess loads only the vision model via `get_model(..., vision_only=True)`.
-The scheduler submits MM requests for encoding on every step and gates prefill on encoding
+**Phase 1 and 2:** Combined in current implementation. Vision encoding runs in a dedicated non-daemon subprocess (`mm-encoder`) managed by `SpyreMultiprocExecutor`. The encoder subprocess loads only the vision model via `get_model(..., vision_only=True)`.
+The scheduler submits MM requests for encoding on every step and gates prefill on encoding.
 
-**Phase 3 (future):** Enable vision encoder batching within the encoder subprocess. This will further improve the performance by handling all pending MM requests in single batch. This requires
-FMS changes to stack same-resolution images instead of
+**Phase 3 (future):** Enable vision encoder batching within the encoder subprocess. This will further improve the performance by handling all pending MM requests in single batch. This requires FMS changes to stack same-resolution images instead of
 concatenating. See [Phase 3](#phase-3-true-vision-encoder-batching-requires-fms-change) below.
 
 ### Current Flow
@@ -53,8 +45,7 @@ SpyreMultiprocExecutor.execute_model() on every step:
        collective_rpc("store_mm_embeddings")             # all TP workers read SHM
        cleanup SHM blocks
        set scheduler_output._spyre_newly_encoded_req_ids
-  3. super().execute_model() → workers run AIU forward   # concurrent with encoder subprocess
-                                                         # encoder process runs in parallel
+  3. super().execute_model() → workers run AIU forward   # concurrent with encoder subprocess encoder process runs in parallel
 
 scheduler.update_from_output():
   _mm_encoding_ready.update(_spyre_newly_encoded_req_ids)
@@ -87,9 +78,7 @@ Non-MM requests, the warmup path, chunked prefill logic, and TP broadcast are un
 
 ### Threading (abandoned)
 
-**What we tried:** Start a `threading.Thread` in the worker model runner. The thread uses the
-already-loaded `fms_model` directly (no copy) and encodes waiting MM requests in the
-background while the AIU runs.
+**What we tried:** Start a `threading.Thread` in the worker model runner. The thread uses the already-loaded `fms_model` directly (no copy) and encodes waiting MM requests in the background while the AIU runs.
 
 **Why it failed:** Spyre operations and vision encoding both are blocking operations. The background thread cannot make any progress during AIU execution. Encoding only runs in tiny Python gaps between AIU calls and prefill / decode gets impacted by encoding operations.
 
@@ -101,35 +90,21 @@ background while the AIU runs.
 `complete_warmup`.
 
 **Why it failed:** vLLM spawns worker processes as **daemon processes**
-(`multiprocessing.Process(daemon=True)`). Python forbids daemon processes from spawning
-children (`AssertionError: daemonic processes are not allowed to have children`).
+(`multiprocessing.Process(daemon=True)`). Python forbids daemon processes from spawning children (`AssertionError: daemonic processes are not allowed to have children`).
 
 **Verdict:** Architecturally impossible from a worker process.
 
 ### Subprocess from MultiprocExecutor (**implemented**)
 
-**The idea:** vLLM's `MultiprocExecutor` runs in the **main (non-daemon) process**. Any
-process it spawns is also non-daemon. By subclassing `MultiprocExecutor` as
-`SpyreMultiprocExecutor`, we can start the encoder process at the executor level.
+**The idea:** vLLM's `MultiprocExecutor` runs in the **main (non-daemon) process**. Any process it spawns is also non-daemon. By subclassing `MultiprocExecutor` as `SpyreMultiprocExecutor`, we can start the encoder process at the executor level.
 
-**Model weight loading:** FMS now supports `get_model(..., vision_only=True)`, which loads
-only vision tower + projector + text embedding from the checkpoint, skipping the LLM
-decoder. The encoder subprocess calls this directly.
+**Model weight loading:** FMS now supports `get_model(..., vision_only=True)`, which loads only vision tower + projector + text embedding from the checkpoint, skipping the LLM decoder. The encoder subprocess calls this directly.
 
-**SHM-based result delivery:** The encoder process writes completed embeddings to POSIX SHM
-and puts only `(req_id, shape, dtype)` metadata on the result queue (no large tensors in the
-queue). The executor calls `collective_rpc("store_mm_embeddings", metadata)` so all TP workers
-read from SHM independently — no rank-0 to others tensor broadcast.
+**SHM-based result delivery:** The encoder process writes completed embeddings to POSIX SHM and puts only `(req_id, shape, dtype)` metadata on the result queue (no large tensors in the queue). The executor calls `collective_rpc("store_mm_embeddings", metadata)` so all TP workers read from SHM independently — no rank-0 to others tensor broadcast.
 
-**Scheduler-level encoding readiness gate:** The scheduler tracks `_mm_encoding_submitted` and
-`_mm_encoding_ready` sets. MM requests are only eligible for prefill when their encoding is
-confirmed complete. Text-only requests are completely unaffected. The scheduler submits encoding
-jobs on every step (prefill AND decode) so the encoder stays ahead of the prefill queue.
+**Scheduler-level encoding readiness gate:** The scheduler tracks `_mm_encoding_submitted` and `_mm_encoding_ready` sets. MM requests are only eligible for prefill when their encoding is confirmed complete. Text-only requests are completely unaffected. The scheduler submits encoding jobs on every step (prefill AND decode) so the encoder stays ahead of the prefill queue.
 
 
 ## Phase 3: Add Vision Encoder Batching
 
-For N same-resolution images, the vision transformer can runs once on `[N, P, D]`
-instead of N times on `[1, P, D]`. CPU / NNPA matmul efficiently scales with batch size, so the
-single batched call should be significantly faster than N sequential calls — particularly
-for large images where the `P²` self-attention dominates.
+For N same-resolution images, the vision transformer can runs once on `[N, P, D]` instead of N times on `[1, P, D]`. CPU / NNPA matmul efficiently scales with batch size, so the single batched call should be significantly faster than N sequential calls — particularly for large images where the `P²` self-attention dominates.
