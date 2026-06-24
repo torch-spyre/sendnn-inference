@@ -434,7 +434,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         ):
             logger.debug("Scheduled tokens in this step: %s", outputs.num_scheduled_tokens)
 
-         # As blocks are allocated, we discount them from the reserved blocks.
+        # As blocks are allocated, we discount them from the reserved blocks.
         # For prefill blocks we must first subtract the cached blocks.
         free_blocks = self._get_free_blocks()
         for new_request in outputs.scheduled_new_reqs:

@@ -1811,13 +1811,12 @@ class ChunkedPrefillModelRunner(
         Stores the current sampling context for later completion.
         """
         # Protect against double defer (batch A overwriting batch B)
-        if self._pending_sampling_state is not None:
-            raise RuntimeError(
-                "Multiple deferred sampling batches are not supported. "
-                "defer_sampling() called twice without sample_tokens() in between. "
-                "This would leak the previous batch's state (logits, metadata, scheduler_output). "
-                "Engine must guarantee at most one pending grammar batch globally."
-            )
+        assert self._pending_sampling_state is None, (
+            "Multiple deferred sampling batches are not supported. "
+            "defer_sampling() called twice without sample_tokens() in between. "
+            "This would leak the previous batch's state (logits, metadata, scheduler_output). "
+            "Engine must guarantee at most one pending grammar batch globally."
+        )
 
         # Deep copy metadata to prevent mutation issues
         # SamplingMetadata likely contains mutable tensors (selected_token_indices,
@@ -2036,13 +2035,11 @@ class ChunkedPrefillModelRunner(
             ModelRunnerOutput for driver worker, None for non-driver workers.
         """
         # Verify pending state exists
-        # Use explicit check instead of assert to ensure it's not removed by python -O
-        if self._pending_sampling_state is None:
-            raise RuntimeError(
-                "sample_tokens() called but no pending sampling state exists. "
-                "This indicates sample_tokens() was called without prior defer_sampling(), "
-                "or the state was already cleared."
-            )
+        assert self._pending_sampling_state is not None, (
+            "sample_tokens() called but no pending sampling state exists. "
+            "This indicates sample_tokens() was called without prior defer_sampling(), "
+            "or the state was already cleared."
+        )
 
         # Retrieve stored sampling context
         state = self._pending_sampling_state
