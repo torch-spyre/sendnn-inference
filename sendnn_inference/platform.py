@@ -541,6 +541,17 @@ class SpyrePlatform(Platform):
 
     @classmethod
     def pre_register_and_update(cls, parser: FlexibleArgumentParser | None = None) -> None:
+        # vLLM has no GraniteSWAForCausalLM architecture. FMS loads the real weights
+        # via the explicit "granite_swa" path (model_loader/spyre.py); vLLM only needs
+        # a class for metadata (runner_type, defaults), so alias it to GraniteForCausalLM.
+        from vllm import ModelRegistry
+
+        if "GraniteSWAForCausalLM" not in ModelRegistry.get_supported_archs():
+            ModelRegistry.register_model(
+                "GraniteSWAForCausalLM",
+                "vllm.model_executor.models.granite:GraniteForCausalLM",
+            )
+
         if parser is None:
             return
 

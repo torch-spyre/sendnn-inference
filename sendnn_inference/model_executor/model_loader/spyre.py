@@ -44,6 +44,23 @@ class SpyreAttentionMetadata:
     is_prefill: bool
 
 
+def _granite_swa_variant_from_hf(cfg: PretrainedConfig) -> str:
+    """Pick the FMS granite_swa variant string from the HF config dimensions.
+
+    Mirrors the registrations in fms/models/granite_swa.py:
+      3b:  hidden_size=2560, num_hidden_layers=24
+      20b: hidden_size=4096, num_hidden_layers=44
+    """
+    if cfg.hidden_size == 4096 and cfg.num_hidden_layers == 44:
+        return "20b"
+    if cfg.hidden_size == 2560 and cfg.num_hidden_layers == 24:
+        return "3b"
+    raise ValueError(
+        f"No registered granite_swa variant for "
+        f"hidden_size={cfg.hidden_size}, num_hidden_layers={cfg.num_hidden_layers}"
+    )
+
+
 class SpyreCausalLM(nn.Module):
     def __init__(
         self,
@@ -117,7 +134,7 @@ class SpyreCausalLM(nn.Module):
             self.parallel_config
         )
 
-        if self.config.model_type in {"llama", "granite", "granitemoehybrid"}:
+        if self.config.model_type in {"llama", "granite", "granitemoehybrid", "granite_swa"}:
             self.kv_cache_specs["num_layers"] = self.config.num_hidden_layers
             self.kv_cache_specs["head_dim"] = getattr(
                 self.fms_model.config,
@@ -176,6 +193,7 @@ class SpyreCausalLM(nn.Module):
         # FMS's `hf_configured` path, which fetches only config.json and then
         # random-inits the model via `reset_parameters()`.
         variant: str | None = None
+        source: str | None = None
         if self.load_config.load_format == "dummy":
             logger.info(
                 "Loading model %s with random weights.",
@@ -197,6 +215,16 @@ class SpyreCausalLM(nn.Module):
                     revision=model_config.revision,
                 )
 
+        # granite_swa is not auto-detected by FMS's hf_pretrained/hf_configured
+        # inference, so route it through its explicitly-registered architecture.
+        # source="hf" converts the HF checkpoint; for dummy it stays None (with
+        # model_path=None) so FMS random-inits via `reset_parameters()`.
+        if self.config.model_type == "granite_swa":
+            architecture = "granite_swa"
+            variant = _granite_swa_variant_from_hf(self.config)
+            if self.load_config.load_format != "dummy":
+                source = "hf"
+
         # Get any fixes needed that must be patched into the kwargs;
         # currently this is only use for multimodal models / llava next
         model_kwargs = spyre_mm.get_mm_specific_load_overrides(self.config)
@@ -210,6 +238,7 @@ class SpyreCausalLM(nn.Module):
                 architecture=architecture,
                 variant=variant,
                 model_path=model_path,
+                source=source,
                 distributed_strategy=distributed_strategy,
                 group=dist.group.WORLD,
                 fused_weights=False,
