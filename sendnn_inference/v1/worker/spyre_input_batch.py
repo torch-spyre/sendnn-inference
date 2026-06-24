@@ -18,7 +18,7 @@ from vllm.v1.sample.metadata import SamplingMetadata
 from sendnn_inference.v1.sample.spyre_logits_processor import LogitProcessorWrapper
 
 if TYPE_CHECKING:
-    from vllm.structured_output.request import StructuredOutputRequest
+    from vllm.v1.structured_output.request import StructuredOutputRequest
 
 
 class RequestState(Protocol):

@@ -1686,7 +1686,7 @@ class ChunkedPrefillModelRunner(
             if self._pending_sampling_state is not None:
                 self.clear_pending_sampling(
                     reason="requests_finished",
-                    finished_req_ids=scheduler_output.finished_req_ids,
+                    finished_req_ids=list(scheduler_output.finished_req_ids),
                 )
             for req_id in scheduler_output.finished_req_ids:
                 self.input_batch.remove_request(req_id)
