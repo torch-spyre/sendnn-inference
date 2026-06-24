@@ -14,11 +14,11 @@ Overlap CPU / NNPA vision encoding with AIU prefill/decode by running the encode
 The scheduler submits MM requests for encoding on every step and gates prefill on encoding.
 
 **Phase 3 (future):** Enable vision encoder batching within the encoder subprocess. This will further improve the performance by handling all pending MM requests in single batch. This requires FMS changes to stack same-resolution images instead of
-concatenating. See [Phase 3](#phase-3-true-vision-encoder-batching-requires-fms-change) below.
+concatenating. See [Phase 3](#phase-3-add-vision-encoder-batching) below.
 
 ### Current Flow
 
-```
+```text
 Scheduler picks 1 MM request
   → execute_model():
       encode(request)          # CPU, rank 0, single request
@@ -30,7 +30,7 @@ Scheduler picks 1 MM request
 
 ### Implemented Flow
 
-```
+```text
 Encoder subprocess starts AFTER warmup completes
   (SpyreMultiprocExecutor hooks on collective_rpc("compile_or_warm_up_model"))
 
@@ -72,8 +72,6 @@ Next schedule() call: request now in _mm_encoding_ready → scheduled for prefil
 
 Non-MM requests, the warmup path, chunked prefill logic, and TP broadcast are unaffected.
 
-
-
 ## Alternatives considered
 
 ### Threading (abandoned)
@@ -103,7 +101,6 @@ Non-MM requests, the warmup path, chunked prefill logic, and TP broadcast are un
 **SHM-based result delivery:** The encoder process writes completed embeddings to POSIX SHM and puts only `(req_id, shape, dtype)` metadata on the result queue (no large tensors in the queue). The executor calls `collective_rpc("store_mm_embeddings", metadata)` so all TP workers read from SHM independently — no rank-0 to others tensor broadcast.
 
 **Scheduler-level encoding readiness gate:** The scheduler tracks `_mm_encoding_submitted` and `_mm_encoding_ready` sets. MM requests are only eligible for prefill when their encoding is confirmed complete. Text-only requests are completely unaffected. The scheduler submits encoding jobs on every step (prefill AND decode) so the encoder stays ahead of the prefill queue.
-
 
 ## Phase 3: Add Vision Encoder Batching
 
