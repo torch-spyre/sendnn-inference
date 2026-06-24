@@ -525,7 +525,7 @@ class SpyreWorker(WorkerBase):
         # Clear pending sampling state after warmup execution to prevent
         # "Multiple deferred sampling batches" error on next execute_model call
         # Only ChunkedPrefillModelRunner has this method (not SpyrePoolingModelRunner)
-        if hasattr(self.model_runner, 'clear_pending_sampling'):
+        if hasattr(self.model_runner, "clear_pending_sampling"):
             self.model_runner.clear_pending_sampling(reason="warmup_deploy")
         self._cleanup_model_runner(request=[deploy_req])
 
@@ -703,7 +703,7 @@ class SpyreWorker(WorkerBase):
             # Clear pending sampling state after warmup execution to prevent
             # "Multiple deferred sampling batches" error on next execute_model call
             # Only ChunkedPrefillModelRunner has this method (not SpyrePoolingModelRunner)
-            if hasattr(self.model_runner, 'clear_pending_sampling'):
+            if hasattr(self.model_runner, "clear_pending_sampling"):
                 self.model_runner.clear_pending_sampling(reason="warmup_prefill")
 
         random_token_id = lambda: torch.randint(0, len(valid_token_ids_tensor), (1,)).item()
@@ -734,7 +734,7 @@ class SpyreWorker(WorkerBase):
         # Clear pending sampling state after warmup execution to prevent
         # "Multiple deferred sampling batches" error on next execute_model call
         # Only ChunkedPrefillModelRunner has this method (not SpyrePoolingModelRunner)
-        if hasattr(self.model_runner, 'clear_pending_sampling'):
+        if hasattr(self.model_runner, "clear_pending_sampling"):
             self.model_runner.clear_pending_sampling(reason="warmup_decode")
         self._cleanup_model_runner(request=requests)
 
@@ -799,11 +799,11 @@ class SpyreWorker(WorkerBase):
             self.profiler.step()
         output = self.model_runner.execute_model(scheduler_output)
         return output if self.is_driver_worker else None
-    
+
     def sample_tokens(
         self,
         grammar_output: "GrammarOutput | None",
-        ):
+    ):
         return self.model_runner.sample_tokens(grammar_output)
 
     def _get_num_tokens(self, r: NewRequestData) -> int:

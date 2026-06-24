@@ -116,7 +116,7 @@ class SamplingState:
 
 class SchedulerOrderedBatchAdapter:
     """Adapter to expose batch with request ordering matching the scheduler.
-    
+
     This adapter wraps a SamplingInputBatch and overrides the request ordering
     to match the scheduler's order, which is required for grammar bitmask application.
     The adapter also exposes the actual number of requests (not max capacity).
@@ -130,7 +130,7 @@ class SchedulerOrderedBatchAdapter:
 
     def __getattr__(self, name: str):
         return getattr(self._batch, name)
-    
+
     def __len__(self) -> int:
         # Return actual number of requests, not max capacity
         return len(self.req_ids)
@@ -1571,11 +1571,9 @@ class ChunkedPrefillModelRunner(
 
         expected_reqs = list(scheduler_output.num_scheduled_tokens.keys())
         actual_reqs = list(
-            batch.sorted_requests_ids
-            if hasattr(batch, "sorted_requests_ids")
-            else batch.req_ids
+            batch.sorted_requests_ids if hasattr(batch, "sorted_requests_ids") else batch.req_ids
         )
-        
+
         # Debug logging for grammar corruption diagnosis
         logger.debug(
             "Grammar bitmask application - Expected requests (scheduler): %s, "
@@ -1583,13 +1581,11 @@ class ChunkedPrefillModelRunner(
             expected_reqs,
             actual_reqs,
         )
-        
+
         # Verify that both lists contain the same requests (order may differ)
         if set(expected_reqs) != set(actual_reqs):
             raise RuntimeError(
-                f"Grammar batch mismatch. "
-                f"Scheduler={expected_reqs}, "
-                f"Batch={actual_reqs}"
+                f"Grammar batch mismatch. Scheduler={expected_reqs}, Batch={actual_reqs}"
             )
 
         if grammar_output is not None:
@@ -1604,17 +1600,17 @@ class ChunkedPrefillModelRunner(
                 logger.debug(
                     "Request ordering mismatch - reordering logits. "
                     "Scheduler order: %s, Batch order: %s",
-                    expected_reqs, actual_reqs
+                    expected_reqs,
+                    actual_reqs,
                 )
                 # Create index mapping: for each position in batch, find its position in scheduler
                 batch_to_scheduler_idx = {
-                    req_id: expected_reqs.index(req_id)
-                    for req_id in actual_reqs
+                    req_id: expected_reqs.index(req_id) for req_id in actual_reqs
                 }
                 # Reorder logits rows to match scheduler order
                 reorder_indices = [batch_to_scheduler_idx[req_id] for req_id in actual_reqs]
                 logits_reordered = logits[reorder_indices]
-                
+
                 # Apply grammar with reordered logits
                 vllm_apply_grammar_bitmask(
                     scheduler_output,
@@ -1622,7 +1618,7 @@ class ChunkedPrefillModelRunner(
                     SchedulerOrderedBatchAdapter(batch, expected_reqs),  # type: ignore[arg-type]
                     logits_reordered,
                 )
-                
+
                 # Reorder logits back to batch order for subsequent processing
                 inverse_reorder_indices = [0] * len(reorder_indices)
                 for batch_idx, scheduler_idx in enumerate(reorder_indices):
@@ -1630,10 +1626,7 @@ class ChunkedPrefillModelRunner(
                 logits[:] = logits_reordered[inverse_reorder_indices]
             else:
                 # Orders match - no reordering needed
-                logger.debug(
-                    "Request ordering matches. Order: %s",
-                    expected_reqs
-                )
+                logger.debug("Request ordering matches. Order: %s", expected_reqs)
                 vllm_apply_grammar_bitmask(
                     scheduler_output,
                     grammar_output,
@@ -1682,20 +1675,18 @@ class ChunkedPrefillModelRunner(
         # so we capture the request IDs at this point in time
         batch = self.prefill_batch if is_prefill else self.input_batch
         batch_req_ids = list(
-            batch.sorted_requests_ids
-            if hasattr(batch, "sorted_requests_ids")
-            else batch.req_ids
+            batch.sorted_requests_ids if hasattr(batch, "sorted_requests_ids") else batch.req_ids
         )
 
         self._pending_sampling_state = SamplingState(
-            # Clone required because logits storage may be reused before deferred sampling completes.
+            # Clone required because logits may be reused before deferred sampling completes.
             # This is expensive (batch_size × vocab_size) but necessary for correctness.
             logits=logits.clone(),
             metadata=metadata,  # Deep copied to prevent mutation
             is_prefill=is_prefill,
             scheduler_output=scheduler_output_copy,  # Deep copied to prevent mutation/recycling
-            batch_req_ids=batch_req_ids, 
-            )
+            batch_req_ids=batch_req_ids,
+        )
 
     def clear_pending_sampling(
         self,
@@ -1839,13 +1830,11 @@ class ChunkedPrefillModelRunner(
             logger.debug("t_forward_pass: %.2fms [prefill single chunk][batch size 1]", (t1 * 1000))
             return self.prefill_output()
 
-        # Perform sampling and build output
-        sampling_metadata = self.get_sampling_metadata(is_prefill)
         self.defer_sampling(
             logits,
             is_prefill,
             scheduler_output,
-            )
+        )
         return None
 
     def prefill_output(self) -> SpyreModelRunnerOutput:
@@ -1907,7 +1896,7 @@ class ChunkedPrefillModelRunner(
             if hasattr(current_batch, "sorted_requests_ids")
             else current_batch.req_ids
         )
-        
+
         # Validate batch consistency
         # Compare exact lists (not sets) to catch ordering issues
         if stored_batch_req_ids != current_batch_req_ids:
@@ -1920,9 +1909,7 @@ class ChunkedPrefillModelRunner(
             )
 
         # Apply grammar bitmask constraints to logits
-        self.apply_grammar_bitmask(
-            stored_scheduler_output, grammar_output, logits, current_batch
-        )
+        self.apply_grammar_bitmask(stored_scheduler_output, grammar_output, logits, current_batch)
 
         # Perform sampling and build output
         return self.perform_sampling(
