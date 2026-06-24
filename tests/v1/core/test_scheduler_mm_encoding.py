@@ -14,7 +14,7 @@ from unittest.mock import Mock, patch
 from vllm.sampling_params import SamplingParams
 from vllm.v1.request import Request, RequestStatus
 
-from sendnn_inference.v1.core.scheduler import ChunkedPrefillSpyreScheduler, MMEncodeRequest
+from sendnn_inference.v1.core.scheduler import ChunkedPrefillSpyreScheduler
 
 pytestmark = [pytest.mark.multimodal, pytest.mark.cpu]
 
@@ -97,15 +97,15 @@ class TestCanSchedulePrefill:
         """Text-only request (no mm_features) must not be affected by encoding state."""
         req = _make_request("text-1")
         # Even with async encoder enabled and nothing in _mm_encoding_ready:
-        with patch("sendnn_inference.envs.SENDNN_INFERENCE_ASYNC_MM_ENCODER", True):
-            # Stub remaining checks so only the MM gate matters
-            with (
-                patch.object(scheduler, "_has_scheduling_priority", return_value=True),
-                patch.object(scheduler, "_satisfies_constraints", return_value=True),
-            ):
-                scheduler.running = []
-                scheduler.waiting.append(Mock())  # non-empty so len check triggers
-                assert scheduler.can_schedule_prefill(req) is True
+        # Stub remaining checks so only the MM gate matters
+        with (
+            patch("sendnn_inference.envs.SENDNN_INFERENCE_ASYNC_MM_ENCODER", True),
+            patch.object(scheduler, "_has_scheduling_priority", return_value=True),
+            patch.object(scheduler, "_satisfies_constraints", return_value=True),
+        ):
+            scheduler.running = []
+            scheduler.waiting.append(Mock())  # non-empty so len check triggers
+            assert scheduler.can_schedule_prefill(req) is True
 
     def test_mm_request_gated_when_encoding_not_ready(self, scheduler):
         """MM request must return False when async mode on and req not in _mm_encoding_ready."""
@@ -226,12 +226,12 @@ class TestScheduleMixedQueue:
         scheduler._mm_encoding_ready = set()
         scheduler._mm_encoding_submitted = set()
 
-        with patch("sendnn_inference.envs.SENDNN_INFERENCE_ASYNC_MM_ENCODER", True):
-            with (
-                patch.object(scheduler, "_has_scheduling_priority", return_value=True),
-                patch.object(scheduler, "_satisfies_constraints", return_value=True),
-            ):
-                output = scheduler.schedule()
+        with (
+            patch("sendnn_inference.envs.SENDNN_INFERENCE_ASYNC_MM_ENCODER", True),
+            patch.object(scheduler, "_has_scheduling_priority", return_value=True),
+            patch.object(scheduler, "_satisfies_constraints", return_value=True),
+        ):
+            output = scheduler.schedule()
 
         encode_reqs = getattr(output, "_spyre_mm_encode_requests", [])
         assert len(encode_reqs) == 1
@@ -245,12 +245,12 @@ class TestScheduleMixedQueue:
         scheduler._mm_encoding_submitted = {"mm-dup"}  # already submitted
         scheduler._mm_encoding_ready = set()
 
-        with patch("sendnn_inference.envs.SENDNN_INFERENCE_ASYNC_MM_ENCODER", True):
-            with (
-                patch.object(scheduler, "_has_scheduling_priority", return_value=True),
-                patch.object(scheduler, "_satisfies_constraints", return_value=True),
-            ):
-                output = scheduler.schedule()
+        with (
+            patch("sendnn_inference.envs.SENDNN_INFERENCE_ASYNC_MM_ENCODER", True),
+            patch.object(scheduler, "_has_scheduling_priority", return_value=True),
+            patch.object(scheduler, "_satisfies_constraints", return_value=True),
+        ):
+            output = scheduler.schedule()
 
         encode_reqs = getattr(output, "_spyre_mm_encode_requests", [])
         assert len(encode_reqs) == 0

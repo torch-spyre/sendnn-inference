@@ -8,9 +8,8 @@ Tests cover:
   - _cleanup_encoder: resets all queue/process state
 """
 
-import multiprocessing
 import queue as queue_mod
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import torch

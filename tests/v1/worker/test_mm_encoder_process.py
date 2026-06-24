@@ -7,7 +7,6 @@ Tests cover:
 """
 
 import multiprocessing
-import queue
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -69,9 +68,11 @@ class TestResolveMmUtilsCls:
         unknown_cfg = PretrainedConfig()
         unknown_cfg.model_type = "totally_unknown_xyz"
 
-        with patch("sendnn_inference.multimodal.MM_HF_CFG_REGISTRY", {}):
-            with pytest.raises(ValueError, match="no MMUtils found"):
-                _resolve_mm_utils_cls(unknown_cfg)
+        with (
+            patch("sendnn_inference.multimodal.MM_HF_CFG_REGISTRY", {}),
+            pytest.raises(ValueError, match="no MMUtils found"),
+        ):
+            _resolve_mm_utils_cls(unknown_cfg)
 
 
 # ---------------------------------------------------------------------------
