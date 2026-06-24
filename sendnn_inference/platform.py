@@ -1,4 +1,5 @@
 import sys
+import platform
 from string import Template
 import multiprocessing
 import importlib.metadata
@@ -643,12 +644,16 @@ class SpyrePlatform(Platform):
 
         # NOTE: math.ceil can output a number for each worker that sums
         # to a total greater than cpu_count.
-        thread_factor = worker_count
         if cls._config.model_config.is_multimodal_model:
-            # thread_factor value/formula subject to further tuning
-            thread_factor = 1
-
-        cpus_per_worker = math.ceil(cpu_count / thread_factor) if cpu_count is not None else None
+            if platform.machine() == "ppc64le":
+                cpus_per_worker = (
+                    min(psutil.cpu_count(logical=True), 36) if cpu_count is not None else None
+                )
+            else:
+                # Formula for cpus_per_worker can be adjusted per architecture
+                cpus_per_worker = math.ceil(cpu_count) if cpu_count is not None else None
+        else:
+            cpus_per_worker = math.ceil(cpu_count / worker_count) if cpu_count is not None else None
 
         thread_warning = (
             "Excessive threads may result in CPU contention. "
