@@ -44,6 +44,7 @@ from sendnn_inference.v1.worker.spyre_model_runner import (
     SpyrePoolingModelRunner,
     SupportedTask,
 )
+from vllm.v1.core.sched.output import GrammarOutput
 
 if TYPE_CHECKING:
     pass
@@ -521,6 +522,11 @@ class SpyreWorker(WorkerBase):
         )
         logger.info("[WARMUP] Deploying to device...")
         self.execute_model(scheduler_output)
+        # Clear pending sampling state after warmup execution to prevent
+        # "Multiple deferred sampling batches" error on next execute_model call
+        # Only ChunkedPrefillModelRunner has this method (not SpyrePoolingModelRunner)
+        if hasattr(self.model_runner, 'clear_pending_sampling'):
+            self.model_runner.clear_pending_sampling(reason="warmup_deploy")
         self._cleanup_model_runner(request=[deploy_req])
 
         model_runner.complete_warmup()
@@ -550,9 +556,13 @@ class SpyreWorker(WorkerBase):
             **_get_extra_args(),
         )
         self.execute_model(scheduler_output)
-        # satisfy mypy
-        model_runner: ChunkedPrefillModelRunner = cast(ChunkedPrefillModelRunner, self.model_runner)
-        model_runner.tkv = 0
+        # Clear any pending sampling state from warmup iterations
+        # This prevents "Multiple deferred sampling batches" error during warmup
+        # Only ChunkedPrefillModelRunner has deferred sampling support
+        if isinstance(self.model_runner, ChunkedPrefillModelRunner):
+            self.model_runner.clear_pending_sampling(reason="shutdown")
+            # satisfy mypy
+            self.model_runner.tkv = 0
 
     def _warmup_spyre_fixed_size(self, prompt_len, special_token_ids, batch_size):
         assert self.is_pooling, "only pooling models have fixed warmup shapes"
@@ -690,6 +700,11 @@ class SpyreWorker(WorkerBase):
             logger.info("[WARMUP] Prefill [%s/%s]...", idx + 1, req_count)
 
             self.execute_model(scheduler_output)
+            # Clear pending sampling state after warmup execution to prevent
+            # "Multiple deferred sampling batches" error on next execute_model call
+            # Only ChunkedPrefillModelRunner has this method (not SpyrePoolingModelRunner)
+            if hasattr(self.model_runner, 'clear_pending_sampling'):
+                self.model_runner.clear_pending_sampling(reason="warmup_prefill")
 
         random_token_id = lambda: torch.randint(0, len(valid_token_ids_tensor), (1,)).item()
 
@@ -716,6 +731,11 @@ class SpyreWorker(WorkerBase):
         )
         logger.info("[WARMUP] Decode...")
         self.execute_model(scheduler_output)
+        # Clear pending sampling state after warmup execution to prevent
+        # "Multiple deferred sampling batches" error on next execute_model call
+        # Only ChunkedPrefillModelRunner has this method (not SpyrePoolingModelRunner)
+        if hasattr(self.model_runner, 'clear_pending_sampling'):
+            self.model_runner.clear_pending_sampling(reason="warmup_decode")
         self._cleanup_model_runner(request=requests)
 
     def _warmup_model_forward_pass(
@@ -779,6 +799,12 @@ class SpyreWorker(WorkerBase):
             self.profiler.step()
         output = self.model_runner.execute_model(scheduler_output)
         return output if self.is_driver_worker else None
+    
+    def sample_tokens(
+        self,
+        grammar_output: "GrammarOutput | None",
+        ):
+        return self.model_runner.sample_tokens(grammar_output)
 
     def _get_num_tokens(self, r: NewRequestData) -> int:
         assert r.prompt_token_ids is not None, "requests should have tokens!"

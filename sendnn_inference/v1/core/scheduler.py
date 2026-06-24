@@ -126,7 +126,6 @@ class PoolingSpyreScheduler(SpyreScheduler):
         while holdback_queue:
             self.waiting.append(holdback_queue.popleft())
 
-        outputs._spyre_grammar_output = self.get_grammar_bitmask(outputs)  # type: ignore[attr-defined]
         return outputs
 
     def _get_matching_warmup_shapes(
@@ -325,18 +324,9 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
 
         # Check new requests to prefill
         elif len(self.waiting) > 0:
-            # Try to promote grammar-waiting requests whose FSM is now
-            # ready, so we correctly classify ready vs not-ready requests.
-            for r in list(self.waiting):
-                if r.status == RequestStatus.WAITING_FOR_STRUCTURED_OUTPUT_GRAMMAR:
-                    so_req = r.structured_output_request
-                    if so_req and so_req.grammar:
-                        r.status = RequestStatus.WAITING
 
             ready_to_prefill = [
-                r
-                for r in self.waiting
-                if r.status != RequestStatus.WAITING_FOR_STRUCTURED_OUTPUT_GRAMMAR  # type: ignore[attr-defined]
+                list(self.waiting)
             ]
             if ready_to_prefill:
                 new_prefill_candidates = list(self.waiting)
@@ -344,14 +334,6 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
                 running_holdback = self.running
                 self.running = []
                 self.previous_step_was_prefill = True
-            else:
-                # Grammar not yet initialized for any waiting request.
-                # Return them to holdback so the base scheduler doesn't
-                # try to promote and schedule them alongside decodes.
-                while self.waiting:
-                    holdback_queue.appendleft(self.waiting.pop())
-                running_holdback = []
-                self.previous_step_was_prefill = False
         else:
             self.previous_step_was_prefill = False
             running_holdback = []
@@ -377,14 +359,6 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         ):
             logger.debug("Scheduled tokens in this step: %s", outputs.num_scheduled_tokens)
 
-        # Collect grammar bitmask synchronously for structured outputs.
-        # NOTE: This is done here because vllm-spyre currently combines token sampling
-        # in model_executor.execute_model() rather than implementing sample_tokens()
-        # in the model runner. This means we cannot collect the grammar bitmask
-        # asynchronously while the model is running (as done in vLLM core).
-        # TODO: Implement sample_tokens() in SpyreModelRunner to enable async grammar
-        # collection for better performance.
-        outputs._spyre_grammar_output = self.get_grammar_bitmask(outputs)  # type: ignore[attr-defined]
         return outputs
 
     def can_schedule_prefill(self, request: Request) -> bool:
