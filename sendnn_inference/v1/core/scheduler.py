@@ -219,6 +219,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
 
         self.step_count = 0
         self.last_step = defaultdict(int)
+        self.long_output_prio = envs_spyre.SENDNN_INFERENCE_LONG_OUT_PRIO
 
     def update_from_output(self, scheduler_output, model_runner_output):
         assert isinstance(model_runner_output, SpyreModelRunnerOutput), (
@@ -641,7 +642,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         request_order = sorted(
             requests_by_step,
             key=lambda x: x[0].num_computed_tokens - x[0].num_prompt_tokens,
-            reverse=True,
+            reverse=self.long_output_prio,
         )
         request_order.sort(key=lambda x: x[1])
 
