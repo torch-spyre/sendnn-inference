@@ -1,4 +1,3 @@
-import copy
 import math
 import time
 from abc import ABC, abstractmethod
@@ -1683,11 +1682,6 @@ class ChunkedPrefillModelRunner(
             req_state.num_computed_tokens = num_computed_tokens
 
         if scheduler_output.finished_req_ids:
-            if self._pending_sampling_state is not None:
-                self.clear_pending_sampling(
-                    reason="requests_finished",
-                    finished_req_ids=list(scheduler_output.finished_req_ids),
-                )
             for req_id in scheduler_output.finished_req_ids:
                 self.input_batch.remove_request(req_id)
                 # Clean up request state to prevent memory leak
@@ -1818,38 +1812,34 @@ class ChunkedPrefillModelRunner(
             "Engine must guarantee at most one pending grammar batch globally."
         )
 
-        # Deep copy metadata to prevent mutation issues
-        # SamplingMetadata likely contains mutable tensors (selected_token_indices,
-        # generators, sampling_tensors, temperature arrays) that are updated by
-        # refresh_metadata() on every scheduler step. If we store by reference,
-        # when sample_tokens() executes, it will use metadata from a different
-        # batch, causing wrong sampling (wrong request, wrong temperature, wrong RNG).
-        # Deep copy is REQUIRED for correctness
-        metadata = copy.deepcopy(self.get_sampling_metadata(is_prefill))
-
-        # Deep copy scheduler_output to prevent mutation issues
-        # Many schedulers recycle objects for performance. If scheduler mutates
-        # this object later, stored_scheduler_output may no longer represent the
-        # batch that produced the logits. This can cause: wrong req_ids, wrong
-        # grammar mapping, wrong logprob routing.
-        # Deep copy is REQUIRED for correctness.
-        scheduler_output_copy = copy.deepcopy(scheduler_output)
+        # sample_tokens() is always called in the same engine step immediately after
+        # execute_model() returns None — before any update_states/refresh_metadata
+        # runs again. Therefore the metadata and scheduler_output are stable for
+        # the lifetime of this deferred state and do not need to be deep-copied.
+        #
+        # The one field that would be stale is _prefill_index on the logitsprocs
+        # wrappers: _maybe_prepare_last_prefill sets it just before defer_sampling,
+        # and we must reset it on the live wrappers so the first decode step does
+        # not incorrectly route the whole batch through the prefill slot.
+        if is_prefill:
+            for logitsproc in self.input_batch.logitsprocs_wrappers:
+                logitsproc.set_prefill_index(None)
 
         # Store the current batch request IDs to validate consistency when applying grammar
         # The batch object itself is mutable and gets modified (requests added/removed),
-        # so we capture the request IDs at this point in time
+        # so we capture the request IDs at this point in time.
         batch = self.prefill_batch if is_prefill else self.input_batch
         batch_req_ids = list(
             batch.sorted_requests_ids if hasattr(batch, "sorted_requests_ids") else batch.req_ids
         )
 
         self._pending_sampling_state = SamplingState(
-            # Clone required because logits may be reused before deferred sampling completes.
-            # This is expensive (batch_size × vocab_size) but necessary for correctness.
+            # logits.clone() is needed: the underlying tensor may be a view into
+            # model output buffers that get overwritten on the next forward pass.
             logits=logits.clone(),
-            metadata=metadata,  # Deep copied to prevent mutation
+            metadata=self.get_sampling_metadata(is_prefill),
             is_prefill=is_prefill,
-            scheduler_output=scheduler_output_copy,  # Deep copied to prevent mutation/recycling
+            scheduler_output=scheduler_output,
             batch_req_ids=batch_req_ids,
         )
 
