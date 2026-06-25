@@ -144,8 +144,8 @@ class BaseSpyreModelRunner(ABC, Generic[InputBatchT, RequestStateT, ModelInputsT
                 self.pad_token_id = getattr(self.model_config.hf_config, "pad_token_id", None) or 0
             if self.model_config.get_sliding_window():
                 logger.warning(
-                    "Sliding window is not supported on Spyre. "
-                    "The model will run without sliding window."
+                    "Sliding window is not fully supported on Spyre yet."
+                    "The model will run with experimental sliding window support."
                 )
 
         if vllm_config.device_config is None:
