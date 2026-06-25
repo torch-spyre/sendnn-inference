@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     SENDNN_INFERENCE_CPU_MM_DTYPE: torch.dtype = torch.float16
     SENDNN_INFERENCE_MM_DEVICE: str = "auto"
     SENDNN_INFERENCE_TP_MM_SHARING: bool = True
+    SENDNN_INFERENCE_LONG_OUT_PRIO: bool = False
 
 logger = init_logger(__name__)
 
@@ -179,6 +180,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # SHM-related failure modes at the cost of redundant CPU work.
     "SENDNN_INFERENCE_TP_MM_SHARING": lambda: bool(
         int(os.getenv("SENDNN_INFERENCE_TP_MM_SHARING", "1"))
+    ),
+    # When "0" (default) and when there are paused requests, the request with
+    # the shortest current output is prioritized when both request have been
+    # paused for the same amount of time. Setting this to 0 will prevent a few
+    # requests from having a very high E2E latency, but at the cost of other
+    # metrics like throughput, mean TTFT and mean ITL.
+    "SENDNN_INFERENCE_LONG_OUT_PRIO": lambda: bool(
+        int(os.getenv("SENDNN_INFERENCE_LONG_OUT_PRIO", "0"))
     ),
 }
 # --8<-- [end:env-vars-definition]

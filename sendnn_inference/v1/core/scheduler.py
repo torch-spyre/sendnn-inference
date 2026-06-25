@@ -4,6 +4,8 @@ import math
 from collections import deque
 from typing import TYPE_CHECKING, Iterable, Union
 from dataclasses import dataclass
+from collections import defaultdict
+
 
 from vllm.logger import init_logger
 from vllm.v1.core.sched.scheduler import Scheduler
@@ -215,6 +217,9 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         self.pause_events = 0
         self.resume_events = 0
 
+        self.request_last_decode_step = defaultdict(int)
+        self.long_output_prio = envs_spyre.SENDNN_INFERENCE_LONG_OUT_PRIO
+
     def update_from_output(self, scheduler_output, model_runner_output):
         assert isinstance(model_runner_output, SpyreModelRunnerOutput), (
             "Expecting an instance of CPSpyreModelRunnerOutput when doing chunked prefill."
@@ -234,6 +239,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             blocks = self.reserved_blocks.pop(finished_request, 0)
             self.total_reserved_blocks -= blocks
             assert self.total_reserved_blocks >= 0
+            self.request_last_decode_step.pop(finished_request, None)
 
         return result
 
@@ -496,7 +502,6 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             assert self.reserved_blocks[req_id] >= 0
 
         assert 0 <= self.total_reserved_blocks <= free_blocks
-
         return outputs
 
     def can_schedule_prefill(self, request: Request) -> bool:
@@ -611,70 +616,49 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         return predicted_batch_tkv <= self.max_batch_tkv_limit
 
     def _handle_decode_requests_pausing(self) -> None:
-        """
-        Manage pausing and resuming of decode requests based on batch TKV constraints.
-
-        This method:
-        1. Pauses requests with the fewest decoded tokens when batch TKV limit is exceeded
-        2. Resumes previously paused requests (oldest first) when capacity is available
-        """
         decoding_requests = [r for r in self.running if r not in self.ongoing_prefills]
-        resumed = self._maybe_resume_decoding_requests(decoding_requests)
-        if not resumed:
-            self._maybe_pause_decoding_requests(decoding_requests)
+        requests_by_step = list[tuple[Request, int]]()
 
-    def _maybe_pause_decoding_requests(self, decoding_requests: list[Request]) -> int:
-        """
-        Iteratively pauses requests with the fewest decoded tokens until the batch fits
-        within TKV constraints. Mutates both decoding_requests and self.running.
+        was_paused = set[str]()
+        was_running = set[str]()
 
-        Returns the number of requests paused.
-        """
-        initial_had_requests = len(decoding_requests) > 0
-        num_paused = 0
+        for req in self.paused_decoding_requests:
+            requests_by_step.append((req, self.request_last_decode_step[req.request_id]))
+            was_paused.add(req.request_id)
 
-        # TODO we should test different removal logics: longest request, optimize padding
-        while not self._can_decode_all_requests(decoding_requests):
-            # Decoded tokens = num_computed_tokens - num_prompt_tokens
-            request_to_remove = min(
-                decoding_requests, key=lambda r: r.num_computed_tokens - r.num_prompt_tokens
-            )
-            decoding_requests.remove(request_to_remove)
-            self.running.remove(request_to_remove)
-            self.paused_decoding_requests.append(request_to_remove)
-            logger.info("Request %s paused due to batch TKV limit ", request_to_remove.request_id)
-            num_paused += 1
+        for req in decoding_requests:
+            requests_by_step.append((req, self.request_last_decode_step[req.request_id]))
+            was_running.add(req.request_id)
 
-        # It shouldn't be possible to remove all requests if we started with some
-        assert not initial_had_requests or len(decoding_requests) > 0
-        self.pause_events += num_paused
-        return num_paused
+        # Sort is stable, so requests with the same last
+        # step will be sorted by how many tokens they have already generated
+        request_order = sorted(
+            requests_by_step,
+            key=lambda x: x[0].num_computed_tokens - x[0].num_prompt_tokens,
+            reverse=self.long_output_prio,
+        )
+        request_order.sort(key=lambda x: x[1], reverse=True)
 
-    def _maybe_resume_decoding_requests(self, decoding_requests: list[Request]) -> int:
-        """
-        Resumes previously paused requests (newest first) when TKV capacity is available.
-        Mutates both decoding_requests and self.running.
+        self.paused_decoding_requests.clear()
+        decoding_requests.clear()
 
-        Returns the number of requests resumed.
-        """
-        num_resumed = 0
+        for req, _ in request_order:
+            if self._can_decode_all_requests(decoding_requests + [req]):
+                decoding_requests.append(req)
+                self.request_last_decode_step[req.request_id] = 0
+                if req.request_id in was_paused:
+                    self.running.append(req)
+            else:
+                self.paused_decoding_requests.append(req)
+                self.request_last_decode_step[req.request_id] += 1
+                if req.request_id in was_running:
+                    self.running.remove(req)
 
-        # Reverse iteration: pop(i) only shifts indices above i, which are already visited.
-        for i in range(len(self.paused_decoding_requests) - 1, -1, -1):
-            request_to_add = self.paused_decoding_requests[i]
-            test_requests = decoding_requests + [request_to_add]
-
-            if self._can_decode_all_requests(test_requests):
-                self.paused_decoding_requests.pop(i)
-                self.running.append(request_to_add)
-                decoding_requests.append(request_to_add)
-                logger.info(
-                    "Request %s resumed (batch TKV capacity available).",
-                    request_to_add.request_id,
-                )
-                num_resumed += 1
-        self.resume_events += num_resumed
-        return num_resumed
+        pause_inc = len(self.paused_decoding_requests) - len(was_paused)
+        if pause_inc >= 0:
+            self.pause_events += pause_inc
+        else:
+            self.resume_events -= pause_inc
 
     def predict_next_decode_tkv(self, running_requests: list[Request]) -> int:
         """
