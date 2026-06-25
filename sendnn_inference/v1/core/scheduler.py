@@ -393,8 +393,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
 
         # Check new requests to prefill
         elif len(self.waiting) > 0:
-            ready_to_prefill = [list(self.waiting)]
-            if ready_to_prefill:
+            if self.waiting:
                 new_prefill_candidates = list(self.waiting)
                 # Hide current decodes from the scheduler
                 running_holdback = self.running
