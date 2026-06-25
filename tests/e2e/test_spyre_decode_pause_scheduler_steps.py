@@ -169,7 +169,6 @@ def test_max_batch_tkv_decode_pausing(
             "block_tables": {"0": [1], "1": [2], "2": [3, 4]},
         },
         {
-            # Decode sequences 0, 1, and 2
             "step": 9,
             "tkv": 85,
             "waiting": [],
@@ -179,70 +178,89 @@ def test_max_batch_tkv_decode_pausing(
             "block_tables": {"0": [1], "1": [2], "2": [3, 4]},
         },
         {
-            # Decode sequences 0 and 1
-            # About to violate the volumetric constraint: 3 * 86 = 258 > 256
-            # Holdback activates: request 2 gets paused
             "step": 10,
-            "tkv": 22,  # tkv of request 0 without left-padding
+            "tkv": 85,
             "waiting": [],
-            "running": ["1", "0"],
-            "request_outputs": ["1", "0"],
+            "running": ["2", "1"],
+            "request_outputs": ["2", "1"],
             "n_used_blocks": 4,
             "block_tables": {"0": [1], "1": [2], "2": [3, 4]},
         },
         {
-            # Decode sequences 0 and 1
-            # Sequences 0 finishes
+            "step": 11,
+            "tkv": 86,
+            "waiting": [],
+            "running": ["2", "0"],
+            "request_outputs": ["2", "0"],
+            "n_used_blocks": 4,
+            "block_tables": {"0": [1], "1": [2], "2": [3, 4]},
+        },
+        {
+            "step": 12,
+            "tkv": 86,
+            "waiting": [],
+            "running": ["2", "1"],
+            "request_outputs": ["2", "1"],
+            "n_used_blocks": 4,
+            "block_tables": {"0": [1], "1": [2], "2": [3, 4]},
+        },
+        {
             "step": 13,
+            "tkv": 87,
+            "waiting": [],
+            "running": ["2", "0"],
+            "request_outputs": ["2", "0"],
+            "finished_requests": [],
+            "n_used_blocks": 4,
+            "block_tables": {"0": [1], "1": [2], "2": [3, 4]},
+        },
+        {
+            "step": 14,
+            "tkv": 87,
+            "waiting": [],
+            "running": ["1"],
+            "request_outputs": ["2", "1"],
+            "finished_requests": ["2"],
+            "n_used_blocks": 2,
+            "block_tables": {"0": [1], "1": [2]},
+        },
+        {
+            "step": 15,
+            "tkv": 24,
+            "waiting": [],
+            "running": ["1", "0"],
+            "request_outputs": ["1", "0"],
+            "n_used_blocks": 2,
+            "block_tables": {"0": [1], "1": [2]},
+        },
+        {
+            "step": 16,
             "tkv": 25,
             "waiting": [],
             "running": ["1"],
             "request_outputs": ["1", "0"],
             "finished_requests": ["0"],
-            "n_used_blocks": 3,
-            "block_tables": {"1": [2], "2": [3, 4]},
-        },
-        {
-            # Decode sequences 1 and 2
-            # Sequence 2 can now resume
-            "step": 14,
-            "tkv": 89,  # 25 + 64 = tkv of request 1 with left-padding
-            "waiting": [],
-            "running": ["1", "2"],
-            "request_outputs": ["1", "2"],
-            "n_used_blocks": 3,
-            "block_tables": {"1": [2], "2": [3, 4]},
-        },
-        {
-            # Decode sequences 1 and 2
-            # Sequence 1 finishes
-            "step": 16,
-            "tkv": 91,
-            "waiting": [],
-            "running": ["2"],
-            "request_outputs": ["1", "2"],
-            "finished_requests": ["1"],
-            "n_used_blocks": 2,
-            "block_tables": {"2": [3, 4]},
+            "n_used_blocks": 1,
+            "block_tables": {"1": [2]},
         },
         {
             # Decode sequence 2
             "step": 17,
-            "tkv": 74,  # tkv of request 2
+            "tkv": 26,
             "waiting": [],
-            "running": ["2"],
-            "request_outputs": ["2"],
-            "n_used_blocks": 2,
-            "block_tables": {"2": [3, 4]},
+            "running": ["1"],
+            "request_outputs": ["1"],
+            "n_used_blocks": 1,
+            "block_tables": {"1": [2]},
         },
         {
             # Sequence 2 finishes
             "step": 18,
-            "tkv": 75,
+            "tkv": 27,
             "waiting": [],
             "running": [],
-            "request_outputs": ["2"],
-            "finished_requests": ["2"],
+            "request_outputs": ["1"],
+            "finished_requests": ["1"],
             "n_used_blocks": 0,
             "block_tables": {},
         },

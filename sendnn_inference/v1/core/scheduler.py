@@ -648,7 +648,6 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
                 self.request_last_decode_step[req.request_id] = 0
                 if req.request_id in was_paused:
                     self.running.append(req)
-                    self.resume_events += 1
             else:
                 self.paused_decoding_requests.append(req)
                 self.request_last_decode_step[req.request_id] += 1
