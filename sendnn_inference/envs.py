@@ -94,6 +94,7 @@ environment_variables: dict[str, Callable[[], Any]] = {
     ),
     # Allow sendnn-inference to update env vars related to multi-threading (eg. OMP)
     # based on the detected CPU cores and server configuration
+    # Multimodal models will not take into account the number of workers for configuration.
     "SENDNN_INFERENCE_UPDATE_THREAD_CONFIG": lambda: bool(
         int(os.getenv("SENDNN_INFERENCE_UPDATE_THREAD_CONFIG", "1"))
     ),

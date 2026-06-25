@@ -72,6 +72,7 @@ class SpyreCausalLM(nn.Module):
         self.parallel_config = vllm_config.parallel_config
         self.cache_config = vllm_config.cache_config
         self.scheduler_config = vllm_config.scheduler_config
+        self.load_config = vllm_config.load_config
         self.dtype = self.get_dtype()
 
         # Wrappers for utils for multimodal
@@ -171,16 +172,30 @@ class SpyreCausalLM(nn.Module):
                     self.dtype,
                 )
 
-        is_local = os.path.isdir(model_config.model)
-        model_path = model_config.model
-        # Get location of model from HF cache.
-        if not is_local:
-            model_path = download_weights_from_hf(
-                model_name_or_path=model_path,
-                cache_dir=None,
-                allow_patterns=["*.safetensors", "*.bin", "*.pt"],
-                revision=model_config.revision,
+        # `--load-format dummy` skips the checkpoint download and routes through
+        # FMS's `hf_configured` path, which fetches only config.json and then
+        # random-inits the model via `reset_parameters()`.
+        variant: str | None = None
+        if self.load_config.load_format == "dummy":
+            logger.info(
+                "Loading model %s with random weights.",
+                model_config.model,
             )
+            architecture = "hf_configured"
+            variant = model_config.model
+            model_path: str | None = None
+        else:
+            architecture = "hf_pretrained"
+            is_local = os.path.isdir(model_config.model)
+            model_path = model_config.model
+            # Get location of model from HF cache.
+            if not is_local:
+                model_path = download_weights_from_hf(
+                    model_name_or_path=model_path,
+                    cache_dir=None,
+                    allow_patterns=["*.safetensors", "*.bin", "*.pt"],
+                    revision=model_config.revision,
+                )
 
         # Get any fixes needed that must be patched into the kwargs;
         # currently this is only use for multimodal models / llava next
@@ -192,7 +207,8 @@ class SpyreCausalLM(nn.Module):
             kwargs["rank"],
         ):
             self.fms_model = get_model(
-                architecture="hf_pretrained",
+                architecture=architecture,
+                variant=variant,
                 model_path=model_path,
                 distributed_strategy=distributed_strategy,
                 group=dist.group.WORLD,
