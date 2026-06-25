@@ -1816,14 +1816,6 @@ class ChunkedPrefillModelRunner(
         # execute_model() returns None — before any update_states/refresh_metadata
         # runs again. Therefore the metadata and scheduler_output are stable for
         # the lifetime of this deferred state and do not need to be deep-copied.
-        #
-        # The one field that would be stale is _prefill_index on the logitsprocs
-        # wrappers: _maybe_prepare_last_prefill sets it just before defer_sampling,
-        # and we must reset it on the live wrappers so the first decode step does
-        # not incorrectly route the whole batch through the prefill slot.
-        if is_prefill:
-            for logitsproc in self.input_batch.logitsprocs_wrappers:
-                logitsproc.set_prefill_index(None)
 
         # Store the current batch request IDs to validate consistency when applying grammar
         # The batch object itself is mutable and gets modified (requests added/removed),
@@ -2069,9 +2061,20 @@ class ChunkedPrefillModelRunner(
         self.apply_grammar_bitmask(stored_scheduler_output, grammar_output, logits, current_batch)
 
         # Perform sampling and build output
-        return self.perform_sampling(
+        result = self.perform_sampling(
             logits, sampling_metadata, is_prefill, stored_scheduler_output, t0=0
         )
+
+        # Reset _prefill_index on the live wrappers now that sampling is done.
+        # _maybe_prepare_last_prefill sets it so that apply() routes the prefill
+        # logits to the correct per-slot processor. It must stay set until here
+        # (so model.sample uses the right slot), but must be cleared before the
+        # next decode step so the full batch isn't routed through a single slot.
+        if is_prefill:
+            for logitsproc in self.input_batch.logitsprocs_wrappers:
+                logitsproc.set_prefill_index(None)
+
+        return result
 
     def sampled_output(self, output: SamplerOutput, is_prefill: bool) -> SpyreModelRunnerOutput:
         req_id_to_index = self.get_req_id_to_index(is_prefill)
