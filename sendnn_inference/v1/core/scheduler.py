@@ -217,9 +217,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
 
         # Remove completed prefills
         self.ongoing_prefills = [
-            req
-            for req in self.ongoing_prefills
-            if req.num_computed_tokens < req.num_prompt_tokens
+            req for req in self.ongoing_prefills if req.num_computed_tokens < req.num_prompt_tokens
         ]
 
         self.tkv = model_runner_output.tkv

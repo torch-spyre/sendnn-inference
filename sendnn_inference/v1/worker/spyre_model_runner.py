@@ -1991,7 +1991,7 @@ class ChunkedPrefillModelRunner(
             # Clear any pending sampling state since we're not sampling this iteration
             if self._pending_sampling_state is not None:
                 self.clear_pending_sampling(reason="incomplete_prefill")
-            
+
             if not self.is_driver_worker:
                 return self.get_empty_output()
 
