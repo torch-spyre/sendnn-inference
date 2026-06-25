@@ -154,7 +154,6 @@ class InstrumentedModelRunner(ChunkedPrefillModelRunner):
     def execute_new_request(self, request: Request) -> ModelRunnerOutput:
         scheduler_output = self._schedule_new_request(request)
         output = self.execute_model(scheduler_output)
-        # Handle deferred sampling: if execute_model returns None, call sample_tokens
         if output is None:
             output = self.sample_tokens(grammar_output=None)
         self.scheduler.update_from_output(scheduler_output, output)
@@ -165,7 +164,6 @@ class InstrumentedModelRunner(ChunkedPrefillModelRunner):
     ) -> ModelRunnerOutput:
         scheduler_output = self._schedule_running_requests()
         output = self.execute_model(scheduler_output)
-        # Handle deferred sampling: if execute_model returns None, call sample_tokens
         if output is None:
             output = self.sample_tokens(grammar_output=None)
         self.scheduler.update_from_output(scheduler_output, output)
