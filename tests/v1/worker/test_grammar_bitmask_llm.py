@@ -128,9 +128,7 @@ def test_grammar_bitmask_routing_in_llm_with_churn(mock_llm):
     outputs = mock_llm.generate(prompts, sampling_params_list)
 
     failures: list[str] = []
-    for i, (out, (prompt, max_tok, letter)) in enumerate(
-        zip(outputs, specs, strict=True)
-    ):
+    for i, (out, (prompt, max_tok, letter)) in enumerate(zip(outputs, specs, strict=True)):
         completion = out.outputs[0]
         text = completion.text
         token_ids = list(completion.token_ids)
