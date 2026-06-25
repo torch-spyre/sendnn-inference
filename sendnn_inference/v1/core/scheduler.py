@@ -217,8 +217,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         self.pause_events = 0
         self.resume_events = 0
 
-        self.step_count = 0
-        self.last_step = defaultdict(int)
+        self.request_last_decode_step = defaultdict(int)
         self.long_output_prio = envs_spyre.SENDNN_INFERENCE_LONG_OUT_PRIO
 
     def update_from_output(self, scheduler_output, model_runner_output):
@@ -240,7 +239,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             blocks = self.reserved_blocks.pop(finished_request, 0)
             self.total_reserved_blocks -= blocks
             assert self.total_reserved_blocks >= 0
-            self.last_step.pop(finished_request, None)
+            self.request_last_decode_step.pop(finished_request, None)
 
         return result
 
@@ -438,11 +437,6 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
 
         if not self.step_is_prefill:
             self._handle_decode_requests_pausing()
-        else:
-            for req in self.waiting:
-                self.last_step[req.request_id] = self.step_count
-        for req in self.running:
-            self.last_step[req.request_id] = self.step_count
 
         # Cap chunk-0 token count to chunk_size - left_padding so the upstream KV
         # cache manager doesn't allocate a real blocks for the left-padding region.
@@ -508,7 +502,6 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             assert self.reserved_blocks[req_id] >= 0
 
         assert 0 <= self.total_reserved_blocks <= free_blocks
-        self.step_count += 1
         return outputs
 
     def can_schedule_prefill(self, request: Request) -> bool:
@@ -630,11 +623,11 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         was_running = set[str]()
 
         for req in self.paused_decoding_requests:
-            requests_by_step.append((req, self.last_step[req.request_id]))
+            requests_by_step.append((req, self.request_last_decode_step[req.request_id]))
             was_paused.add(req.request_id)
 
         for req in decoding_requests:
-            requests_by_step.append((req, self.last_step[req.request_id]))
+            requests_by_step.append((req, self.request_last_decode_step[req.request_id]))
             was_running.add(req.request_id)
 
         # Sort is stable, so requests with the same last
@@ -644,7 +637,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             key=lambda x: x[0].num_computed_tokens - x[0].num_prompt_tokens,
             reverse=self.long_output_prio,
         )
-        request_order.sort(key=lambda x: x[1])
+        request_order.sort(key=lambda x: x[1], reverse=True)
 
         self.paused_decoding_requests.clear()
         decoding_requests.clear()
@@ -652,11 +645,13 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         for req, _ in request_order:
             if self._can_decode_all_requests(decoding_requests + [req]):
                 decoding_requests.append(req)
+                self.request_last_decode_step[req.request_id] = 0
                 if req.request_id in was_paused:
                     self.running.append(req)
                     self.resume_events += 1
             else:
                 self.paused_decoding_requests.append(req)
+                self.request_last_decode_step[req.request_id] += 1
                 if req.request_id in was_running:
                     self.running.remove(req)
 
