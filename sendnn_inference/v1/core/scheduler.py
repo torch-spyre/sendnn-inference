@@ -219,14 +219,16 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
 
             # Remove completed prefills
             self.ongoing_prefills = [
-                req for req in self.ongoing_prefills if req.num_computed_tokens < req.num_prompt_tokens
+                req
+                for req in self.ongoing_prefills
+                if req.num_computed_tokens < req.num_prompt_tokens
             ]
 
             self.tkv = model_runner_output.tkv
             result = super(SpyreScheduler, self).update_from_output(
                 scheduler_output, model_runner_output
             )
-            
+
             for finished_request in self.finished_req_ids:
                 blocks = self.reserved_blocks.pop(finished_request, 0)
                 self.total_reserved_blocks -= blocks
