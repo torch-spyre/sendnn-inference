@@ -1988,6 +1988,10 @@ class ChunkedPrefillModelRunner(
 
         # Early return for incomplete prefill (no sampling needed)
         if is_prefill and self.check_incomplete_prefill(scheduler_output):
+            # Clear any pending sampling state since we're not sampling this iteration
+            if self._pending_sampling_state is not None:
+                self.clear_pending_sampling(reason="incomplete_prefill")
+            
             if not self.is_driver_worker:
                 return self.get_empty_output()
 

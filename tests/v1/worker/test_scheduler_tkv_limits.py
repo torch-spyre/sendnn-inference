@@ -79,6 +79,9 @@ def test_scheduler_tkv_limits(monkeypatch: pytest.MonkeyPatch):
     while True:
         sched_output = scheduler.schedule()
         output = model_runner.execute_model(sched_output)
+        # Handle deferred sampling: if execute_model returns None, call sample_tokens
+        if output is None:
+            output = model_runner.sample_tokens(grammar_output=None)
         scheduler.update_from_output(sched_output, output)
         if len(scheduler.running) == 0:
             break
@@ -152,6 +155,9 @@ def test_scheduler_tkv_limits_ongoing_batch(monkeypatch: pytest.MonkeyPatch):
     while True:
         sched_output = scheduler.schedule()
         output = model_runner.execute_model(sched_output)
+        # Handle deferred sampling: if execute_model returns None, call sample_tokens
+        if output is None:
+            output = model_runner.sample_tokens(grammar_output=None)
         scheduler.update_from_output(sched_output, output)
 
         target_req = requests[0]
@@ -182,6 +188,9 @@ def test_scheduler_tkv_limits_ongoing_batch(monkeypatch: pytest.MonkeyPatch):
     while True:
         sched_output = scheduler.schedule()
         output = model_runner.execute_model(sched_output)
+        # Handle deferred sampling: if execute_model returns None, call sample_tokens
+        if output is None:
+            output = model_runner.sample_tokens(grammar_output=None)
         scheduler.update_from_output(sched_output, output)
         if len(scheduler.running) == 0:
             break
