@@ -56,6 +56,9 @@ THREADING_ENVS = [
     "MKL_NUM_THREADS",
 ]
 
+DEFAULT_MAX_MODEL_LEN = 32 * 1024
+DEFAULT_MAX_NUM_SEQS = 32
+
 
 # Needed by vllm/model_executor/layers/pooler.py:562
 # Copied from vllm/utils/__init__.py
@@ -327,7 +330,18 @@ class SpyrePlatform(Platform):
                         f"{error_msg}. SENDNN_INFERENCE_REQUIRE_KNOWN_CONFIG is set, "
                         "which requires a known configuration to be found."
                     )
-                logger.debug(error_msg)
+                logger.info(
+                    "%s. Capping max-num-seqs at %d and max-model-len at %d",
+                    error_msg,
+                    DEFAULT_MAX_NUM_SEQS,
+                    DEFAULT_MAX_MODEL_LEN,
+                )
+                vllm_config.scheduler_config.max_num_seqs = min(
+                    vllm_config.scheduler_config.max_num_seqs, DEFAULT_MAX_NUM_SEQS
+                )
+                vllm_config.model_config.max_model_len = min(
+                    vllm_config.model_config.max_model_len, DEFAULT_MAX_MODEL_LEN
+                )
 
         else:
             logger.debug(
