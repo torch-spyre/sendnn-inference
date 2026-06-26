@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     SENDNN_INFERENCE_MM_DEVICE: str = "auto"
     SENDNN_INFERENCE_TP_MM_SHARING: bool = True
     SENDNN_INFERENCE_LONG_OUT_PRIO: bool = False
+    SENDNN_INFERENCE_PAUSING_ENABLED: bool = True
 
 logger = init_logger(__name__)
 
@@ -189,6 +190,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # metrics like throughput, mean TTFT and mean ITL.
     "SENDNN_INFERENCE_LONG_OUT_PRIO": lambda: bool(
         int(os.getenv("SENDNN_INFERENCE_LONG_OUT_PRIO", "0"))
+    ),
+    # When "1" (default), all requests can be scheduled as long as there are
+    # enough KV-cache blocks for the prompt tokens and max output tokens.
+    # If the TKV constraints are about to be exceeded, requests are removed
+    # from the decode batch. At each iteration the set of running requests
+    # is rotated for fairness.
+    "SENDNN_INFERENCE_PAUSING_ENABLED": lambda: bool(
+        int(os.getenv("SENDNN_INFERENCE_PAUSING_ENABLED", "1"))
     ),
 }
 # --8<-- [end:env-vars-definition]
