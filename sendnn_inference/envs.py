@@ -57,7 +57,7 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # Defines the batch sizes the Spyre accelerator should be prepared
     # for, formatted as comma separated list. Only applicable in pooling.
     "SENDNN_INFERENCE_WARMUP_BATCH_SIZES": lambda: [
-        int(b) for b in os.getenv(key="SENDNN_INFERENCE_WARMUP_BATCH_SIZES", default="1").split(",")
+        int(b) for b in os.getenv(key="SENDNN_INFERENCE_WARMUP_BATCH_SIZES", default="8").split(",")
     ],
     # Defines the backend that torch.compile will use when using Spyre
     # Available options:
