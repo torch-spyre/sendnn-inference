@@ -174,6 +174,7 @@ def _configure_encoder_threads(vllm_config) -> None:
         if cpu_count is None:
             try:
                 import psutil
+
                 cpu_count = float(psutil.cpu_count(logical=False))
             except Exception:
                 pass
@@ -182,9 +183,7 @@ def _configure_encoder_threads(vllm_config) -> None:
             cpu_count = float(n)
 
     if platform.machine() == "ppc64le":
-        encoder_cpu_count = (
-            min(cpu_count, 36) if cpu_count is not None else None
-        )
+        encoder_cpu_count = min(cpu_count, 36) if cpu_count is not None else None
     else:
         # Formula for cpu_count can be adjusted per architecture
         encoder_cpu_count = math.ceil(cpu_count) if cpu_count is not None else None
@@ -207,10 +206,9 @@ def _configure_encoder_threads(vllm_config) -> None:
     torch.set_num_interop_threads(encoder_threads)
 
     logger.info(
-        "encoder_process: thread config — encoder=%d,"
-        "(encoder_cpu_count=%.1f)",
+        "encoder_process: thread config — encoder=%d,(encoder_cpu_count=%.1f)",
         encoder_threads,
-        encoder_cpu_count
+        encoder_cpu_count,
     )
 
 
