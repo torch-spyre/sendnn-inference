@@ -13,7 +13,9 @@ of the full tensor.
 """
 
 import logging
+import math
 import os
+import platform
 import time
 
 import torch
@@ -21,7 +23,7 @@ from vllm.config import VllmConfig
 
 import sendnn_inference.envs as envs_spyre
 from sendnn_inference.model_executor.model_loader.spyre import SpyreCausalLM, cast_params_for_spyre
-from sendnn_inference.platform import SpyrePlatform
+from sendnn_inference.platform import SpyrePlatform, THREADING_ENVS
 from sendnn_inference.v1.worker.mm_shared_memory import write_embeddings
 
 logger = logging.getLogger(__name__)
@@ -155,12 +157,6 @@ def _configure_encoder_threads(vllm_config) -> None:
         workers: cpu_count / num_workers  (unchanged — set by platform.py)
         encoder: cpu_count
     """
-    import math
-    import torch
-
-    from sendnn_inference.platform import THREADING_ENVS
-    import sendnn_inference.envs as envs_spyre
-
     # Derive cpu_count the same way configure_thread_settings does.
     cpu_count: float | None = None
 
@@ -185,18 +181,23 @@ def _configure_encoder_threads(vllm_config) -> None:
         if cpu_count is None and (n := os.cpu_count()) is not None:
             cpu_count = float(n)
 
-    if cpu_count is None:
+    if platform.machine() == "ppc64le":
+        encoder_cpu_count = (
+            min(cpu_count, 36) if cpu_count is not None else None
+        )
+    else:
+        # Formula for cpu_count can be adjusted per architecture
+        encoder_cpu_count = math.ceil(cpu_count) if cpu_count is not None else None
+
+    if encoder_cpu_count is None:
         logger.warning(
-            "encoder_process: could not determine cpu_count; "
+            "encoder_process: could not determine encoder_cpu_count; "
             "thread configuration unchanged (inherited from parent)"
         )
         return
 
-    # num_workers = TP size; the workers each received cpu_count/num_workers.
     # The encoder gets the full cpu_count.
-    num_workers = vllm_config.parallel_config.world_size
-    encoder_threads = max(1, math.ceil(cpu_count))
-    worker_threads = max(1, math.ceil(cpu_count / num_workers))
+    encoder_threads = max(1, math.ceil(encoder_cpu_count))
 
     for env in THREADING_ENVS:
         os.environ[env] = str(encoder_threads)
@@ -206,12 +207,10 @@ def _configure_encoder_threads(vllm_config) -> None:
     torch.set_num_interop_threads(encoder_threads)
 
     logger.info(
-        "encoder_process: thread config — encoder=%d, workers=%d "
-        "(cpu_count=%.1f, num_workers=%d)",
+        "encoder_process: thread config — encoder=%d,"
+        "(encoder_cpu_count=%.1f)",
         encoder_threads,
-        worker_threads,
-        cpu_count,
-        num_workers,
+        encoder_cpu_count
     )
 
 
