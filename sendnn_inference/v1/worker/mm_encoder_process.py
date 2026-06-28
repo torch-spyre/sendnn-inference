@@ -140,6 +140,81 @@ class VisionEncoderRunner:
 # ── Process entry point ───────────────────────────────────────────────────────
 
 
+def _configure_encoder_threads(vllm_config) -> None:
+    """Give the encoder subprocess the full cpu_count thread budget.
+
+    Workers each receive ``cpu_count / num_workers`` threads (set by
+    SpyrePlatform.configure_thread_settings).  The encoder subprocess inherits
+    that reduced count, but vision encoding is a serial CPU/NNPA workload that
+    benefits from all available cores.  We restore the full thread count here
+    so OMP, DT_PARALLEL_THREADS, torch inter-op, and intra-op thread pools all
+    see the right value when NNPA is initialised.
+
+    Worker thread count is reduced proportionally so the total thread budget
+    across all processes stays at cpu_count:
+        workers: cpu_count / num_workers  (unchanged — set by platform.py)
+        encoder: cpu_count
+    """
+    import math
+    import torch
+
+    from sendnn_inference.platform import THREADING_ENVS
+    import sendnn_inference.envs as envs_spyre
+
+    # Derive cpu_count the same way configure_thread_settings does.
+    cpu_count: float | None = None
+
+    if (num_cpu := envs_spyre.SENDNN_INFERENCE_NUM_CPUS) > 0:
+        cpu_count = float(num_cpu)
+    else:
+        try:
+            with open("/sys/fs/cgroup/cpu.max") as f:
+                quota_str, period_str = f.read().strip().split()
+            if quota_str != "max":
+                cpu_count = int(quota_str) / int(period_str)
+        except Exception:
+            pass
+
+        if cpu_count is None:
+            try:
+                import psutil
+                cpu_count = float(psutil.cpu_count(logical=False))
+            except Exception:
+                pass
+
+        if cpu_count is None and (n := os.cpu_count()) is not None:
+            cpu_count = float(n)
+
+    if cpu_count is None:
+        logger.warning(
+            "encoder_process: could not determine cpu_count; "
+            "thread configuration unchanged (inherited from parent)"
+        )
+        return
+
+    # num_workers = TP size; the workers each received cpu_count/num_workers.
+    # The encoder gets the full cpu_count.
+    num_workers = vllm_config.parallel_config.world_size
+    encoder_threads = max(1, math.ceil(cpu_count))
+    worker_threads = max(1, math.ceil(cpu_count / num_workers))
+
+    for env in THREADING_ENVS:
+        os.environ[env] = str(encoder_threads)
+
+    # torch thread pools — also set these so the compute kernel schedulers agree.
+    torch.set_num_threads(encoder_threads)
+    torch.set_num_interop_threads(encoder_threads)
+
+    logger.info(
+        "encoder_process: thread config — encoder=%d, workers=%d "
+        "(cpu_count=%.1f, num_workers=%d)",
+        encoder_threads,
+        worker_threads,
+        cpu_count,
+        num_workers,
+    )
+
+
 def encoder_process_main(
     vllm_config: VllmConfig,
     job_queue,
@@ -163,6 +238,15 @@ def encoder_process_main(
     """
     logger.info("encoder_process: starting")
 
+    # ── Thread configuration ──────────────────────────────────────────────────
+    # The encoder subprocess inherits the per-worker thread count that the parent
+    # set (cpu_count / num_workers).  We override it here to use the full cpu_count
+    # so the vision encoder gets maximum CPU/NNPA parallelism.
+    #
+    # This MUST happen before maybe_ensure_sendnn_configured() because the NNPA
+    # backend captures thread-pool settings at import time.
+    _configure_encoder_threads(vllm_config)
+
     try:
         runner = VisionEncoderRunner(vllm_config)
     except Exception as exc:
@@ -172,9 +256,11 @@ def encoder_process_main(
 
     result_queue.put("READY")
     logger.info(
-        "encoder_process: ready, waiting for jobs (torch_num_threads=%d, OMP_NUM_THREADS=%s)",
+        "encoder_process: ready, waiting for jobs "
+        "(torch_num_threads=%d, OMP_NUM_THREADS=%s, DT_PARALLEL_THREADS=%s)",
         torch.get_num_threads(),
         os.environ.get("OMP_NUM_THREADS", "unset"),
+        os.environ.get("DT_PARALLEL_THREADS", "unset"),
     )
 
     while not stop_event.is_set():
