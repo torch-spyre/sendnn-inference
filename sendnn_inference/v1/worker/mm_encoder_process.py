@@ -201,9 +201,18 @@ def _configure_encoder_threads(vllm_config) -> None:
     for env in THREADING_ENVS:
         os.environ[env] = str(encoder_threads)
 
-    # torch thread pools — also set these so the compute kernel schedulers agree.
+    # torch intra-op thread pool — can be changed at any time.
     torch.set_num_threads(encoder_threads)
-    torch.set_num_interop_threads(encoder_threads)
+    # torch inter-op thread pool — can only be set before parallel work starts;
+    # ignore if it's too late (e.g. in unit tests where torch is already warm).
+    try:
+        torch.set_num_interop_threads(encoder_threads)
+    except RuntimeError as e:
+        logger.warning(
+            "encoder_process: could not set inter-op threads to %d: %s",
+            encoder_threads,
+            e,
+        )
 
     logger.info(
         "encoder_process: thread config — encoder=%d,(encoder_cpu_count=%.1f)",
