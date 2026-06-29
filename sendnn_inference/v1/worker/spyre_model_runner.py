@@ -1720,13 +1720,12 @@ class ChunkedPrefillModelRunner(
             # vllm_apply_grammar_bitmask. If there's a mismatch (e.g., requests
             # finished/aborted while grammar was building), it will raise an error.
 
-
-                vllm_apply_grammar_bitmask(
-                    scheduler_output,
-                    grammar_output,
-                    DenseBatchAdapter(batch),  # type: ignore[arg-type]
-                    logits,
-                )
+            vllm_apply_grammar_bitmask(
+                scheduler_output,
+                grammar_output,
+                DenseBatchAdapter(batch),  # type: ignore[arg-type]
+                logits,
+            )
 
     def defer_sampling(
         self,
