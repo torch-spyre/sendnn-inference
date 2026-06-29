@@ -168,41 +168,5 @@ class Mistral3MMUtils(MMUtilsBase):
             mm_features=warmup_mm_features,
         )
 
-    @staticmethod
-    def _build_fms_kwargs(mm_features: list, mm_device: str) -> dict:
-        """Build the fms_kwargs dict consumed by prepare_inputs_for_generation."""
-        fms_kwargs: dict = {"use_cache": True}
-        if not mm_features:
-            return fms_kwargs
-
-        mm_dtype = envs_spyre.SENDNN_INFERENCE_CPU_MM_DTYPE
-        mm_spec = mm_features[0].data
-        if mm_spec is None:
-            return fms_kwargs
-
-        if isinstance(mm_spec, MultiModalKwargsItem) and "images" in mm_spec:
-            mm_spec["pixel_values"] = mm_spec.pop("images")
-        if "pixel_values" not in mm_spec:
-            raise KeyError("Mistral3 requires pixel_values")
-
-        pixel_values = mm_spec["pixel_values"].data
-        if pixel_values.ndim == 3:
-            pixel_values = pixel_values.unsqueeze(0)
-        if pixel_values.device.type != mm_device or pixel_values.dtype != mm_dtype:
-            pixel_values = pixel_values.to(device=mm_device, dtype=mm_dtype)
-        fms_kwargs["pixel_values"] = pixel_values
-
-        if "image_sizes" in mm_spec:
-            image_sizes_tensor = mm_spec["image_sizes"].data
-            if image_sizes_tensor.ndim == 1:
-                fms_kwargs["image_sizes"] = [
-                    (image_sizes_tensor[0].item(), image_sizes_tensor[1].item())
-                ]
-            else:
-                fms_kwargs["image_sizes"] = [(h.item(), w.item()) for h, w in image_sizes_tensor]
-        else:
-            fms_kwargs["image_sizes"] = [(img.shape[-2], img.shape[-1]) for img in pixel_values]
-        return fms_kwargs
-
     def get_multimodal_token_id(self) -> int:
         return self.hf_config.image_token_index

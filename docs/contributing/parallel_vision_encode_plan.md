@@ -1,4 +1,4 @@
-# Batched Vision Encoder Pre-Computation
+# Parallel Vision Encoder Execution In Single Instance vLLM
 
 ## Background
 

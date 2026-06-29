@@ -13,10 +13,6 @@ The executor owns the job/result queues:
   so each worker reads the embedding from SHM independently — no rank-0
   tensor broadcast needed
 - unlink SHM blocks after collective_rpc returns (all workers have read)
-
-This keeps the model runner free of queue concerns: it only maintains
-``pending_mm_embeddings`` (keyed by request_id) and reads from it at
-prefill time.
 """
 
 import multiprocessing

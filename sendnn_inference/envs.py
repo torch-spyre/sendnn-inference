@@ -174,7 +174,7 @@ environment_variables: dict[str, Callable[[], Any]] = {
     "SENDNN_INFERENCE_MM_DEVICE": lambda: parse_mm_device(
         os.getenv("SENDNN_INFERENCE_MM_DEVICE", "auto")
     ),
-    # Enable the async vision encoder subprocess (Phase 2).
+    # Enable the async vision encoder subprocess.
     # When set to 1, SpyreMultiprocExecutor spawns a separate process that loads
     # only the vision model via get_model(..., vision_only=True) and pre-encodes
     # MM requests in parallel with AIU prefill/decode.  The scheduler gates MM
