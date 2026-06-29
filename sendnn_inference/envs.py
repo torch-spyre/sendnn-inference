@@ -52,12 +52,12 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # for, formatted as comma separated list. Only applicable in pooling.
     "SENDNN_INFERENCE_WARMUP_PROMPT_LENS": lambda: [
         int(p)
-        for p in os.getenv(key="SENDNN_INFERENCE_WARMUP_PROMPT_LENS", default="64").split(",")
+        for p in os.getenv(key="SENDNN_INFERENCE_WARMUP_PROMPT_LENS", default="512").split(",")
     ],
     # Defines the batch sizes the Spyre accelerator should be prepared
     # for, formatted as comma separated list. Only applicable in pooling.
     "SENDNN_INFERENCE_WARMUP_BATCH_SIZES": lambda: [
-        int(b) for b in os.getenv(key="SENDNN_INFERENCE_WARMUP_BATCH_SIZES", default="1").split(",")
+        int(b) for b in os.getenv(key="SENDNN_INFERENCE_WARMUP_BATCH_SIZES", default="8").split(",")
     ],
     # Defines the backend that torch.compile will use when using Spyre
     # Available options:

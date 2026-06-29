@@ -276,10 +276,6 @@ register_model_info(
     revision="cf74d8acd4f198de950bf004b262e6accfed5d2c",
 )
 register_model_info(
-    name="Qwen/Qwen3-Embedding-0.6B",
-    revision="97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
-)
-register_model_info(
     name="cross-encoder/stsb-roberta-large",
     revision="2b12c2c0088918e76151fd5937b7bba986ef1f98",
 )
@@ -324,10 +320,8 @@ def _default_test_models(
     """Return the default set of test models as pytest parameterizations"""
     if isEmbeddings:
         roberta = REFERENCE_MODELS["sentence-transformers/all-roberta-large-v1"]
-        qwen3 = REFERENCE_MODELS["Qwen/Qwen3-Embedding-0.6B"]
         params = [
             pytest.param(roberta, marks=[pytest.mark.embedding], id=roberta.name),
-            pytest.param(qwen3, marks=[pytest.mark.embedding], id=qwen3.name),
         ]
         return params
 
