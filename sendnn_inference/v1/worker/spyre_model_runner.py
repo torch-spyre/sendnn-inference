@@ -1901,7 +1901,7 @@ class ChunkedPrefillModelRunner(
             prefix_cache_hit_len=self.get_prefix_cache_len(),
         )
 
-    def sample_tokens(self, grammar_output: "GrammarOutput | None") -> ModelRunnerOutput | None:
+    def sample_tokens(self, grammar_output: "GrammarOutput") -> ModelRunnerOutput | None:
         """Complete sampling with the grammar bitmask after async grammar building.
 
         This is called by the engine after grammar bitmasks have been built

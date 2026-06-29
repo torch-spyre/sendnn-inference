@@ -810,7 +810,7 @@ class SpyreWorker(WorkerBase):
 
     def sample_tokens(
         self,
-        grammar_output: "GrammarOutput | None",
+        grammar_output: "GrammarOutput",
     ) -> ModelRunnerOutput | None:
         return self.model_runner.sample_tokens(grammar_output)
 
