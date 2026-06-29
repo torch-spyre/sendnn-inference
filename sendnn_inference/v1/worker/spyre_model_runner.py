@@ -126,15 +126,12 @@ class SamplingState:
     batch_req_ids: list[str]  # Store request IDs to validate batch consistency
 
 
-class SchedulerOrderedBatchAdapter:
-    """Adapter that overrides req_ids ordering on a SamplingInputBatch.
+class DenseBatchAdapter:
+    """Thin proxy that exposes a SamplingInputBatch to vllm_apply_grammar_bitmask.
 
     vllm_apply_grammar_bitmask iterates input_batch.req_ids to map each
-    request to its logit row index.  Our logits tensor is reordered into
-    scheduler order before the call, so req_ids must reflect that same
-    order.  This adapter shadows req_ids (and sorted_requests_ids, which
-    our own code reads) with the scheduler-ordered list while delegating
-    everything else to the real batch.
+    request to its logit row index.  This adapter surfaces req_ids from
+    the underlying batch while delegating all other attribute access to it.
     """
 
     def __init__(self, batch: SamplingInputBatch):
@@ -1727,7 +1724,7 @@ class ChunkedPrefillModelRunner(
                 vllm_apply_grammar_bitmask(
                     scheduler_output,
                     grammar_output,
-                    SchedulerOrderedBatchAdapter(batch),  # type: ignore[arg-type]
+                    DenseBatchAdapter(batch),  # type: ignore[arg-type]
                     logits,
                 )
 
