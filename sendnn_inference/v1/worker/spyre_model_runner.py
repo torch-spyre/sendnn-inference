@@ -672,14 +672,10 @@ class SpyrePoolingModelRunner(
 
                 hidden_states = outputs[0]
             else:
-                mask = model_input.input_masks
-                full_mask = mask[:, None, None, :].repeat(1, 1, mask.shape[-1], 1)
-                full_mask = full_mask * full_mask.transpose(-1, -2)
-                full_mask = torch.where(full_mask > 0, 0.0, -torch.inf).to(torch.float16)
                 outputs = self.model(
                     input_ids=model_input.input_tokens,
                     position_ids=model_input.input_positions,
-                    attention_mask=full_mask,
+                    attention_mask=model_input.input_masks,
                     **model_kwargs,
                 )
 
