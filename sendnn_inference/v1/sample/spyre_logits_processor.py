@@ -112,5 +112,5 @@ class LogitProcessorWrapper(LogitsProcessor):
 
         return logits
 
-    def set_prefill_index(self, idx: int | None) -> None:
+    def set_prefill_index(self, idx: int) -> None:
         self._prefill_index = idx

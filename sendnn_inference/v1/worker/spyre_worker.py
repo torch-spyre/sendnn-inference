@@ -11,7 +11,7 @@ import time
 import math
 from datetime import timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Union, cast
+from typing import Union, cast
 
 import torch
 import torch.distributed as dist
@@ -45,10 +45,6 @@ from sendnn_inference.v1.worker.spyre_model_runner import (
     SupportedTask,
 )
 from vllm.v1.core.sched.output import GrammarOutput
-
-if TYPE_CHECKING:
-    pass
-
 
 logger = init_logger(__name__)
 
@@ -522,9 +518,7 @@ class SpyreWorker(WorkerBase):
         )
         logger.info("[WARMUP] Deploying prefill to device...")
         self.execute_model(scheduler_output)
-
-        if hasattr(self.model_runner, "clear_pending_sampling"):
-            self.model_runner.clear_pending_sampling(reason="warmup_deploy_prefill")  # type: ignore[attr-defined]
+        model_runner._pending_sampling_state = None
 
         # Mirror the prefill deploy with a decode deploy: ensure the compiled
         # decode program is also installed on the device before runtime, so
@@ -550,9 +544,7 @@ class SpyreWorker(WorkerBase):
         )
         logger.info("[WARMUP] Deploying decode to device...")
         self.execute_model(decode_scheduler_output)
-
-        if hasattr(self.model_runner, "clear_pending_sampling"):
-            self.model_runner.clear_pending_sampling(reason="warmup_deploy_decode")  # type: ignore[attr-defined]
+        model_runner._pending_sampling_state = None
         self._cleanup_model_runner(request=[deploy_req])
 
         model_runner.complete_warmup()
@@ -583,7 +575,7 @@ class SpyreWorker(WorkerBase):
         )
         self.execute_model(scheduler_output)
         if isinstance(self.model_runner, ChunkedPrefillModelRunner):
-            self.model_runner.clear_pending_sampling(reason="shutdown")
+            self.model_runner._pending_sampling_state = None
             # satisfy mypy
             self.model_runner.tkv = 0
 
@@ -708,6 +700,7 @@ class SpyreWorker(WorkerBase):
         # Once we figure it out this limitation we should revert this to
         # bs=1 again.
         assert _inside_warmup_mode, "it looks like you are outside the warmup context for warmup"
+        model_runner = cast(ChunkedPrefillModelRunner, self.model_runner)
 
         req_count = len(requests)
         for idx, req in enumerate(requests):
@@ -723,8 +716,7 @@ class SpyreWorker(WorkerBase):
             logger.info("[WARMUP] Prefill [%s/%s]...", idx + 1, req_count)
 
             self.execute_model(scheduler_output)
-            if hasattr(self.model_runner, "clear_pending_sampling"):
-                self.model_runner.clear_pending_sampling(reason="warmup_prefill")  # type: ignore[attr-defined]
+            model_runner._pending_sampling_state = None
 
         random_token_id = lambda: torch.randint(0, len(valid_token_ids_tensor), (1,)).item()
 
@@ -751,8 +743,7 @@ class SpyreWorker(WorkerBase):
         )
         logger.info("[WARMUP] Decode...")
         self.execute_model(scheduler_output)
-        if hasattr(self.model_runner, "clear_pending_sampling"):
-            self.model_runner.clear_pending_sampling(reason="warmup_decode")  # type: ignore[attr-defined]
+        model_runner._pending_sampling_state = None
         self._cleanup_model_runner(request=requests)
 
     def _warmup_model_forward_pass(
@@ -820,7 +811,7 @@ class SpyreWorker(WorkerBase):
     def sample_tokens(
         self,
         grammar_output: "GrammarOutput | None",
-    ):
+    ) -> ModelRunnerOutput:
         return self.model_runner.sample_tokens(grammar_output)
 
     def _get_num_tokens(self, r: NewRequestData) -> int:

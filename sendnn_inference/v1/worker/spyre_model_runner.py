@@ -127,25 +127,23 @@ class SamplingState:
 
 
 class SchedulerOrderedBatchAdapter:
-    """Adapter to expose batch with request ordering matching the scheduler.
+    """Adapter that overrides req_ids ordering on a SamplingInputBatch.
 
-    This adapter wraps a SamplingInputBatch and overrides the request ordering
-    to match the scheduler's order, which is required for grammar bitmask application.
-    The adapter also exposes the actual number of requests (not max capacity).
+    vllm_apply_grammar_bitmask iterates input_batch.req_ids to map each
+    request to its logit row index.  Our logits tensor is reordered into
+    scheduler order before the call, so req_ids must reflect that same
+    order.  This adapter shadows req_ids (and sorted_requests_ids, which
+    our own code reads) with the scheduler-ordered list while delegating
+    everything else to the real batch.
     """
 
     def __init__(self, batch: SamplingInputBatch, scheduler_req_ids: list[str]):
         self._batch = batch
         self.req_ids = scheduler_req_ids
-        # Override sorted_requests_ids to match scheduler order
         self.sorted_requests_ids = scheduler_req_ids
 
     def __getattr__(self, name: str):
         return getattr(self._batch, name)
-
-    def __len__(self) -> int:
-        # Return actual number of requests, not max capacity
-        return len(self.req_ids)
 
 
 InputBatchT = TypeVar("InputBatchT", bound=BaseInputBatch)
@@ -866,8 +864,7 @@ class ChunkedPrefillModelRunner(
 
     def complete_warmup(self) -> None:
         super().complete_warmup()
-        if self._pending_sampling_state is not None:
-            self.clear_pending_sampling(reason="warmup_complete")
+        self._pending_sampling_state = None
         # get the number or pages from the actual Spyre card after the warmup
         # and set it accordingly in the model runner and for the kv cache size
         n_blocks_avail = SpyrePlatform.get_total_spyre_blocks(self.vllm_config)
@@ -1379,12 +1376,13 @@ class ChunkedPrefillModelRunner(
             slot_mapping.append(slot)
 
             # input token and position of the token generated in the last step
-            # During warmup or first decode step, output_token_ids may be empty,
-            # so use new_token_ids from cached_request_data
+            # During warmup the prefill's sample_tokens() is skipped
+            # so output_token_ids is never populated.
+            # Fall back to the token supplied by the warmup harness
+            # via cached_request_data.new_token_ids.
             if req_state.output_token_ids:
                 generation_token = req_state.output_token_ids[-1]
             else:
-                # Use the new token from cached_request_data (e.g., during warmup)
                 generation_token = cached_request_data.new_token_ids[idx][0]
             input_tokens.append([generation_token])
             input_positions.append([req_state.num_computed_tokens])
@@ -1524,8 +1522,6 @@ class ChunkedPrefillModelRunner(
         else:
             generator = None
 
-        structured_output_request = getattr(request, "structured_output_request", None)
-
         req_state = SamplingRequestState(
             generator=generator,
             req_id=req_id,
@@ -1538,7 +1534,6 @@ class ChunkedPrefillModelRunner(
             usable_blocks=chunk_plan.usable_cache_blocks,
             total_hit_blocks=chunk_plan.total_cache_blocks,
             block_ids=request.block_ids[0],  # we only support on kv cache group for now
-            structured_output_request=structured_output_request,
         )
 
         self.requests[req_id] = req_state
@@ -1725,9 +1720,7 @@ class ChunkedPrefillModelRunner(
         """
 
         expected_reqs = list(scheduler_output.num_scheduled_tokens.keys())
-        actual_reqs = list(
-            batch.sorted_requests_ids if hasattr(batch, "sorted_requests_ids") else batch.req_ids
-        )
+        actual_reqs = list(batch.sorted_requests_ids)
 
         logger.debug(
             "Grammar bitmask application - Expected requests (scheduler): %s, "
@@ -1756,11 +1749,13 @@ class ChunkedPrefillModelRunner(
                     actual_reqs,
                 )
 
-                batch_to_scheduler_idx = {
-                    req_id: expected_reqs.index(req_id) for req_id in actual_reqs
-                }
-
-                reorder_indices = [batch_to_scheduler_idx[req_id] for req_id in actual_reqs]
+                # Build gather indices: for each position in scheduler order,
+                # find the corresponding row in the logits tensor (which is
+                # in batch/slot order).  logits_reordered[sched_i] will then
+                # hold the logits for the request at scheduler position sched_i,
+                # which is exactly what vllm_apply_grammar_bitmask expects.
+                batch_req_to_idx = {req_id: i for i, req_id in enumerate(actual_reqs)}
+                reorder_indices = [batch_req_to_idx[req_id] for req_id in expected_reqs]
                 logits_reordered = logits[reorder_indices]
 
                 vllm_apply_grammar_bitmask(
@@ -1770,9 +1765,11 @@ class ChunkedPrefillModelRunner(
                     logits_reordered,
                 )
 
+                # Scatter modified logits back into the original batch-order
+                # tensor.  inverse[batch_i] = sched_i undoes the gather above.
                 inverse_reorder_indices = [0] * len(reorder_indices)
-                for batch_idx, scheduler_idx in enumerate(reorder_indices):
-                    inverse_reorder_indices[scheduler_idx] = batch_idx
+                for sched_idx, batch_idx in enumerate(reorder_indices):
+                    inverse_reorder_indices[batch_idx] = sched_idx
                 logits[:] = logits_reordered[inverse_reorder_indices]
             else:
                 logger.debug("Request ordering matches. Order: %s", expected_reqs)
@@ -1810,101 +1807,18 @@ class ChunkedPrefillModelRunner(
         # The batch object itself is mutable and gets modified (requests added/removed),
         # so we capture the request IDs at this point in time.
         batch = self.prefill_batch if is_prefill else self.input_batch
-        batch_req_ids = list(
-            batch.sorted_requests_ids if hasattr(batch, "sorted_requests_ids") else batch.req_ids
-        )
+        batch_req_ids = list(batch.sorted_requests_ids)
 
         self._pending_sampling_state = SamplingState(
-            # logits.clone() is needed: the underlying tensor may be a view into
-            # model output buffers that get overwritten on the next forward pass.
-            logits=logits.clone(),
+            # logits is the result of an advanced-index gather inside SpyreCausalLM.forward()
+            # (logits[self.indices, -1, :]), which always produces a fresh tensor with its
+            # own storage — never a view into model output buffers. No clone needed.
+            logits=logits,
             metadata=self.get_sampling_metadata(is_prefill),
             is_prefill=is_prefill,
             scheduler_output=scheduler_output,
             batch_req_ids=batch_req_ids,
         )
-
-    def clear_pending_sampling(
-        self,
-        reason: str = "unknown",
-        finished_req_ids: list[str] | None = None,
-    ) -> None:
-        """Clear any pending sampling state.
-
-        This should be called on error paths or when aborting deferred sampling
-        to prevent memory leaks.
-
-        Args:
-            reason: Why the pending state is being cleared (for debugging).
-            finished_req_ids: Request IDs that finished, if applicable.
-        """
-        if self._pending_sampling_state is not None:
-            stored_batch_req_ids = self._pending_sampling_state.batch_req_ids
-            logger.warning(
-                "Clearing pending sampling state without sample_tokens() being called. "
-                "Reason: %s. Finished requests: %s. Stored batch requests: %s. "
-                "This may indicate a request cancellation, grammar build failure, or shutdown. "
-                "Leaked state: logits (GPU memory), metadata, scheduler_output.",
-                reason,
-                finished_req_ids,
-                stored_batch_req_ids,
-            )
-        self._pending_sampling_state = None
-
-    def perform_sampling(
-        self,
-        logits: torch.Tensor,
-        sampling_metadata: "SamplingMetadata",
-        is_prefill: bool,
-        scheduler_output: "SchedulerOutput",
-        t0: float,
-    ) -> ModelRunnerOutput | None:
-        """Perform sampling and build output.
-
-        Args:
-            logits: The logits tensor to sample from.
-            sampling_metadata: The sampling metadata to use.
-            is_prefill: Whether this is a prefill step.
-            scheduler_output: The scheduler output.
-            t0: Start time for performance logging.
-
-        Returns:
-            The model runner output with sampled tokens, or None for non-driver workers.
-        """
-        output: SamplerOutput | None = self.model.sample(
-            logits=logits,
-            sampling_metadata=sampling_metadata,
-        )
-        assert output is not None, "Expected sampler output"
-
-        if t0 > 0:
-            t1 = time.time() - t0
-            batch_size = len(scheduler_output.num_scheduled_tokens)
-            step_type = "[prefill last chunk]" if is_prefill else "[decode]"
-            logger.debug("t_token: %.2fms %s[batch size %d]", (t1 * 1000), step_type, batch_size)
-
-        batch = self.prefill_batch if is_prefill else self.input_batch
-        req_ids = (
-            [r.req_id for r in scheduler_output.scheduled_new_reqs]
-            if len(scheduler_output.scheduled_new_reqs) > 0
-            else batch.sorted_requests_ids
-        )
-        sampled_ids = output.sampled_token_ids.tolist()
-
-        assert len(req_ids) == len(sampled_ids), (
-            f"Mismatch between request IDs ({len(req_ids)}) "
-            f"and sampled tokens ({len(sampled_ids)}). "
-            f"This indicates a bug in batch construction or sampling."
-        )
-
-        for i, req_id in enumerate(req_ids):
-            req_state = self.requests[req_id]
-            req_state.append_output_token_ids(sampled_ids[i])
-
-        if not self.is_driver_worker:
-            return self.get_empty_output()
-
-        return self.sampled_output(output, is_prefill)
 
     @SpyrePlatform.inference_mode()
     def execute_model(
@@ -1952,8 +1866,7 @@ class ChunkedPrefillModelRunner(
         # Early return for incomplete prefill (no sampling needed)
         if is_prefill and self.check_incomplete_prefill(scheduler_output):
             # Clear any pending sampling state since we're not sampling this iteration
-            if self._pending_sampling_state is not None:
-                self.clear_pending_sampling(reason="incomplete_prefill")
+            self._pending_sampling_state = None
 
             if not self.is_driver_worker:
                 return self.get_empty_output()
@@ -2001,13 +1914,6 @@ class ChunkedPrefillModelRunner(
         Returns:
             ModelRunnerOutput for driver worker, None for non-driver workers.
         """
-        # Verify pending state exists
-        assert self._pending_sampling_state is not None, (
-            "sample_tokens() called but no pending sampling state exists. "
-            "This indicates sample_tokens() was called without prior defer_sampling(), "
-            "or the state was already cleared."
-        )
-
         state = self._pending_sampling_state
         logits = state.logits
         sampling_metadata = state.metadata
@@ -2018,32 +1924,24 @@ class ChunkedPrefillModelRunner(
         # Clear the pending state
         self._pending_sampling_state = None
 
-        # Get the current batch
+        # Use the batch object only as a proxy for non-ID attributes needed by
+        # vllm_apply_grammar_bitmask; the request ordering comes from the stored
+        # snapshot so it remains correct even if the live batch has changed.
         current_batch = self.prefill_batch if is_prefill else self.input_batch
-        current_batch_req_ids = list(
-            current_batch.sorted_requests_ids
-            if hasattr(current_batch, "sorted_requests_ids")
-            else current_batch.req_ids
-        )
-
-        # Validate batch consistency
-        # Compare exact lists (not sets) to catch ordering issues
-        if stored_batch_req_ids != current_batch_req_ids:
-            stored_scheduler_req_ids = list(stored_scheduler_output.num_scheduled_tokens.keys())
-            raise RuntimeError(
-                f"Batch mismatch in deferred sampling. "
-                f"Stored batch requests: {stored_batch_req_ids}, "
-                f"Current batch requests: {current_batch_req_ids}, "
-                f"Stored scheduler requests: {stored_scheduler_req_ids}"
-            )
 
         # Apply grammar bitmask constraints to logits
         self.apply_grammar_bitmask(stored_scheduler_output, grammar_output, logits, current_batch)
 
-        # Perform sampling and build output
-        result = self.perform_sampling(
-            logits, sampling_metadata, is_prefill, stored_scheduler_output, t0=0
+        output: SamplerOutput | None = self.model.sample(
+            logits=logits,
+            sampling_metadata=sampling_metadata,
         )
+        assert output is not None, "Expected sampler output"
+
+        for req_id, token_ids in zip(
+            stored_batch_req_ids, output.sampled_token_ids.tolist(), strict=True
+        ):
+            self.requests[req_id].append_output_token_ids(token_ids)
 
         # Reset _prefill_index on the live wrappers now that sampling is done.
         # _maybe_prepare_last_prefill sets it so that apply() routes the prefill
@@ -2052,9 +1950,14 @@ class ChunkedPrefillModelRunner(
         # next decode step so the full batch isn't routed through a single slot.
         if is_prefill:
             for logitsproc in self.input_batch.logitsprocs_wrappers:
-                logitsproc.set_prefill_index(None)
+                # apply() already self-clears _prefill_index after use; this is
+                # a belt-and-suspenders reset in case sampling was skipped.
+                logitsproc._prefill_index = None
 
-        return result
+        if not self.is_driver_worker:
+            return self.get_empty_output()
+
+        return self.sampled_output(output, is_prefill)
 
     def sampled_output(self, output: SamplerOutput, is_prefill: bool) -> SpyreModelRunnerOutput:
         req_id_to_index = self.get_req_id_to_index(is_prefill)

@@ -4,7 +4,7 @@
 # Based on vllm/vllm/v1/worker/gpu_input_batch.py
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Generic, Protocol, TypeVar, cast
+from typing import Generic, Protocol, TypeVar, cast
 
 import numpy as np
 import torch
@@ -16,9 +16,6 @@ from vllm.v1.sample.logits_processor import BatchUpdateBuilder, LogitsProcessors
 from vllm.v1.sample.metadata import SamplingMetadata
 
 from sendnn_inference.v1.sample.spyre_logits_processor import LogitProcessorWrapper
-
-if TYPE_CHECKING:
-    from vllm.v1.structured_output.request import StructuredOutputRequest
 
 
 class RequestState(Protocol):
@@ -198,8 +195,6 @@ class SamplingRequestState:
     generator: torch.Generator | None = None
     # Cache for full multimodal embeddings (computed once, sliced per chunk)
     cached_mm_embeddings: torch.Tensor | None = None
-    # Structured output request containing the grammar for constrained generation
-    structured_output_request: "StructuredOutputRequest | None" = None
 
     @property
     def num_tokens(self) -> int:

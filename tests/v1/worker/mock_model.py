@@ -26,6 +26,32 @@ from sendnn_inference.v1.core.scheduler import ChunkedPrefillSpyreScheduler
 from spyre_util import REFERENCE_MODELS, patch_environment
 
 
+def execute_and_sample(
+    runner: ChunkedPrefillModelRunner,
+    scheduler_output: SchedulerOutput,
+) -> ModelRunnerOutput:
+    """Run execute_model and, if sampling was deferred, call sample_tokens.
+
+    execute_model() defers sampling (returns None) whenever a grammar bitmask
+    must be built asynchronously.  For incomplete prefill chunks no sampling is
+    needed and execute_model returns a real (empty) output directly.  This
+    helper handles both cases so callers don't repeat the pattern.
+
+    This helper always passes ``grammar_output=None``, so it must not be used
+    with batches that contain structured-output requests — the bitmask would be
+    silently skipped and sampling would be unconstrained.
+    """
+    assert not scheduler_output.has_structured_output_requests, (
+        "execute_and_sample passes grammar_output=None and cannot be used "
+        "with structured-output requests. Build the grammar output and call "
+        "execute_model() + sample_tokens(grammar_output) directly."
+    )
+    output = runner.execute_model(scheduler_output)
+    if output is None:
+        output = runner.sample_tokens(grammar_output=None)
+    return output
+
+
 class MockSpyreCausalLM:
     def __init__(
         self,
@@ -153,9 +179,7 @@ class InstrumentedModelRunner(ChunkedPrefillModelRunner):
 
     def execute_new_request(self, request: Request) -> ModelRunnerOutput:
         scheduler_output = self._schedule_new_request(request)
-        output = self.execute_model(scheduler_output)
-        if output is None:
-            output = self.sample_tokens(grammar_output=None)
+        output = execute_and_sample(self, scheduler_output)
         self.scheduler.update_from_output(scheduler_output, output)
         return output
 
@@ -163,9 +187,7 @@ class InstrumentedModelRunner(ChunkedPrefillModelRunner):
         self,
     ) -> ModelRunnerOutput:
         scheduler_output = self._schedule_running_requests()
-        output = self.execute_model(scheduler_output)
-        if output is None:
-            output = self.sample_tokens(grammar_output=None)
+        output = execute_and_sample(self, scheduler_output)
         self.scheduler.update_from_output(scheduler_output, output)
         return output
 

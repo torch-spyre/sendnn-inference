@@ -23,6 +23,7 @@ from vllm.v1.request import Request, SamplingParams
 from sendnn_inference.platform import SpyrePlatform
 from sendnn_inference.v1.worker.spyre_model_runner import ChunkedPrefillModelRunner
 from sendnn_inference.v1.worker.spyre_worker import _get_extra_args
+from v1.worker.mock_model import execute_and_sample
 
 
 ########## Assuming that we have:
@@ -92,23 +93,6 @@ def get_cpu_model_runner(
             runner.execute_model(abort_sched)
 
     return runner
-
-
-def execute_and_sample(
-    runner: ChunkedPrefillModelRunner,
-    scheduler_output: SchedulerOutput,
-) -> ModelRunnerOutput:
-    """Run execute_model and, if sampling was deferred, call sample_tokens.
-
-    execute_model() now always defers sampling and returns None; the caller
-    must follow up with sample_tokens().  For incomplete prefill chunks no
-    sampling is needed and execute_model returns a real (empty) output
-    directly, so we handle both cases here.
-    """
-    output = runner.execute_model(scheduler_output)
-    if output is None:
-        output = runner.sample_tokens(grammar_output=None)
-    return output
 
 
 block_id_counter = 1
