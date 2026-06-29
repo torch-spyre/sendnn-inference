@@ -811,7 +811,7 @@ class SpyreWorker(WorkerBase):
     def sample_tokens(
         self,
         grammar_output: "GrammarOutput | None",
-    ) -> ModelRunnerOutput:
+    ) -> ModelRunnerOutput | None:
         return self.model_runner.sample_tokens(grammar_output)
 
     def _get_num_tokens(self, r: NewRequestData) -> int:
