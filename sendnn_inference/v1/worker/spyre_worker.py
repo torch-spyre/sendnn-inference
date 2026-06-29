@@ -808,7 +808,7 @@ class SpyreWorker(WorkerBase):
         output = self.model_runner.execute_model(scheduler_output)
         return output if self.is_driver_worker else None
 
-    def sample_tokens(
+    def sample_tokens(  # type: ignore[override]
         self,
         grammar_output: "GrammarOutput",
     ) -> ModelRunnerOutput | None:
