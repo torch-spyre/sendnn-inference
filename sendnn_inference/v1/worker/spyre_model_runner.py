@@ -327,7 +327,9 @@ class SpyrePoolingModelRunner(
                 )
                 self._model = self._model.base_model
             else:
-                self._model = AutoModel.from_pretrained(self.model_config.model)
+                self._model = AutoModel.from_pretrained(
+                    self.model_config.model, dtype=torch.float16
+                )
         elif task == "classify":
             class_model = AutoModelForSequenceClassification.from_pretrained(
                 self.model_config.model
