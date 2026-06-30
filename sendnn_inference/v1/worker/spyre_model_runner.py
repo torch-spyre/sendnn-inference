@@ -126,22 +126,6 @@ class SamplingState:
     batch_req_ids: list[str]  # Store request IDs to validate batch consistency
 
 
-class DenseBatchAdapter:
-    """Thin proxy that exposes a SamplingInputBatch to vllm_apply_grammar_bitmask.
-
-    vllm_apply_grammar_bitmask iterates input_batch.req_ids to map each
-    request to its logit row index.  This adapter surfaces req_ids from
-    the underlying batch while delegating all other attribute access to it.
-    """
-
-    def __init__(self, batch: SamplingInputBatch):
-        self._batch = batch
-        self.req_ids = batch.sorted_requests_ids
-
-    def __getattr__(self, name: str):
-        return getattr(self._batch, name)
-
-
 InputBatchT = TypeVar("InputBatchT", bound=BaseInputBatch)
 ModelInputsT = TypeVar("ModelInputsT", bound=ModelForwardInputs)
 
@@ -1715,6 +1699,14 @@ class ChunkedPrefillModelRunner(
             batch: The input batch containing request information.
         """
 
+        class _DenseBatchAdapter:
+            def __init__(self, batch: SamplingInputBatch):
+                self._batch = batch
+                self.req_ids = batch.sorted_requests_ids
+
+            def __getattr__(self, name: str):
+                return getattr(self._batch, name)
+
         if grammar_output is not None:
             # Note: Grammar output batch size validation is handled internally by
             # vllm_apply_grammar_bitmask. If there's a mismatch (e.g., requests
@@ -1723,7 +1715,7 @@ class ChunkedPrefillModelRunner(
             vllm_apply_grammar_bitmask(
                 scheduler_output,
                 grammar_output,
-                DenseBatchAdapter(batch),  # type: ignore[arg-type]
+                _DenseBatchAdapter(batch),  # type: ignore[arg-type]
                 logits,
             )
 
@@ -1848,7 +1840,7 @@ class ChunkedPrefillModelRunner(
             prefix_cache_hit_len=self.get_prefix_cache_len(),
         )
 
-    def sample_tokens(self, grammar_output: "GrammarOutput") -> ModelRunnerOutput | None:
+    def sample_tokens(self, grammar_output: "GrammarOutput | None") -> ModelRunnerOutput | None:
         """Complete sampling with the grammar bitmask after async grammar building.
 
         This is called by the engine after grammar bitmasks have been built
@@ -1899,7 +1891,7 @@ class ChunkedPrefillModelRunner(
             for logitsproc in self.input_batch.logitsprocs_wrappers:
                 # apply() already self-clears _prefill_index after use; this is
                 # a belt-and-suspenders reset in case sampling was skipped.
-                logitsproc._prefill_index = None
+                logitsproc.set_prefill_index(None)
 
         if not self.is_driver_worker:
             return self.get_empty_output()
