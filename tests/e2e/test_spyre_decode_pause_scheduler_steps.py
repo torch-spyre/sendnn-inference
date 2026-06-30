@@ -12,6 +12,8 @@ Run `python -m pytest tests/e2e/test_spyre_decode_pause_scheduler_steps.py`.
 """
 
 import pytest
+import openai
+import httpx
 import huggingface_hub
 from prometheus_client import REGISTRY
 from scheduling_utils import (
@@ -19,8 +21,12 @@ from scheduling_utils import (
     create_request_for_scheduler_test,
     random_prompt,
 )
-from spyre_util import ModelInfo, verify_block_tables
-
+from spyre_util import (
+    ModelInfo,
+    RemoteOpenAIServer,
+    verify_block_tables,
+    REFERENCE_MODELS,
+)
 
 from vllm.transformers_utils.repo_utils import get_model_path
 
@@ -56,8 +62,8 @@ def test_max_batch_tkv_decode_pausing(
     not future max_batch_tkv values.
 
     Configuration:
-        * max_num_seqs: 2
-        * number of prompts: 2
+        * max_num_seqs: 4
+        * number of prompts: 3
             * 0: len = 15, max tokens = 11, step joining = 0
             * 1: len = 15, max tokens = 13, step joining = 0
             * 2: len = 66, max tokens = 10, step joining = 0
@@ -509,3 +515,73 @@ def test_prefill_exceeds_max_batch_tkv(
 
     assert get_counter("pause_events") == 0.0
     assert get_counter("resume_events") == 0.0
+
+
+async def get_metrics(client: openai.AsyncOpenAI) -> list[str]:
+    response = await client.get("../metrics", cast_to=httpx.Response)
+    assert response.status_code == 200
+    metrics = response.text
+    return metrics.splitlines()
+
+
+def get_metric_value(metrics: list[str], metric_name: str) -> float:
+    metric_line = [line for line in metrics if line.startswith(metric_name)][0]
+    return float(metric_line.split(" ")[-1])
+
+
+@pytest.mark.parametrize("mode", [pytest.param("pc", marks=pytest.mark.prefix_caching, id="pc")])
+@pytest.mark.parametrize("backend", [pytest.param("eager", marks=pytest.mark.cpu, id="eager")])
+@pytest.mark.parametrize("tp_size", [1])
+@pytest.mark.parametrize("max_model_len", [512])
+@pytest.mark.parametrize("model", [REFERENCE_MODELS["ibm-ai-platform/micro-g3.3-8b-instruct-1b"]])
+@pytest.mark.asyncio
+async def test_metrics(
+    remote_openai_server: RemoteOpenAIServer,
+    model,
+    backend,
+    tp_size,
+    mode,
+    max_num_seqs,
+    max_model_len,
+    max_num_batched_tokens,
+):
+    # Here we just want to check that no upstream vllm change is preventing
+    # the flow of metrics from the engine core to the frontend. Any non-zero
+    # metric will do.
+    client = remote_openai_server.get_async_client()
+
+    prompt = random_prompt(
+        model=model,
+        seed=0,
+        length=1,
+    )
+
+    metrics = await get_metrics(client)
+    decode_batch = get_metric_value(metrics, "sendnn:decode_batch")
+    assert decode_batch == 0
+
+    # 10 tokens output tokens seems to be enough for an asynchronous
+    # call to /metrics to see the decode_batch gauge higher than 0
+    tokens_to_generate = 10
+    max_recorded_batch = 0
+    stream = await client.completions.create(
+        model=model.name,
+        prompt=prompt,
+        max_tokens=tokens_to_generate,
+        extra_body={"min_tokens": tokens_to_generate},
+        stream=True,
+    )
+    async for chunk in stream:
+        metrics = await get_metrics(client)
+        decode_batch = get_metric_value(metrics, "sendnn:decode_batch")
+        max_recorded_batch = max(max_recorded_batch, decode_batch)
+
+    assert max_recorded_batch > 0
+
+    metrics = await get_metrics(client)
+    decode_batch = get_metric_value(metrics, "sendnn:decode_batch")
+    assert decode_batch == 0
+
+    # just make sure that the other metrics are also registered
+    for metric in ["paused", "pause_events", "resume_events"]:
+        assert any(m.startswith(f"sendnn:{metric}") for m in metrics)
