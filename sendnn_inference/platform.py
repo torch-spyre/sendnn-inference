@@ -337,12 +337,13 @@ class SpyrePlatform(Platform):
                     DEFAULT_MAX_NUM_SEQS,
                     DEFAULT_MAX_MODEL_LEN,
                 )
-                vllm_config.scheduler_config.max_num_seqs = min(
-                    vllm_config.scheduler_config.max_num_seqs, DEFAULT_MAX_NUM_SEQS
-                )
-                vllm_config.model_config.max_model_len = min(
-                    vllm_config.model_config.max_model_len, DEFAULT_MAX_MODEL_LEN
-                )
+                if is_decoder:
+                    vllm_config.scheduler_config.max_num_seqs = min(
+                        vllm_config.scheduler_config.max_num_seqs, DEFAULT_MAX_NUM_SEQS
+                    )
+                    vllm_config.model_config.max_model_len = min(
+                        vllm_config.model_config.max_model_len, DEFAULT_MAX_MODEL_LEN
+                    )
 
         else:
             logger.debug(
