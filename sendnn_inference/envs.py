@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     SENDNN_INFERENCE_MODEL_CONFIG_FILE: str | None = None
     SENDNN_INFERENCE_CPU_MM_DTYPE: torch.dtype = torch.float16
     SENDNN_INFERENCE_MM_DEVICE: str = "auto"
+    SENDNN_INFERENCE_TP_MM_SHARING: bool = True
     SENDNN_INFERENCE_BENCH_METRICS_ENABLED: bool = False
 
 logger = init_logger(__name__)
@@ -52,12 +53,12 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # for, formatted as comma separated list. Only applicable in pooling.
     "SENDNN_INFERENCE_WARMUP_PROMPT_LENS": lambda: [
         int(p)
-        for p in os.getenv(key="SENDNN_INFERENCE_WARMUP_PROMPT_LENS", default="64").split(",")
+        for p in os.getenv(key="SENDNN_INFERENCE_WARMUP_PROMPT_LENS", default="512").split(",")
     ],
     # Defines the batch sizes the Spyre accelerator should be prepared
     # for, formatted as comma separated list. Only applicable in pooling.
     "SENDNN_INFERENCE_WARMUP_BATCH_SIZES": lambda: [
-        int(b) for b in os.getenv(key="SENDNN_INFERENCE_WARMUP_BATCH_SIZES", default="1").split(",")
+        int(b) for b in os.getenv(key="SENDNN_INFERENCE_WARMUP_BATCH_SIZES", default="8").split(",")
     ],
     # Defines the backend that torch.compile will use when using Spyre
     # Available options:
@@ -93,6 +94,7 @@ environment_variables: dict[str, Callable[[], Any]] = {
     ),
     # Allow sendnn-inference to update env vars related to multi-threading (eg. OMP)
     # based on the detected CPU cores and server configuration
+    # Multimodal models will not take into account the number of workers for configuration.
     "SENDNN_INFERENCE_UPDATE_THREAD_CONFIG": lambda: bool(
         int(os.getenv("SENDNN_INFERENCE_UPDATE_THREAD_CONFIG", "1"))
     ),
@@ -171,6 +173,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # torch.compile(backend="sendnn") regardless.
     "SENDNN_INFERENCE_MM_DEVICE": lambda: parse_mm_device(
         os.getenv("SENDNN_INFERENCE_MM_DEVICE", "auto")
+    ),
+    # When "1" (default), rank 0 runs the vision encoder and shares the result
+    # with other TP ranks via POSIX shared memory (one encoder call instead of
+    # world_size calls).  Set to "0" to fall back to every TP rank running the
+    # vision encoder independently — the original behaviour, which avoids any
+    # SHM-related failure modes at the cost of redundant CPU work.
+    "SENDNN_INFERENCE_TP_MM_SHARING": lambda: bool(
+        int(os.getenv("SENDNN_INFERENCE_TP_MM_SHARING", "1"))
     ),
     # Enable collection of per-request Spyre-specific benchmark metrics
     # (queue wait time, chunked prefill count and latencies). Only needed
