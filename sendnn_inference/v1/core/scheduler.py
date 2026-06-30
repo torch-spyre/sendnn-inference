@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import math
+import time
 from collections import deque
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Iterable, Union
 
 
@@ -20,6 +22,24 @@ else:
     SchedulerOutput = None
 
 logger = init_logger(__name__)
+
+
+@dataclass
+class SpyreBenchState:
+    """Bench-metrics-only state for tracking per-request and per-step timing.
+    Only instantiated when SENDNN_INFERENCE_BENCH_METRICS_ENABLED is set."""
+
+    chunk_latencies: dict[str, list[float]] = field(default_factory=dict)
+    arrival_ts: dict[str, float] = field(default_factory=dict)
+    first_scheduled_ts: dict[str, float] = field(default_factory=dict)
+    chunk_start_times: dict[str, list[float]] = field(default_factory=dict)
+    decode_latencies: dict[str, list[float]] = field(default_factory=dict)
+    decode_start_times: dict[str, list[float]] = field(default_factory=dict)
+    tkvs: dict[str, list[int]] = field(default_factory=dict)
+    left_padding_blocks: dict[str, list[int]] = field(default_factory=dict)
+    prefill_step_start: float | None = None
+    decode_step_start: float | None = None
+
 
 # Ensure that block_size is 64
 # This ensures the rounding function is correct
@@ -204,6 +224,11 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         self.block_size = SpyrePlatform.get_block_size()
         self.max_batch_tkv_limit = SpyrePlatform.get_max_batch_tkv_limit()
 
+        self._bench: SpyreBenchState | None = None
+
+        if envs_spyre.SENDNN_INFERENCE_BENCH_METRICS_ENABLED:
+            self._bench = SpyreBenchState()
+
         assert self.max_batch_tkv_limit != -1, (
             "Expecting the env var VLLM_DT_MAX_BATCH_TKV_LIMIT to be set in platform.py"
         )
@@ -215,6 +240,10 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         assert isinstance(model_runner_output, SpyreModelRunnerOutput), (
             "Expecting an instance of CPSpyreModelRunnerOutput when doing chunked prefill."
         )
+
+        # Measure timing durations and accumulate metrics (scheduler-side timing injection)
+        if self._bench is not None:
+            self._bench_update_from_output(scheduler_output, model_runner_output)
 
         # Remove completed prefills
         self.ongoing_prefills = [
@@ -232,6 +261,121 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             assert self.total_reserved_blocks >= 0
 
         return result
+
+    def _bench_update_from_output(
+        self,
+        scheduler_output: "SchedulerOutput",
+        model_runner_output: SpyreModelRunnerOutput,
+    ) -> None:
+        assert self._bench is not None
+        now = time.time()
+
+        if self._bench.prefill_step_start is not None:
+            assert self.previous_step_was_prefill and self._bench.decode_step_start is None
+            t0 = self._bench.prefill_step_start
+            duration = now - t0
+            all_prefill_reqs = [
+                r.req_id for r in scheduler_output.scheduled_new_reqs
+            ] + scheduler_output.scheduled_cached_reqs.req_ids
+            for req_id in all_prefill_reqs:
+                self._bench.chunk_latencies.setdefault(req_id, []).append(duration)
+                self._bench.chunk_start_times.setdefault(req_id, []).append(t0)
+                self._bench.tkvs.setdefault(req_id, []).append(model_runner_output.tkv)
+            self._bench.prefill_step_start = None
+            self._bench.decode_step_start = None
+
+        elif self._bench.decode_step_start is not None:
+            assert not self.previous_step_was_prefill and self._bench.prefill_step_start is None
+            t0 = self._bench.decode_step_start
+            duration = now - t0
+            tkv = model_runner_output.tkv
+            max_num_blocks = math.ceil(tkv / self.block_size)
+            req_by_id = {r.request_id: r for r in self.running}
+            for req_id in scheduler_output.scheduled_cached_reqs.req_ids:
+                self._bench.decode_latencies.setdefault(req_id, []).append(duration)
+                self._bench.decode_start_times.setdefault(req_id, []).append(t0)
+                self._bench.tkvs.setdefault(req_id, []).append(tkv)
+                req = req_by_id.get(req_id)
+                if req is not None:
+                    req_num_blocks = math.ceil(req.num_computed_tokens / self.block_size)
+                    self._bench.left_padding_blocks.setdefault(req_id, []).append(
+                        max_num_blocks - req_num_blocks
+                    )
+            self._bench.prefill_step_start = None
+            self._bench.decode_step_start = None
+
+        for req in self.ongoing_prefills:
+            if req.request_id not in self._bench.first_scheduled_ts:
+                self._bench.first_scheduled_ts[req.request_id] = now
+                self._bench.arrival_ts[req.request_id] = req.arrival_time
+
+    def get_and_clear_chunk_stats(self, req_id: str) -> dict | None:
+        """Return and clear accumulated chunk timing for a finished request."""
+        if self._bench is None:
+            return None
+        lats = self._bench.chunk_latencies.pop(req_id, None)
+        starts = self._bench.chunk_start_times.pop(req_id, None)
+        dec_lats = self._bench.decode_latencies.pop(req_id, None)
+        dec_starts = self._bench.decode_start_times.pop(req_id, None)
+        tkvs = self._bench.tkvs.pop(req_id, None)
+        left_padding_blocks = self._bench.left_padding_blocks.pop(req_id, None)
+        if lats is None and dec_lats is None:
+            return None
+        return {
+            "num_chunked_prefills": len(lats) if lats else 0,
+            "chunk_prefill_latencies_s": lats or [],
+            "chunk_prefill_start_times_s": starts or [],
+            "decode_latencies_s": dec_lats or [],
+            "decode_start_times_s": dec_starts or [],
+            "tkvs": tkvs or [],
+            "left_padding_blocks": left_padding_blocks or [],
+        }
+
+    def _free_request(self, request, delay_free_blocks: bool = False):
+        """Override to inject Spyre bench metrics into kv_transfer_params so
+        they travel over ZMQ to the API server process in EngineCoreOutput."""
+        kv_xfer_params = super()._free_request(request, delay_free_blocks)
+
+        if self._bench is not None:
+            req_id = request.request_id
+            chunk_stats = self.get_and_clear_chunk_stats(req_id)
+            first_ts = self._bench.first_scheduled_ts.pop(req_id, None)
+            arrival_ts = self._bench.arrival_ts.pop(req_id, None)
+            # NOTE: queued_time_s looks like a duplicate of FinishedRequestStats.queued_time, but
+            # it is not. FinishedRequestStats.queued_time is (scheduled_ts - queued_ts): both
+            # timestamps are recorded inside the engine core, so it misses the time the request
+            # spent in transit from the API server to the engine (IPC hop). Here we use the stamp
+            # of the API server on receipt (request.arrival_time), which gives a complete client-
+            # visible queue wait that adds up cleanly with prefill and decode latencies when
+            # reconstructing TTFT.
+            queued_time_s = (
+                (first_ts - arrival_ts) if first_ts is not None and arrival_ts is not None else 0.0
+            )
+            num_executed = chunk_stats["num_chunked_prefills"] if chunk_stats else 0
+            num_expected = math.ceil(request.num_prompt_tokens / self.chunk_size)
+            num_skipped = max(0, num_expected - num_executed)
+            cache_hit_pct = num_skipped / num_expected if num_expected > 0 else 0.0
+            spyre_data = {
+                "queued_time_s": queued_time_s,
+                "num_chunked_prefills": num_executed,
+                "chunk_prefill_latencies_s": chunk_stats["chunk_prefill_latencies_s"]
+                if chunk_stats
+                else [],
+                "chunk_prefill_start_times_s": chunk_stats["chunk_prefill_start_times_s"]
+                if chunk_stats
+                else [],
+                "decode_latencies_s": chunk_stats["decode_latencies_s"] if chunk_stats else [],
+                "decode_start_times_s": chunk_stats["decode_start_times_s"] if chunk_stats else [],
+                "tkvs": chunk_stats["tkvs"] if chunk_stats else [],
+                "prefix_cache_hit_pct": cache_hit_pct,
+                "left_padding_blocks": chunk_stats["left_padding_blocks"] if chunk_stats else [],
+            }
+            if kv_xfer_params is None:
+                kv_xfer_params = {"__spyre__": spyre_data}
+            else:
+                kv_xfer_params["__spyre__"] = spyre_data
+
+        return kv_xfer_params
 
     def _current_chunk_token_threshold(self, new_prefill_candidates: list[Request]) -> int:
         """Returns the `long_prefill_token_threshold` to use for this step.
@@ -489,6 +633,16 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             assert self.reserved_blocks[req_id] >= 0
 
         assert 0 <= self.total_reserved_blocks <= free_blocks
+
+        # Inject step-start timestamps for timing measurement
+        if self._bench is not None:
+            now = time.time()
+            if self.previous_step_was_prefill:
+                self._bench.prefill_step_start = now
+                self._bench.decode_step_start = None
+            else:
+                self._bench.decode_step_start = now
+                self._bench.prefill_step_start = None
 
         return outputs
 

@@ -27,6 +27,9 @@ dynamic = ["version"]
 [project.entry-points."vllm.platform_plugins"]
 sendnn_inference = "sendnn_inference:register"
 
+[project.scripts]
+sendnn-bench = "sendnn_inference.benchmarks.spyre_bench_serve:main"
+
 [tool.setuptools.packages.find]
 where = ["."]  # list of folders that contain the packages (["."] by default)
 include = ["sendnn_inference*"]  # package names should match these glob patterns (["*"] by default)

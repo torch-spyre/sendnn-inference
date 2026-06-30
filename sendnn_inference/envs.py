@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     SENDNN_INFERENCE_CPU_MM_DTYPE: torch.dtype = torch.float16
     SENDNN_INFERENCE_MM_DEVICE: str = "auto"
     SENDNN_INFERENCE_TP_MM_SHARING: bool = True
+    SENDNN_INFERENCE_BENCH_METRICS_ENABLED: bool = False
 
 logger = init_logger(__name__)
 
@@ -180,6 +181,13 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # SHM-related failure modes at the cost of redundant CPU work.
     "SENDNN_INFERENCE_TP_MM_SHARING": lambda: bool(
         int(os.getenv("SENDNN_INFERENCE_TP_MM_SHARING", "1"))
+    ),
+    # Enable collection of per-request Spyre-specific benchmark metrics
+    # (queue wait time, chunked prefill count and latencies). Only needed
+    # when running `sendnn-bench serve`. Disabled by default to avoid
+    # overhead in production deployments.
+    "SENDNN_INFERENCE_BENCH_METRICS_ENABLED": lambda: bool(
+        int(os.environ.get("SENDNN_INFERENCE_BENCH_METRICS_ENABLED", "0"))
     ),
 }
 # --8<-- [end:env-vars-definition]

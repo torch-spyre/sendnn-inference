@@ -401,10 +401,10 @@ class SpyrePoolingModelRunner(
         # self.model here is probably a transformers model class
         if self.model_config.architecture in FMS_POOLING_MODEL_LIST:
             assert isinstance(self.model.config.src_vocab_size, int)
-            return self.model.config.src_vocab_size  # ty: ignore[invalid-return-type]
+            return self.model.config.src_vocab_size
         else:
             assert isinstance(self.model.config.vocab_size, int)
-            return self.model.config.vocab_size  # ty: ignore[invalid-return-type]
+            return self.model.config.vocab_size
 
     def _prepare_pad_input_ids(
         self,
