@@ -107,6 +107,7 @@ class SpyreMultiprocExecutor(MultiprocExecutor):
                 "restart the server to restore MM encoding"
             )
 
+        failed_encode_req_ids: list[str] = []
         if self._mm_job_queue is not None:
             # Submit new encode jobs.  The scheduler ensures each request
             # appears in _spyre_mm_encode_requests exactly once (tracked via
@@ -118,9 +119,18 @@ class SpyreMultiprocExecutor(MultiprocExecutor):
                     self._mm_in_flight += 1
                     logger.debug("Submitted MM encode job for req '%s'", req.request_id)
                 except Exception as exc:
-                    logger.debug("MM job queue error for req '%s': %s", req.request_id, exc)
+                    # put_nowait failed (BrokenPipeError, queue.Full, PicklingError, …).
+                    # The scheduler has already recorded this req_id in
+                    # _mm_encoding_submitted, so silently swallowing the error
+                    # would strand the request forever with no result and no error.
+                    # Surface it as a failed encode so the scheduler aborts it cleanly.
+                    logger.warning(
+                        "MM job queue submission failed for req '%s': %s — aborting request",
+                        req.request_id,
+                        exc,
+                    )
+                    failed_encode_req_ids.append(req.request_id)
 
-        failed_encode_req_ids: list[str] = []
         if self._mm_result_queue is not None and self._mm_in_flight > 0:
             # Collect completed results (non-blocking drain).
             newly_encoded_metadata: list[tuple] = []

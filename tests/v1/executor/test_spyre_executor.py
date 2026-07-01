@@ -154,6 +154,60 @@ class TestExecuteModel:
         # Failed req_id must be surfaced so scheduler can clear submitted state
         assert sched._spyre_failed_encode_req_ids == ["req-err"]
 
+    def test_put_nowait_failure_aborts_request_via_failed_req_ids(self, executor):
+        """PR finding: put_nowait failure must surface as _spyre_failed_encode_req_ids.
+
+        If put_nowait raises (BrokenPipeError, queue.Full, PicklingError, …) and the
+        exception is silently swallowed, the req_id stays in _mm_encoding_submitted
+        forever — the scheduler gates prefill on _mm_encoding_ready that is never
+        populated, stranding the client indefinitely with no error.
+        """
+        _install_queues(executor)
+        executor._mm_job_queue.put_nowait.side_effect = BrokenPipeError("encoder dead")
+
+        r1 = _make_encode_req("req-broken")
+        sched = _make_scheduler_output([r1])
+
+        executor.execute_model(sched)
+
+        # in_flight must NOT be incremented (job was never submitted)
+        assert executor._mm_in_flight == 0
+        # failed req_id must be surfaced so scheduler aborts it
+        assert sched._spyre_failed_encode_req_ids == ["req-broken"]
+
+    def test_in_flight_not_incremented_on_put_failure(self, executor):
+        """Regression guard: the bookkeeping counter must stay consistent with
+        what is actually in the queue. If put_nowait raised, the job is NOT in
+        flight and the counter must stay where it was.
+
+        Today's behaviour is correct (increment follows the call), but this test
+        locks it in so a refactor that moves the increment above the call is caught.
+        """
+        _install_queues(executor)
+        executor._mm_in_flight = 3  # simulate existing in-flight jobs
+        executor._mm_job_queue.put_nowait.side_effect = RuntimeError("queue broken")
+
+        sched = _make_scheduler_output([_make_encode_req("req-fail")])
+        executor.execute_model(sched)
+
+        assert executor._mm_in_flight == 3
+
+    def test_queue_full_during_put_surfaces_to_scheduler(self, executor):
+        """Defense-in-depth: once the encoder subprocess dies, multiprocessing.Queue
+        will eventually raise queue.Full (the parent feeder buffer fills because
+        nothing consumes it). The executor must surface this the same way it surfaces
+        BrokenPipeError — otherwise silent stranding becomes the dominant failure mode
+        for a dead encoder.
+        """
+        _install_queues(executor)
+        executor._mm_job_queue.put_nowait.side_effect = queue_mod.Full()
+
+        sched = _make_scheduler_output([_make_encode_req("req-full")])
+        executor.execute_model(sched)
+
+        assert executor._mm_in_flight == 0
+        assert sched._spyre_failed_encode_req_ids == ["req-full"]
+
     def test_in_flight_zero_skips_result_drain(self, executor):
         """When _mm_in_flight == 0, the result queue must not be polled."""
         # Even though the queue conceptually has an item, _mm_in_flight==0
