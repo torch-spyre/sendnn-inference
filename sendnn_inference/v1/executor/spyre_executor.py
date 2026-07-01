@@ -33,6 +33,15 @@ class SpyreMultiprocExecutor(MultiprocExecutor):
     """MultiprocExecutor subclass that manages a non-daemon vision encoder
     subprocess for async MM pre-encoding."""
 
+    # Process-global handle to the encoder job queue.  Published after the
+    # encoder starts so the scheduler (same EngineCore process) can send cancel
+    # tokens when requests are aborted while their encode is queued.
+    _shared_mm_job_queue: "multiprocessing.Queue | None" = None
+
+    @classmethod
+    def get_mm_job_queue(cls) -> "multiprocessing.Queue | None":
+        return cls._shared_mm_job_queue
+
     def _init_executor(self) -> None:
         logger.info("SpyreMultiprocExecutor._init_executor: custom executor active")
         self._mm_encoder_proc: multiprocessing.process.BaseProcess | None = None
@@ -173,6 +182,10 @@ class SpyreMultiprocExecutor(MultiprocExecutor):
             # Plain multiprocessing queues and event,
             # automatically closed when the executor (their owner) exits.
             ctx_q = multiprocessing.get_context("spawn")
+            # Job queue carries two message types (discriminated by isinstance):
+            #   MMEncodeRequest — a real vision encode job
+            #   str             — a cancel token (the req_id to skip)
+            # The encoder subprocess checks isinstance(job, str) to tell them apart.
             self._mm_job_queue = ctx_q.Queue()
             self._mm_result_queue = ctx_q.Queue()
             self._mm_stop_event = ctx_q.Event()
@@ -207,6 +220,8 @@ class SpyreMultiprocExecutor(MultiprocExecutor):
                 raise RuntimeError(f"Encoder process startup failed: {signal}")
 
             logger.info("SpyreMultiprocExecutor: encoder process ready")
+            # Publish job queue so the scheduler can send cancel tokens.
+            SpyreMultiprocExecutor._shared_mm_job_queue = self._mm_job_queue
 
         except Exception as exc:
             logger.warning(
@@ -230,6 +245,7 @@ class SpyreMultiprocExecutor(MultiprocExecutor):
         self._mm_job_queue = None
         self._mm_result_queue = None
         self._mm_in_flight = 0
+        SpyreMultiprocExecutor._shared_mm_job_queue = None
 
     def shutdown(self) -> None:
         if self._mm_stop_event is not None:
