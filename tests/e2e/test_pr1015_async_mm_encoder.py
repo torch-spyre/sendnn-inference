@@ -19,8 +19,6 @@ Runs on CPU in eager mode. No Spyre hardware needed.
 
 from __future__ import annotations
 
-import sys
-
 import pytest
 
 # Ensure the llava_next mm mapping is imported. FMS serialization
@@ -28,56 +26,61 @@ import pytest
 # the existing tests/e2e/test_spyre_mm.py carries the same note.
 import sendnn_inference.multimodal.mm_mappings.llava_next  # noqa: F401
 
-pytestmark = [
-    pytest.mark.multimodal,
-    pytest.mark.cpu,
-    pytest.mark.e2e,
-    # vLLM's v1 multiproc engine reliably SIGSEGVs (-11) on macOS during
-    # init when tensor_parallel_size > 1. Async MM encoder requires TP > 1
-    # (platform.py:266-273), so this test can only run on Linux CI.
-    pytest.mark.skipif(
-        sys.platform == "darwin",
-        reason="vLLM multiproc + TP>1 SIGSEGVs on macOS during engine init; "
-        "requires Linux to run.",
-    ),
-]
+pytestmark = [pytest.mark.multimodal, pytest.mark.cpu, pytest.mark.e2e]
 
 GVISION_MODEL = "ibm-granite/granite-vision-3.2-2b"
 MAX_TOKENS = 4  # keep CPU work small
 
 
-@pytest.fixture
-def async_encoder_env(monkeypatch):
-    """Env for the async MM encoder path.
+# Env required for the async MM encoder path. See the `llm` fixture body for
+# the actual env-setting — it's done there so a module-scoped fixture can use
+# it (a function-scoped `monkeypatch` fixture can't be promoted to module).
+#
+# `SENDNN_INFERENCE_ASYNC_MM_ENCODER=1` + `tensor_parallel_size > 1` are
+# required for `SpyrePlatform.check_and_update_config` to swap in
+# `SpyreMultiprocExecutor` (platform.py:266-273).
+#
+# Notable knobs:
+#   - VLLM_WORKER_MULTIPROC_METHOD=spawn — vLLM defaults to fork, which
+#     SIGSEGVs on macOS when the MM stack pulls in tvm_ffi (via xgrammar).
+#   - SENDNN_INFERENCE_TP_MM_SHARING=0 — disables the rank-0 → all-ranks
+#     SHM-broadcast embedding share path. Its torch.distributed.broadcast
+#     collective hangs during warmup with TP > 1 on macOS (pre-existing
+#     bug, not in scope for this test). The async encoder uses a different
+#     SHM path (collective_rpc store_mm_embeddings), so disabling sharing
+#     here only affects warmup encoding — the async encoder takes over
+#     after warmup completes.
+#   - VLLM_ENABLE_V1_MULTIPROCESSING=0 from _local_envs_for_test.sh is left
+#     intact. It controls the engine-core IPC (in-process vs out-of-process),
+#     NOT worker TP — the existing TP=2 tests rely on it staying off.
 
-    `SENDNN_INFERENCE_ASYNC_MM_ENCODER=1` and `tensor_parallel_size > 1`
-    are both required for `SpyrePlatform.check_and_update_config` to swap
-    in `SpyreMultiprocExecutor` (platform.py:266-273).
 
-    We have to UN-set `VLLM_ENABLE_V1_MULTIPROCESSING=0` from
-    `_local_envs_for_test.sh` because TP > 1 needs the multiproc engine to
-    actually spawn worker processes — the encoder subprocess is then
-    spawned from the executor running in the parent process, which is the
-    whole architectural reason this PR exists.
-    """
-    monkeypatch.setenv("SENDNN_INFERENCE_ASYNC_MM_ENCODER", "1")
-    monkeypatch.setenv("SENDNN_INFERENCE_DYNAMO_BACKEND", "eager")
-    monkeypatch.delenv("VLLM_ENABLE_V1_MULTIPROCESSING", raising=False)
-
-
-@pytest.fixture
-def llm(async_encoder_env):
+@pytest.fixture(scope="module")
+def llm():
     """Real vLLM LLM with TP=2, eager backend, async MM encoder enabled.
 
-    Slow to construct (loads ~4 GB of weights on CPU + spawns 2 workers +
-    1 encoder subprocess), so we scope as `function` rather than `module`
-    to ensure each test gets a clean encoder subprocess — the executor
-    state machine (`_mm_encoder_proc`, `_mm_in_flight`) is fragile across
-    abort/retry test scenarios.
+    Module-scoped because:
+      1. Startup is the dominant cost (~2 min: load 4 GB on CPU + spawn 2
+         workers + spawn encoder + warmup).
+      2. `MASTER_PORT=12345` is fixed in `_local_envs_for_test.sh`, so a
+         function-scoped LLM hits `EADDRINUSE` when the second test tries
+         to spin up a fresh torch.distributed rendezvous before the OS
+         has released the port from the previous test.
 
-    Reuse across tests in this module is OK; use `module` scope if the
-    runtime starts to bite.
+    Neither test in this module mutates encoder state in a way that would
+    leak into the next.
     """
+    # `async_encoder_env` is function-scoped (monkeypatch lifetime). Promote
+    # by passing through — pytest accepts a module-scoped fixture depending
+    # on a function-scoped one ONLY if the inner one is converted to be
+    # module-scoped too. We can't easily do that with monkeypatch, so set
+    # env vars directly inside the fixture body instead.
+    import os
+    os.environ["SENDNN_INFERENCE_ASYNC_MM_ENCODER"] = "1"
+    os.environ["SENDNN_INFERENCE_DYNAMO_BACKEND"] = "eager"
+    os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
+    os.environ["SENDNN_INFERENCE_TP_MM_SHARING"] = "0"
+
     from vllm import LLM
 
     return LLM(

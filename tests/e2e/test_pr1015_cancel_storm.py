@@ -28,8 +28,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import io
-import os
-import sys
 import time
 
 import httpx
@@ -43,18 +41,7 @@ from PIL import Image
 import sendnn_inference.multimodal.mm_mappings.llava_next  # noqa: F401
 from spyre_util import RemoteOpenAIServer
 
-pytestmark = [
-    pytest.mark.multimodal,
-    pytest.mark.cpu,
-    pytest.mark.e2e,
-    # `vllm serve` spawns the multiproc engine, and that combination
-    # SIGSEGVs on macOS during init when TP > 1. Linux CI only.
-    pytest.mark.skipif(
-        sys.platform == "darwin",
-        reason="vLLM multiproc + TP>1 SIGSEGVs on macOS during engine init; "
-        "requires Linux to run.",
-    ),
-]
+pytestmark = [pytest.mark.multimodal, pytest.mark.cpu, pytest.mark.e2e]
 
 GVISION_MODEL = "ibm-granite/granite-vision-3.2-2b"
 
@@ -80,15 +67,23 @@ def server():
     can share a single server safely — they don't mutate executor state
     in ways that need a clean restart between cases.
     """
+    # RemoteOpenAIServer merges env_dict over os.environ; we only need to
+    # pass the overrides here.
     env_overrides = {
         "SENDNN_INFERENCE_ASYNC_MM_ENCODER": "1",
         "SENDNN_INFERENCE_DYNAMO_BACKEND": "eager",
-        # TP > 1 needs the multiproc engine; _local_envs_for_test.sh disables
-        # it for the rest of the suite, override here.
-        "VLLM_ENABLE_V1_MULTIPROCESSING": "1",
-        # Don't try to download — let HF_HUB_OFFLINE inherit if set.
+        # vLLM defaults VLLM_WORKER_MULTIPROC_METHOD=fork, which segfaults
+        # on macOS when the MM stack pulls in tvm_ffi (via xgrammar for
+        # structured outputs). spawn works on Linux too.
+        "VLLM_WORKER_MULTIPROC_METHOD": "spawn",
+        # Disable the synchronous rank-0 → all-ranks SHM-broadcast embedding
+        # share path — pre-existing bug that hangs during warmup with
+        # TP > 1 on macOS (torch.distributed.broadcast collective doesn't
+        # complete). The async encoder uses a different SHM path
+        # (collective_rpc store_mm_embeddings), so this only affects the
+        # inline warmup encoding.
+        "SENDNN_INFERENCE_TP_MM_SHARING": "0",
     }
-    env = {**os.environ, **env_overrides}
 
     with RemoteOpenAIServer(
         GVISION_MODEL,
@@ -96,10 +91,13 @@ def server():
             "--tensor-parallel-size", "2",
             "--enforce-eager",
             "--max-num-seqs", "4",
-            "--max-model-len", "1024",
+            # Granite-vision's image-token expansion produces ~1500 tokens
+            # for a typical image; 4k gives headroom for one image + chat
+            # template + a few hundred response tokens.
+            "--max-model-len", "4096",
             "--no-enable-prefix-caching",
         ],
-        env_dict=env,
+        env_dict=env_overrides,
         max_wait_seconds=600,
     ) as srv:
         yield srv
