@@ -258,6 +258,21 @@ class SpyrePlatform(Platform):
         if parallel_config.worker_cls == "auto":
             parallel_config.worker_cls = "sendnn_inference.v1.worker.spyre_worker.SpyreWorker"
 
+        # Use SpyreMultiprocExecutor when async MM encoding is enabled via
+        # SENDNN_INFERENCE_ASYNC_MM_ENCODER=1.  The executor manages a separate
+        # vision encoder subprocess that runs in parallel with AIU inference.
+        # Pass the class object directly — Executor.get_class handles
+        # isinstance(backend, type) before string-based dispatch, which avoids
+        # Pydantic's Literal validator silently dropping a string class path.
+        if (
+            is_decoder
+            and parallel_config.world_size > 1
+            and envs_spyre.SENDNN_INFERENCE_ASYNC_MM_ENCODER
+        ):
+            from sendnn_inference.v1.executor.spyre_executor import SpyreMultiprocExecutor
+
+            parallel_config.distributed_executor_backend = SpyreMultiprocExecutor
+
         cls._check_threading_config(parallel_config.world_size)
 
         # set env vars based on the model
@@ -662,7 +677,10 @@ class SpyrePlatform(Platform):
 
         # NOTE: math.ceil can output a number for each worker that sums
         # to a total greater than cpu_count.
-        if cls._config.model_config.is_multimodal_model:
+        if (
+            cls._config.model_config.is_multimodal_model
+            and not envs_spyre.SENDNN_INFERENCE_ASYNC_MM_ENCODER
+        ):
             if platform.machine() == "ppc64le":
                 cpus_per_worker = (
                     min(psutil.cpu_count(logical=True), 36) if cpu_count is not None else None
