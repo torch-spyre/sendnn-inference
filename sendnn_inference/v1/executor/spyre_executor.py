@@ -34,18 +34,27 @@ class SpyreMultiprocExecutor(MultiprocExecutor):
     subprocess for async MM pre-encoding."""
 
     # Process-global handle to the encoder job queue.  Published after the
-    # encoder starts so the scheduler (same EngineCore process) can send cancel
-    # tokens when requests are aborted while their encode is queued.
+    # encoder starts so the scheduler (same EngineCore process) can send
+    # cancellations via the dedicated cancel queue.
     _shared_mm_job_queue: "multiprocessing.Queue | None" = None
+    # Dedicated cancel queue: scheduler puts req_id strings here when a request
+    # is aborted.  Kept separate from the job queue so the job queue carries
+    # only MMEncodeRequest objects — no type-tagged mixed messages.
+    _shared_mm_cancel_queue: "multiprocessing.Queue | None" = None
 
     @classmethod
     def get_mm_job_queue(cls) -> "multiprocessing.Queue | None":
         return cls._shared_mm_job_queue
 
+    @classmethod
+    def get_mm_cancel_queue(cls) -> "multiprocessing.Queue | None":
+        return cls._shared_mm_cancel_queue
+
     def _init_executor(self) -> None:
         logger.info("SpyreMultiprocExecutor._init_executor: custom executor active")
         self._mm_encoder_proc: multiprocessing.process.BaseProcess | None = None
         self._mm_job_queue: multiprocessing.Queue | None = None
+        self._mm_cancel_queue: multiprocessing.Queue | None = None
         self._mm_result_queue: multiprocessing.Queue | None = None
         self._mm_stop_event: multiprocessing.synchronize.Event | None = None
         # Number of encode jobs submitted but not yet collected.
@@ -192,11 +201,11 @@ class SpyreMultiprocExecutor(MultiprocExecutor):
             # Plain multiprocessing queues and event,
             # automatically closed when the executor (their owner) exits.
             ctx_q = multiprocessing.get_context("spawn")
-            # Job queue carries two message types (discriminated by isinstance):
-            #   MMEncodeRequest — a real vision encode job
-            #   str             — a cancel token (the req_id to skip)
-            # The encoder subprocess checks isinstance(job, str) to tell them apart.
             self._mm_job_queue = ctx_q.Queue()
+            # Dedicated cancel queue: carries req_id strings for aborted requests.
+            # The encoder drains this before processing each job so it can skip
+            # cancelled requests without running the expensive vision-tower forward.
+            self._mm_cancel_queue = ctx_q.Queue()
             self._mm_result_queue = ctx_q.Queue()
             self._mm_stop_event = ctx_q.Event()
 
@@ -213,6 +222,7 @@ class SpyreMultiprocExecutor(MultiprocExecutor):
                     self._mm_job_queue,
                     self._mm_result_queue,
                     self._mm_stop_event,
+                    self._mm_cancel_queue,
                 ),
                 daemon=True,
                 name="mm-encoder",
@@ -230,18 +240,19 @@ class SpyreMultiprocExecutor(MultiprocExecutor):
                 raise RuntimeError(f"Encoder process startup failed: {signal}")
 
             logger.info("SpyreMultiprocExecutor: encoder process ready")
-            # Publish job queue so the scheduler can send cancel tokens.
             SpyreMultiprocExecutor._shared_mm_job_queue = self._mm_job_queue
+            SpyreMultiprocExecutor._shared_mm_cancel_queue = self._mm_cancel_queue
 
         except Exception as exc:
-            logger.warning(
-                "SpyreMultiprocExecutor: failed to start encoder process (%s: %s); "
-                "falling back to Phase 1 blocking encode.",
+            logger.error(
+                "SpyreMultiprocExecutor: failed to start encoder process (%s: %s) — "
+                "restarting the server is required to restore MM encoding.",
                 type(exc).__name__,
                 exc,
                 exc_info=True,
             )
             self._cleanup_encoder()
+            raise
 
     def _cleanup_encoder(self) -> None:
         if self._mm_stop_event is not None:
@@ -253,9 +264,11 @@ class SpyreMultiprocExecutor(MultiprocExecutor):
         self._mm_encoder_proc = None
         self._mm_stop_event = None
         self._mm_job_queue = None
+        self._mm_cancel_queue = None
         self._mm_result_queue = None
         self._mm_in_flight = 0
         SpyreMultiprocExecutor._shared_mm_job_queue = None
+        SpyreMultiprocExecutor._shared_mm_cancel_queue = None
 
     def shutdown(self) -> None:
         if self._mm_stop_event is not None:

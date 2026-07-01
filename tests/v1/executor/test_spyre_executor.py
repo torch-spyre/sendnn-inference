@@ -209,27 +209,29 @@ class TestTryStartMmEncoder:
         assert executor._mm_encoder_proc is None
         assert executor._mm_job_queue is None
 
-    def test_cleanup_on_startup_failure(self, executor):
-        """If the encoder process signals an error, _cleanup_encoder must be called."""
-        # Simulate the result queue returning an error signal instead of "READY".
+    def test_raises_on_startup_failure(self, executor):
+        """PR #1015 finding 2: encoder startup failure must raise, not silently fall back.
+
+        A silent fallback leaves MM scheduling permanently broken — the scheduler
+        keeps gating MM requests on _mm_encoding_ready which is never populated,
+        so every MM request hangs indefinitely.  Raising here lets the supervisor
+        restart the process with a clear error instead of masking the failure.
+        """
         fake_result_q = MagicMock()
         fake_result_q.get.return_value = "ERROR: vision load failed"
 
         fake_ctx = MagicMock()
-        fake_ctx.Queue.side_effect = [MagicMock(), fake_result_q]
+        fake_ctx.Queue.side_effect = [MagicMock(), MagicMock(), fake_result_q]
         fake_ctx.Event.return_value = MagicMock()
         fake_ctx.Process.return_value = MagicMock()
 
         with (
             patch("sendnn_inference.envs.SENDNN_INFERENCE_ASYNC_MM_ENCODER", True),
             patch("multiprocessing.get_context", return_value=fake_ctx),
-            # encoder_process_main is imported lazily inside _try_start_mm_encoder
             patch("sendnn_inference.v1.worker.mm_encoder_process.encoder_process_main"),
-            patch.object(executor, "_cleanup_encoder") as mock_cleanup,
+            pytest.raises(RuntimeError, match="Encoder process startup failed"),
         ):
             executor._try_start_mm_encoder()
-
-        mock_cleanup.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

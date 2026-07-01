@@ -300,6 +300,36 @@ class TestEncoderProcessMain:
         assert shape is None
         assert dtype is None
 
+    def test_cancel_queue_skips_job_before_encode(self):
+        """When a req_id is on the cancel_queue before its job is dequeued,
+        execute_model must not be called and (req_id, None, None) is returned."""
+        from sendnn_inference.v1.worker.mm_encoder_process import encoder_process_main
+
+        jq = multiprocessing.Queue()
+        rq = multiprocessing.Queue()
+        cq = multiprocessing.Queue()
+        stop = multiprocessing.Event()
+
+        cq.put("req-cancel")  # cancel token arrives before the job
+        job = _make_mm_encode_request("req-cancel")
+        jq.put(job)
+        jq.put(None)
+
+        mock_runner = MagicMock()
+
+        with (
+            patch(
+                "sendnn_inference.v1.worker.mm_encoder_process.VisionEncoderRunner",
+                return_value=mock_runner,
+            ),
+            patch("sendnn_inference.v1.worker.mm_encoder_process.write_embeddings"),
+        ):
+            encoder_process_main(_make_vllm_config(), jq, rq, stop, cq)
+
+        assert rq.get(timeout=2) == "READY"
+        assert rq.get(timeout=2) == ("req-cancel", None, None)
+        assert not mock_runner.execute_model.called
+
     def test_stop_event_terminates_loop(self):
         from sendnn_inference.v1.worker.mm_encoder_process import encoder_process_main
 

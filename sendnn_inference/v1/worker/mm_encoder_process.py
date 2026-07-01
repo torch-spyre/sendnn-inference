@@ -16,6 +16,7 @@ import logging
 import math
 import os
 import platform
+import queue as queue_mod
 import time
 
 import torch
@@ -227,6 +228,7 @@ def encoder_process_main(
     job_queue,
     result_queue,
     stop_event,
+    cancel_queue=None,
 ) -> None:
     """Entry point for the vision encoder subprocess.
 
@@ -239,8 +241,13 @@ def encoder_process_main(
     shutdown.  The job loop polls it via a timeout on ``job_queue.get`` so
     the process exits cleanly on both graceful and abrupt server termination.
 
+    ``cancel_queue`` carries req_id strings for aborted requests.  The encoder
+    drains it after dequeuing each job so cancelled jobs are skipped before the
+    expensive vision-tower forward pass begins.
+
     Job loop:
-      get(MMEncodeRequest) → execute_model → write SHM → put (req_id, shape, dtype)
+      get(MMEncodeRequest) → drain cancel_queue → skip if cancelled
+      → execute_model → write SHM → put (req_id, shape, dtype)
     Exits when stop_event is set or None sentinel is received.
     """
     logger.info("encoder_process: starting")
@@ -270,9 +277,10 @@ def encoder_process_main(
         os.environ.get("DT_PARALLEL_THREADS", "unset"),
     )
 
-    # skip_ids: requests whose cancel token arrived BEFORE the encode started.
-    # processed_ids: tombstones for encodes that completed but whose cancel token
-    #   may still arrive later — prevents the cancel token from re-entering skip_ids.
+    # skip_ids: req_ids drained from cancel_queue that have not yet been dequeued
+    #   as a job — the encode will be skipped when the job arrives.
+    # processed_ids: tombstones for completed encodes — if a cancel arrives after
+    #   the encode is done, discard the tombstone instead of adding to skip_ids.
     skip_ids: set[str] = set()
     processed_ids: set[str] = set()
 
@@ -289,21 +297,22 @@ def encoder_process_main(
             logger.info("encoder_process: shutdown received")
             break
 
-        # A plain string on the job queue is a cancel token (the req_id to skip).
-        # Real encode jobs are always MMEncodeRequest objects, so isinstance(job, str)
-        # unambiguously identifies cancel tokens.
-        if isinstance(job, str):
-            rid = job
-            if rid in processed_ids:
-                # Encode already completed; cancel token arrived late — clean up
-                # the tombstone.  skip_ids is not touched: the job is already done.
-                processed_ids.discard(rid)
-                logger.debug("encoder_process: late cancel token for req '%s' (already done)", rid)
-            else:
-                # Cancel token arrived before encode started — mark to skip.
-                skip_ids.add(rid)
-                logger.debug("encoder_process: pre-cancel for req '%s'", rid)
-            continue
+        # Drain the cancel queue before processing this job so that any
+        # cancellations that arrived while we were waiting are captured.
+        if cancel_queue is not None:
+            while True:
+                try:
+                    rid = cancel_queue.get_nowait()
+                    if rid in processed_ids:
+                        processed_ids.discard(rid)
+                        logger.debug(
+                            "encoder_process: late cancel for req '%s' (already done)", rid
+                        )
+                    else:
+                        skip_ids.add(rid)
+                        logger.debug("encoder_process: pre-cancel for req '%s'", rid)
+                except queue_mod.Empty:
+                    break
 
         req_id = job.request_id
 
@@ -327,7 +336,7 @@ def encoder_process_main(
 
             t_elapsed = time.time() - t0
             result_queue.put((req_id, tuple(embeds.shape), embeds.dtype))
-            # Tombstone: a late cancel token may still arrive for this req_id.
+            # Tombstone: a late cancel may still arrive on cancel_queue for this req_id.
             processed_ids.add(req_id)
             logger.info("maybe_mm_embedding processing time: %.2fms", t_elapsed * 1000)
         except Exception as exc:

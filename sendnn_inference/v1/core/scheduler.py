@@ -791,13 +791,13 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
                 if rid in self._mm_encoding_submitted:
                     from sendnn_inference.v1.executor.spyre_executor import SpyreMultiprocExecutor
 
-                    jq = SpyreMultiprocExecutor.get_mm_job_queue()
-                    if jq is not None:
+                    cq = SpyreMultiprocExecutor.get_mm_cancel_queue()
+                    if cq is not None:
                         try:
-                            jq.put_nowait(rid)  # plain string = cancel token
+                            cq.put_nowait(rid)
                         except Exception as exc:
                             logger.debug(
-                                "scheduler: failed to send cancel token for req '%s': %s",
+                                "scheduler: failed to send cancel for req '%s': %s",
                                 rid,
                                 exc,
                             )
