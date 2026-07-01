@@ -88,6 +88,16 @@ class SpyreMultiprocExecutor(MultiprocExecutor):
         """
         newly_encoded_req_ids: list[str] = []
 
+        if self._mm_encoder_proc is not None and not self._mm_encoder_proc.is_alive():
+            # TODO: instead of killing the server, restart the encoder subprocess
+            # and fall back to inline encoding for in-flight MM requests
+            # during the vision model reload window.
+            raise RuntimeError(
+                f"MM encoder process died unexpectedly "
+                f"(exit code {self._mm_encoder_proc.exitcode}) — "
+                "restart the server to restore MM encoding"
+            )
+
         if self._mm_job_queue is not None:
             # Submit new encode jobs.  The scheduler ensures each request
             # appears in _spyre_mm_encode_requests exactly once (tracked via
