@@ -13,5 +13,8 @@ models:
     revision: cf74d8acd4f198de950bf004b262e6accfed5d2c
   - repo: cross-encoder/stsb-roberta-large
     revision: 2b12c2c0088918e76151fd5937b7bba986ef1f98
-  - repo: ibm-granite/granite-vision-3.2-2b
-    revision: ec894191f2e9e9be3d90eab9ac6949583c46f03b
+  # Random-init CI fixture (~10 MB) that stands in for granite-vision-3.2-2b
+  # in the async-MM-encoder e2e tests. See tests/e2e/conftest.py — the
+  # revision must match NANO_GV_REVISION there.
+  - repo: joerunde/nano-gv
+    revision: c9470d9e54b023dd9ab8a8a98057489fdb18ba03

@@ -2,6 +2,12 @@
 (Non e2e) tests related to Llava Next (Granite Vision); these tests
 primarily verify the correctness of some of the helper utils, especially
 with respect to the creation of warmup features.
+
+Runs against the nano-gv fixture — same LlavaNext + granite + siglip
+architecture as the real granite-vision-3.2-2b but with tiny dims, so
+`AutoConfig` / `AutoProcessor` loads are near-instant and no multi-GB
+download is required. Only config / util shape logic is checked here;
+model weights aren't loaded.
 """
 
 import copy
@@ -17,7 +23,7 @@ from vllm.multimodal.inputs import MultiModalFeatureSpec
 import sendnn_inference.multimodal as spyre_mm
 from spyre_util import REFERENCE_MODELS
 
-GVISION_MODEL = REFERENCE_MODELS["ibm-granite/granite-vision-3.2-2b"]
+NANO_GV_MODEL = REFERENCE_MODELS["joerunde/nano-gv"]
 # Marks all tests in this file as multimodal and CPU to match
 # multimodal wf; tests in this file should be very fast.
 pytestmark = [pytest.mark.multimodal, pytest.mark.cpu]
@@ -26,25 +32,29 @@ pytestmark = [pytest.mark.multimodal, pytest.mark.cpu]
 # NOTE: --forked forks after module scoped fixtures
 @pytest.fixture(scope="module")
 def hf_config():
-    """Get a transformers config for granite vision."""
+    """Get a transformers config for the nano-gv llava-next variant."""
     return AutoConfig.from_pretrained(
-        GVISION_MODEL.name,
-        revision=GVISION_MODEL.revision,
+        NANO_GV_MODEL.name,
+        revision=NANO_GV_MODEL.revision,
     )
 
 
 @pytest.fixture(scope="module")
 def fms_config(hf_config):
-    """Get the FMS config corresponding to the above."""
+    """Get the FMS config corresponding to the above.
+
+    nano-gv already declares `head_dim` explicitly in its text_config, so
+    no manual override is needed — `build_llava_next_params` reads it
+    straight from the HF config.
+    """
     config_params = build_llava_next_params(hf_config)
-    config_params["text_config"].head_dim = 128
     return LlavaNextConfig(**config_params)
 
 
 @pytest.fixture(scope="module")
 def llava_next_mm_utils(fms_config, hf_config):
     return spyre_mm.maybe_get_mm_utils(
-        model_path=GVISION_MODEL.name,
+        model_path=NANO_GV_MODEL.name,
         fms_config=fms_config,
         hf_config=hf_config,
     )
@@ -138,7 +148,7 @@ def test_warmup_feature_correctness(llava_next_mm_utils):
 
     num_expanded_mm_ids = torch.sum(warmup_toks == image_token_id).item()
 
-    processor = AutoProcessor.from_pretrained(GVISION_MODEL.name, revision=GVISION_MODEL.revision)
+    processor = AutoProcessor.from_pretrained(NANO_GV_MODEL.name, revision=NANO_GV_MODEL.revision)
     # Create a random PIL Image that matches the size of the hardcoded
     # inputs and run it through the processor to check the feature sizes.
     image_dims = warmup_mm_features.data["image_sizes"].data

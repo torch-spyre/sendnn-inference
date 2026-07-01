@@ -297,9 +297,16 @@ register_model_info(
     revision="4b5990b8d402a75febe0086abbf1e490af494e3d",
 )
 ### Multimodal
+# nano-gv: random-init ~10 MB CI fixture built by tools/build_nano_gv.py,
+# a shape-compatible stand-in for granite-vision-3.2-2b. The full model
+# (~5.5 GB) is too large for the GHA cache and too slow for CPU eager
+# warmup, and none of our multimodal tests actually depend on its
+# trained weights — they only exercise config / wiring paths.
+# When rebuilding, bump the revision here AND in
+# .github/ci_model_cache.yaml so the CI cache stays in sync.
 register_model_info(
-    name="ibm-granite/granite-vision-3.2-2b",
-    revision="2818ae5b93cb750b099df1b65f7864e4a0401271",
+    name="joerunde/nano-gv",
+    revision="c9470d9e54b023dd9ab8a8a98057489fdb18ba03",
 )
 register_model_info(
     name="mistralai/Mistral-Small-3.1-24B-Instruct-2503",
@@ -330,9 +337,7 @@ def _default_test_models(
         return [pytest.param(model, marks=[pytest.mark.scoring], id=model.name)]
 
     if isMultimodal:
-        # NOTE: use 3.2 instead of 3.3 here since it's minimal case currently
-        # has fewer image tokens (1 tile + base patch instead of 2).
-        model = REFERENCE_MODELS["ibm-granite/granite-vision-3.2-2b"]
+        model = REFERENCE_MODELS["joerunde/nano-gv"]
         return [pytest.param(model, marks=[pytest.mark.multimodal], id=model.name)]
 
     # Decoders

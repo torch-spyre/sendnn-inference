@@ -18,9 +18,10 @@ Both are exactly the failure modes the unit tests for findings 1 and 3
 sketch in isolation; this test runs the whole stack so we can see what
 actually happens under load.
 
-Runs on CPU eager mode with the locally-cached `granite-vision-3.2-2b`.
-No Spyre hardware needed. Tagged `e2e` because it spawns a full server
-process and is slow to start.
+Runs on CPU eager mode against the nano-gv fixture (see
+`REFERENCE_MODELS["joerunde/nano-gv"]` in tests/spyre_util.py). No Spyre
+hardware needed. Tagged `e2e` because it spawns a full server process
+and is slow to start.
 """
 
 from __future__ import annotations
@@ -39,18 +40,30 @@ from PIL import Image
 # utilities are patched at import time and the patching is not idempotent —
 # same caveat as tests/e2e/test_spyre_mm.py and test_pr1015_async_mm_encoder.py.
 import sendnn_inference.multimodal.mm_mappings.llava_next  # noqa: F401
-from spyre_util import RemoteOpenAIServer
+from spyre_util import REFERENCE_MODELS, RemoteOpenAIServer
 
 pytestmark = [pytest.mark.multimodal, pytest.mark.cpu, pytest.mark.e2e]
 
-GVISION_MODEL = "ibm-granite/granite-vision-3.2-2b"
+NANO_GV_MODEL = REFERENCE_MODELS["joerunde/nano-gv"]
+NANO_IMAGE_SIZE = 112  # matches the nano-gv vision_config.image_size
 
-# Tuning knobs. Numbers chosen so the test finishes in reasonable time on
-# a developer laptop while still putting enough pressure on the encoder
-# to surface finding-1-style hangs.
-N_CANCELLED = 12  # MM requests to fire and immediately cancel
+# Tuning knobs — sized to make regressions in the cancel path externally
+# visible against a ~6 ms/encode nano-gv model.
+#
+# `N_CANCELLED` is the storm depth. 100 concurrent cancels is enough to
+# thoroughly exercise the scheduler → cancel_queue → encoder drain →
+# aborted-result plumbing on every path. Going higher hits diminishing
+# returns because the test harness (asyncio + httpx + vLLM request queue)
+# becomes the bottleneck long before the encoder does.
+#
+# `POST_BURST_TIMEOUT` is the ceiling for the follow-up legitimate
+# request. With nano-gv it should return in ~100 ms; a completely broken
+# cancel path that grinds through all N abandoned encodes serially would
+# still fit under a second. 5 s is comfortably above CI noise but
+# tight enough that any actual DoS regression fails the test.
+N_CANCELLED = 100  # MM requests to fire and immediately cancel
 CANCEL_AFTER_SECONDS = 0.5  # how long to let them run before cancelling
-POST_BURST_TIMEOUT = 90  # max wait for the fresh request after the storm
+POST_BURST_TIMEOUT = 5  # max wait for the fresh request after the storm
 
 
 # ---------------------------------------------------------------------------
@@ -60,12 +73,17 @@ POST_BURST_TIMEOUT = 90  # max wait for the fresh request after the storm
 
 @pytest.fixture(scope="module")
 def server():
-    """Real `vllm serve` with TP=2, eager backend, async MM encoder on.
+    """Real `vllm serve` with TP=2, eager backend, async MM encoder on,
+    running the nano-gv model.
 
-    Module-scoped because server startup (model load + worker spawn +
-    encoder spawn) is the dominant cost and both tests in this module
-    can share a single server safely — they don't mutate executor state
-    in ways that need a clean restart between cases.
+    Module-scoped because server startup (worker spawn + encoder spawn +
+    warmup) is still the dominant cost and both tests in this module can
+    share a single server — they don't mutate executor state in ways that
+    need a clean restart between cases.
+
+    `RemoteOpenAIServer` takes a `ModelInfo` directly and auto-adds
+    `--revision <hash>` to the vllm serve args, so we get the pinned
+    revision plumbed through without touching `vllm_serve_args` here.
     """
     # RemoteOpenAIServer merges env_dict over os.environ; we only need to
     # pass the overrides here.
@@ -83,19 +101,26 @@ def server():
         # (collective_rpc store_mm_embeddings), so this only affects the
         # inline warmup encoding.
         "SENDNN_INFERENCE_TP_MM_SHARING": "0",
+        # Use a distinct MASTER_PORT so back-to-back runs with
+        # test_async_mm_encoder.py don't collide on port 12345 (torch.distributed
+        # holds it in TIME_WAIT for ~60s after teardown).
+        "MASTER_PORT": "12347",
     }
 
     with RemoteOpenAIServer(
-        GVISION_MODEL,
+        NANO_GV_MODEL,
         vllm_serve_args=[
             "--tensor-parallel-size", "2",
             "--enforce-eager",
             "--max-num-seqs", "4",
-            # Granite-vision's image-token expansion produces ~1500 tokens
-            # for a typical image; 4k gives headroom for one image + chat
-            # template + a few hundred response tokens.
-            "--max-model-len", "4096",
+            # nano-gv image_size is 112, which yields ~64 vision patches
+            # + chat template overhead — 1024 is plenty.
+            "--max-model-len", "1024",
             "--no-enable-prefix-caching",
+            # served-model-name is what clients pass in the OpenAI API's
+            # `model` field. Use a short stable alias so tests don't need
+            # to know the tmp-path where nano-gv was built.
+            "--served-model-name", "nano-gv",
         ],
         env_dict=env_overrides,
         max_wait_seconds=600,
@@ -108,12 +133,11 @@ def server():
 # ---------------------------------------------------------------------------
 
 
-def _make_image_data_url(size_px: int = 224) -> str:
-    """Build a base64 data: URL for a synthetic image.
+def _make_image_data_url(size_px: int = NANO_IMAGE_SIZE) -> str:
+    """Build a base64 data: URL for a synthetic image sized for nano-gv.
 
-    Granite-vision's processor will resize internally; we use a moderately
-    large source to make the encode work non-trivial. The image content
-    doesn't matter — random-init weights produce garbage outputs anyway.
+    Nano-gv expects 112×112 images (config.vision_config.image_size).
+    Image content is meaningless — random weights make output garbage.
     """
     img = Image.new("RGB", (size_px, size_px), color=(120, 80, 200))
     buf = io.BytesIO()
@@ -148,7 +172,7 @@ async def _submit_and_cancel(
     "errored:<msg>" if the server returned an error.
     """
     payload = {
-        "model": GVISION_MODEL,
+        "model": "nano-gv",
         "messages": _build_chat_messages(f"What is in image #{idx}?"),
         "max_tokens": 64,
         "temperature": 0.0,
@@ -247,7 +271,7 @@ def test_fresh_request_completes_after_cancel_storm(server: RemoteOpenAIServer):
     t0 = time.time()
     try:
         response = client.chat.completions.create(
-            model=GVISION_MODEL,
+            model="nano-gv",
             messages=_build_chat_messages("Describe this image."),
             max_tokens=4,
             temperature=0.0,

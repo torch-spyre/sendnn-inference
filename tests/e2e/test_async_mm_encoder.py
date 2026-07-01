@@ -1,8 +1,9 @@
 """PR #1015 e2e test — async MM encoder wiring through SpyreMultiprocExecutor.
 
 Boots a real vLLM `LLM` with the async MM encoder enabled and the
-`granite-vision-3.2-2b` weights, then drives one MM request through the
-full stack:
+nano-gv model (a random-init ~16 MB granite-vision variant built by
+`tools/build_nano_gv.py`) then drives one MM request through the full
+stack:
 
     request → scheduler emits encode job → SpyreMultiprocExecutor submits
     to encoder subprocess → encoder writes embedding to SHM → workers read
@@ -14,22 +15,30 @@ workers, encoder). The unit tests for findings 1-3 stub at the executor
 boundary; the wiring (queue creation, READY handshake, scheduler /
 executor binding, collective_rpc store_mm_embeddings) only runs here.
 
-Runs on CPU in eager mode. No Spyre hardware needed.
+Runs on CPU in eager mode against the nano-gv fixture (see
+`REFERENCE_MODELS["joerunde/nano-gv"]` in tests/spyre_util.py), so
+warmup takes ~2 s instead of ~2 min. No Spyre hardware needed.
 """
 
 from __future__ import annotations
 
+import base64
+import io
+
 import pytest
+from PIL import Image
 
 # Ensure the llava_next mm mapping is imported. FMS serialization
 # utilities are patched at import time and the patching is not idempotent —
 # the existing tests/e2e/test_spyre_mm.py carries the same note.
 import sendnn_inference.multimodal.mm_mappings.llava_next  # noqa: F401
+from spyre_util import REFERENCE_MODELS
 
 pytestmark = [pytest.mark.multimodal, pytest.mark.cpu, pytest.mark.e2e]
 
-GVISION_MODEL = "ibm-granite/granite-vision-3.2-2b"
+NANO_GV_MODEL = REFERENCE_MODELS["joerunde/nano-gv"]
 MAX_TOKENS = 4  # keep CPU work small
+NANO_IMAGE_SIZE = 112  # matches the nano-gv vision_config.image_size
 
 
 # Env required for the async MM encoder path. See the `llm` fixture body for
@@ -60,12 +69,13 @@ def llm():
     """Real vLLM LLM with TP=2, eager backend, async MM encoder enabled.
 
     Module-scoped because:
-      1. Startup is the dominant cost (~2 min: load 4 GB on CPU + spawn 2
-         workers + spawn encoder + warmup).
+      1. Startup is the dominant cost (spawn 2 workers + spawn encoder +
+         warmup ~= 5 s with nano-gv, but each fresh LLM binds MASTER_PORT
+         via torch.distributed rendezvous).
       2. `MASTER_PORT=12345` is fixed in `_local_envs_for_test.sh`, so a
          function-scoped LLM hits `EADDRINUSE` when the second test tries
-         to spin up a fresh torch.distributed rendezvous before the OS
-         has released the port from the previous test.
+         to spin up a fresh rendezvous before the OS has released the
+         port from the previous test.
 
     Neither test in this module mutates encoder state in a way that would
     leak into the next.
@@ -80,45 +90,49 @@ def llm():
     os.environ["SENDNN_INFERENCE_DYNAMO_BACKEND"] = "eager"
     os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
     os.environ["SENDNN_INFERENCE_TP_MM_SHARING"] = "0"
+    # Use a distinct MASTER_PORT so back-to-back runs with
+    # test_mm_cancel_storm.py don't collide on port 12345 (torch.distributed
+    # holds it in TIME_WAIT for ~60s after teardown).
+    os.environ["MASTER_PORT"] = "12346"
 
     from vllm import LLM
 
     return LLM(
-        model=GVISION_MODEL,
+        model=NANO_GV_MODEL.name,
+        revision=NANO_GV_MODEL.revision,
         tensor_parallel_size=2,
         enforce_eager=True,
         max_num_seqs=2,
-        # Granite-vision's image-token expansion can produce ~1500 tokens
-        # for a typical image; 4k gives headroom for one image + chat
-        # template + a few hundred response tokens.
-        max_model_len=4096,
+        # nano-gv image_size is 112, which produces ~64 vision patches +
+        # chat template overhead — 1024 is more than enough.
+        max_model_len=1024,
         # Disable prefix caching so each request goes through the full
         # encode-then-prefill path even if we send the same image twice.
         enable_prefix_caching=False,
     )
 
 
-def _build_mm_prompt(llm) -> dict:
-    """Build a single MM prompt + tiny image suitable for granite vision.
+def _build_mm_prompt() -> list[dict]:
+    """OpenAI-style chat messages with a small synthetic image.
 
-    Reuses the existing `get_single_image_prompts` helper for the chat
-    template (it is granite-vision-specific). We only need one prompt for
-    these tests.
+    The image content is meaningless (nano-gv has random weights); we
+    just need something the processor can tokenize into an image-token
+    span so the async encoder path fires.
     """
-    from spyre_util import get_single_image_prompts
-    from transformers import AutoConfig, AutoProcessor
+    img = Image.new("RGB", (NANO_IMAGE_SIZE, NANO_IMAGE_SIZE), color=(120, 80, 200))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    url = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
 
-    processor = AutoProcessor.from_pretrained(GVISION_MODEL)
-    hf_config = AutoConfig.from_pretrained(GVISION_MODEL)
-    image_token = processor.decode(hf_config.image_token_index)
-
-    # tile_size matches the vision encoder's expected input.
-    [prompt] = get_single_image_prompts(
-        num_prompts=1,
-        image_token=image_token,
-        tile_size=hf_config.vision_config.image_size,
-    )
-    return prompt
+    return [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": url}},
+                {"type": "text", "text": "Describe this image."},
+            ],
+        }
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -135,9 +149,9 @@ def test_mm_request_completes_through_async_encoder(llm):
     SHM + `collective_rpc("store_mm_embeddings")`, and the workers
     consumed `pending_mm_embeddings` during prefill.
 
-    We deliberately don't assert on output text — granite-vision-3.2-2b
-    is stochastic enough on CPU eager that exact-match would be fragile
-    and bring no value over the boolean "did it complete".
+    We deliberately don't assert on output text — nano-gv has random
+    weights and its outputs are garbage; the boolean "did it complete"
+    is what matters for the wiring check.
     """
     from vllm import SamplingParams
 
@@ -146,7 +160,7 @@ def test_mm_request_completes_through_async_encoder(llm):
         temperature=0.0,
     )
 
-    [output] = llm.generate([_build_mm_prompt(llm)], sampling_params)
+    output = llm.chat(_build_mm_prompt(), sampling_params)[0]
 
     # Completion is the assertion. If the async encoder wiring is broken,
     # the request will hang on the scheduler's MM gate (request stays in
