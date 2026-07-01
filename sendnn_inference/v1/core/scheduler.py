@@ -785,6 +785,22 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
                 r for r in self.ongoing_prefills if r.request_id not in request_ids
             ]
             for rid in request_ids:
+                # If the encode job is queued but not yet started, send a cancel
+                # token so the encoder subprocess skips it rather than running a
+                # full (expensive) vision-tower forward for a dead request.
+                if rid in self._mm_encoding_submitted:
+                    from sendnn_inference.v1.executor.spyre_executor import SpyreMultiprocExecutor
+
+                    cq = SpyreMultiprocExecutor.get_mm_cancel_queue()
+                    if cq is not None:
+                        try:
+                            cq.put_nowait(rid)
+                        except Exception as exc:
+                            logger.debug(
+                                "scheduler: failed to send cancel for req '%s': %s",
+                                rid,
+                                exc,
+                            )
                 self._mm_encoding_submitted.discard(rid)
                 self._mm_encoding_ready.discard(rid)
 

@@ -16,6 +16,7 @@ import logging
 import math
 import os
 import platform
+import queue as queue_mod
 import time
 
 import torch
@@ -142,7 +143,7 @@ class VisionEncoderRunner:
 # ── Process entry point ───────────────────────────────────────────────────────
 
 
-def _configure_encoder_threads(vllm_config) -> None:
+def _configure_encoder_threads() -> None:
     """Give the encoder subprocess the full cpu_count thread budget.
 
     Workers each receive ``cpu_count / num_workers`` threads (set by
@@ -182,11 +183,12 @@ def _configure_encoder_threads(vllm_config) -> None:
         if cpu_count is None and (n := os.cpu_count()) is not None:
             cpu_count = float(n)
 
-    if platform.machine() == "ppc64le":
-        encoder_cpu_count = min(cpu_count, 36) if cpu_count is not None else None
+    if cpu_count is None:
+        encoder_cpu_count = None
+    elif platform.machine() == "ppc64le":
+        encoder_cpu_count = min(cpu_count, 36.0)
     else:
-        # Formula for cpu_count can be adjusted per architecture
-        encoder_cpu_count = math.ceil(cpu_count) if cpu_count is not None else None
+        encoder_cpu_count = math.ceil(cpu_count)
 
     if encoder_cpu_count is None:
         logger.warning(
@@ -226,6 +228,7 @@ def encoder_process_main(
     job_queue,
     result_queue,
     stop_event,
+    cancel_queue=None,
 ) -> None:
     """Entry point for the vision encoder subprocess.
 
@@ -238,8 +241,13 @@ def encoder_process_main(
     shutdown.  The job loop polls it via a timeout on ``job_queue.get`` so
     the process exits cleanly on both graceful and abrupt server termination.
 
+    ``cancel_queue`` carries req_id strings for aborted requests.  The encoder
+    drains it after dequeuing each job so cancelled jobs are skipped before the
+    expensive vision-tower forward pass begins.
+
     Job loop:
-      get(MMEncodeRequest) → execute_model → write SHM → put (req_id, shape, dtype)
+      get(MMEncodeRequest) → drain cancel_queue → skip if cancelled
+      → execute_model → write SHM → put (req_id, shape, dtype)
     Exits when stop_event is set or None sentinel is received.
     """
     logger.info("encoder_process: starting")
@@ -251,7 +259,7 @@ def encoder_process_main(
     #
     # This MUST happen before maybe_ensure_sendnn_configured() because the NNPA
     # backend captures thread-pool settings at import time.
-    _configure_encoder_threads(vllm_config)
+    _configure_encoder_threads()
 
     try:
         runner = VisionEncoderRunner(vllm_config)
@@ -269,6 +277,13 @@ def encoder_process_main(
         os.environ.get("DT_PARALLEL_THREADS", "unset"),
     )
 
+    # skip_ids: req_ids drained from cancel_queue that have not yet been dequeued
+    #   as a job — the encode will be skipped when the job arrives.
+    # processed_ids: tombstones for completed encodes — if a cancel arrives after
+    #   the encode is done, discard the tombstone instead of adding to skip_ids.
+    skip_ids: set[str] = set()
+    processed_ids: set[str] = set()
+
     while not stop_event.is_set():
         try:
             job = job_queue.get(timeout=1.0)
@@ -282,7 +297,33 @@ def encoder_process_main(
             logger.info("encoder_process: shutdown received")
             break
 
+        # Drain the cancel queue before processing this job so that any
+        # cancellations that arrived while we were waiting are captured.
+        if cancel_queue is not None:
+            while True:
+                try:
+                    rid = cancel_queue.get_nowait()
+                    if rid in processed_ids:
+                        processed_ids.discard(rid)
+                        logger.debug(
+                            "encoder_process: late cancel for req '%s' (already done)", rid
+                        )
+                    else:
+                        skip_ids.add(rid)
+                        logger.debug("encoder_process: pre-cancel for req '%s'", rid)
+                except queue_mod.Empty:
+                    break
+
         req_id = job.request_id
+
+        # Skip encode for cancelled requests; send abort result so the scheduler
+        # can clean up promptly instead of waiting for a timeout.
+        if req_id in skip_ids:
+            skip_ids.discard(req_id)
+            result_queue.put((req_id, None, None))
+            logger.debug("encoder_process: skipped encode for cancelled req '%s'", req_id)
+            continue
+
         t0 = time.time()
         try:
             embeds = runner.execute_model(job)
@@ -295,7 +336,10 @@ def encoder_process_main(
 
             t_elapsed = time.time() - t0
             result_queue.put((req_id, tuple(embeds.shape), embeds.dtype))
+            # Tombstone: a late cancel may still arrive on cancel_queue for this req_id.
+            processed_ids.add(req_id)
             logger.info("maybe_mm_embedding processing time: %.2fms", t_elapsed * 1000)
         except Exception as exc:
             logger.exception("encoder_process: failed to execute_model '%s': %s", req_id, exc)
             result_queue.put((req_id, None, None))
+            processed_ids.add(req_id)

@@ -11,18 +11,21 @@ Failure scenario this guards against:
   - Encoder still encodes every image serially, locking up CPU/NNPA for
     minutes while no legitimate MM request can be encoded.
 
-The fix design these tests prescribe:
-  - SpyreMultiprocExecutor owns a shared `cancelled` set (Manager().dict()
-    used as a set) and exposes `cancel_mm_encode(req_id)` to add to it.
-  - ChunkedPrefillSpyreScheduler.finish_requests calls
-    `cancel_mm_encode` on its bound executor for every aborted req_id.
-  - encoder_process_main receives the shared set as its 5th positional
-    argument and skips jobs whose req_id is in the set.
+The fix:
+  - A dedicated ``cancel_queue`` (separate from the job queue) carries
+    req_id strings for aborted requests.
+  - ``SpyreMultiprocExecutor`` creates the cancel queue and exposes it via
+    the ``get_mm_cancel_queue()`` classmethod.
+  - ``ChunkedPrefillSpyreScheduler.finish_requests`` puts the req_id on the
+    cancel queue for any request that was in ``_mm_encoding_submitted``.
+  - ``encoder_process_main`` accepts ``cancel_queue`` as its 5th positional
+    argument and drains it before processing each job, skipping cancelled ones.
 """
 
 from __future__ import annotations
 
 import multiprocessing
+import queue as queue_mod
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -33,26 +36,21 @@ pytestmark = [pytest.mark.multimodal, pytest.mark.cpu]
 
 
 # ---------------------------------------------------------------------------
-# Scheduler propagates cancellation to the executor
+# Scheduler propagates cancellation via the cancel queue
 # ---------------------------------------------------------------------------
 
 
-def test_scheduler_finish_requests_notifies_executor_of_cancellation():
-    """ChunkedPrefillSpyreScheduler.finish_requests must, in addition to its
-    local _mm_encoding_* cleanup, tell the bound executor to cancel any
-    in-flight encode jobs.
+def test_scheduler_finish_requests_puts_rid_on_cancel_queue():
+    """ChunkedPrefillSpyreScheduler.finish_requests must put the req_id on the
+    cancel queue for any request that is in _mm_encoding_submitted.
 
-    Today the scheduler only updates its own state — the encode job is
-    orphaned in the queue and still consumed by the encoder.
-
-    Note: the attribute name `_spyre_executor` here is conventional; if the
-    fix wires the executor to the scheduler under a different name, adjust
-    this test accordingly. The behaviour being tested is propagation, not
-    the attribute name.
+    The encoder drains the cancel queue before each job, so the cancelled
+    request is skipped without running the expensive vision-tower forward.
     """
     from vllm.v1.request import RequestStatus
 
     from sendnn_inference.v1.core.scheduler import ChunkedPrefillSpyreScheduler
+    from sendnn_inference.v1.executor.spyre_executor import SpyreMultiprocExecutor
 
     with patch.object(ChunkedPrefillSpyreScheduler, "__init__", lambda s, *a, **k: None):
         sched = ChunkedPrefillSpyreScheduler()
@@ -63,47 +61,45 @@ def test_scheduler_finish_requests_notifies_executor_of_cancellation():
     sched.reserved_blocks = {}
     sched.total_reserved_blocks = 0
 
-    executor = MagicMock()
-    sched._spyre_executor = executor
+    mock_cancel_q = MagicMock()
 
-    with patch("vllm.v1.core.sched.scheduler.Scheduler.finish_requests", return_value=[]):
+    with (
+        patch("vllm.v1.core.sched.scheduler.Scheduler.finish_requests", return_value=[]),
+        patch.object(SpyreMultiprocExecutor, "get_mm_cancel_queue", return_value=mock_cancel_q),
+    ):
         sched.finish_requests(["req-aborted"], RequestStatus.FINISHED_ABORTED)
 
-    assert executor.cancel_mm_encode.called, (
-        "scheduler.finish_requests did not tell the executor to cancel the "
-        "queued encode job for the aborted request; the encoder will still "
-        "process it (DoS via cancelled large images)."
-    )
-    executor.cancel_mm_encode.assert_called_with("req-aborted")
+    mock_cancel_q.put_nowait.assert_called_with("req-aborted")
 
 
 # ---------------------------------------------------------------------------
-# Encoder subprocess consults the shared cancellation set
+# Encoder subprocess drains the cancel queue and skips cancelled jobs
 # ---------------------------------------------------------------------------
 
 
-def test_encoder_consults_shared_cancellation_set():
-    """encoder_process_main must accept a shared cancellation set and skip
-    jobs whose req_id is in it. A plain dict stands in for a Manager().dict()
-    proxy — the encoder only needs `__contains__`.
+def test_encoder_drains_cancel_queue_and_skips_cancelled_job():
+    """encoder_process_main must accept a cancel_queue as its 5th positional
+    argument, drain it before each job, and skip jobs whose req_id is present.
 
-    Today encoder_process_main takes four positional args and ignores any
-    cancellation channel, so the call raises TypeError. After the fix, the
-    call succeeds and execute_model is never invoked on the cancelled job.
+    execute_model must NOT be called for a job whose req_id was on the
+    cancel queue before the job was dequeued.
     """
     from sendnn_inference.v1.worker.mm_encoder_process import encoder_process_main
 
     job_queue = multiprocessing.Queue()
     result_queue = multiprocessing.Queue()
+    cancel_queue = multiprocessing.Queue()
     stop_event = multiprocessing.Event()
-    cancelled = {"cancelled-req": True}  # simulated Manager().dict() proxy
+
+    # Put the cancel signal on the cancel queue BEFORE the job arrives,
+    # simulating the scheduler cancelling while the encoder is busy.
+    cancel_queue.put("cancelled-req")
 
     job = MMEncodeRequest(request_id="cancelled-req", prompt_token_ids=[1, 2, 3], mm_features=[])
     job_queue.put(job)
     job_queue.put(None)  # sentinel: terminate the loop
 
     mock_runner = MagicMock()
-    mock_runner.execute_model.return_value = MagicMock()
 
     with (
         patch(
@@ -113,19 +109,56 @@ def test_encoder_consults_shared_cancellation_set():
         patch("sendnn_inference.v1.worker.mm_encoder_process.write_embeddings"),
         patch("sendnn_inference.v1.worker.mm_encoder_process._configure_encoder_threads"),
     ):
-        try:
-            encoder_process_main(MagicMock(), job_queue, result_queue, stop_event, cancelled)
-        except TypeError as exc:
-            pytest.fail(
-                "encoder_process_main does not accept a cancellation set; "
-                "without it there is no way to inform the encoder that a "
-                f"queued job has been aborted. ({exc})"
-            )
+        encoder_process_main(MagicMock(), job_queue, result_queue, stop_event, cancel_queue)
 
     assert result_queue.get(timeout=2) == "READY"
-    assert not mock_runner.execute_model.called, (
-        "encoder ran execute_model on a request the parent has marked "
-        "cancelled. An attacker can use this to consume CPU/NNPA: submit "
-        "large-image requests, cancel them immediately, and the encoder "
-        "still encodes every one of them."
+    # Cancelled job must have sent an abort result (req_id, None, None)
+    abort_result = result_queue.get(timeout=2)
+    assert abort_result == ("cancelled-req", None, None), (
+        f"Expected abort result ('cancelled-req', None, None), got {abort_result}"
     )
+    assert not mock_runner.execute_model.called, (
+        "encoder ran execute_model on a cancelled request; "
+        "this allows DoS via large-image requests that are immediately cancelled."
+    )
+
+
+def test_encoder_processes_job_normally_without_cancel():
+    """Sanity check: when cancel_queue is empty the job is encoded normally."""
+    from sendnn_inference.v1.worker.mm_encoder_process import encoder_process_main
+
+    import torch
+
+    job_queue = multiprocessing.Queue()
+    result_queue = multiprocessing.Queue()
+    cancel_queue = multiprocessing.Queue()
+    stop_event = multiprocessing.Event()
+
+    job = MMEncodeRequest(request_id="live-req", prompt_token_ids=[1, 2, 3], mm_features=[])
+    job_queue.put(job)
+    job_queue.put(None)
+
+    fake_embeds = torch.zeros(1, 4, 8, dtype=torch.float16)
+    mock_runner = MagicMock()
+    mock_runner.execute_model.return_value = fake_embeds
+
+    mock_shm = MagicMock()
+
+    with (
+        patch(
+            "sendnn_inference.v1.worker.mm_encoder_process.VisionEncoderRunner",
+            return_value=mock_runner,
+        ),
+        patch(
+            "sendnn_inference.v1.worker.mm_encoder_process.write_embeddings",
+            return_value=mock_shm,
+        ),
+        patch("sendnn_inference.v1.worker.mm_encoder_process._configure_encoder_threads"),
+    ):
+        encoder_process_main(MagicMock(), job_queue, result_queue, stop_event, cancel_queue)
+
+    assert result_queue.get(timeout=2) == "READY"
+    req_id, shape, dtype = result_queue.get(timeout=2)
+    assert req_id == "live-req"
+    assert shape == (1, 4, 8)
+    mock_runner.execute_model.assert_called_once()

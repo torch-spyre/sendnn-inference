@@ -9,7 +9,7 @@ Covers:
 """
 
 import pytest
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from vllm.sampling_params import SamplingParams
 from vllm.v1.request import Request, RequestStatus
@@ -349,6 +349,55 @@ class TestFinishRequests:
         assert "req-1" not in scheduler._mm_encoding_submitted
         assert "req-2" not in scheduler._mm_encoding_submitted
         assert "req-2" not in scheduler._mm_encoding_ready
+
+    def test_finish_puts_submitted_req_on_cancel_queue(self, scheduler):
+        """finish_requests must put the req_id on the cancel queue for any
+        request that is in _mm_encoding_submitted so the encoder can skip it."""
+        from sendnn_inference.v1.executor.spyre_executor import SpyreMultiprocExecutor
+
+        scheduler._mm_encoding_submitted = {"req-cancel"}
+        scheduler._mm_encoding_ready = set()
+
+        mock_cq = MagicMock()
+        with (
+            patch("vllm.v1.core.sched.scheduler.Scheduler.finish_requests", return_value=[]),
+            patch.object(SpyreMultiprocExecutor, "get_mm_cancel_queue", return_value=mock_cq),
+        ):
+            scheduler.finish_requests(["req-cancel"], RequestStatus.FINISHED_ABORTED)
+
+        mock_cq.put_nowait.assert_called_with("req-cancel")
+        assert "req-cancel" not in scheduler._mm_encoding_submitted
+
+    def test_scheduler_finish_requests_notifies_executor_of_cancellation(self, scheduler):
+        """ChunkedPrefillSpyreScheduler.finish_requests must, in addition to its
+        local _mm_encoding_* cleanup, tell the bound executor to cancel any
+        in-flight encode jobs.
+
+        Without this, the encode job is orphaned in the queue and still consumed
+        by the encoder — wasting CPU/NNPA on a dead request (DoS vector for large
+        images: submit N, cancel N, encoder encodes all N serially).
+
+        The notification is sent via the cancel queue exposed by
+        SpyreMultiprocExecutor.get_mm_cancel_queue(); the encoder subprocess drains
+        it before each job and skips any req_id it finds there.
+        """
+        from sendnn_inference.v1.executor.spyre_executor import SpyreMultiprocExecutor
+
+        scheduler._mm_encoding_submitted = {"req-aborted"}
+        scheduler._mm_encoding_ready = set()
+
+        mock_cq = MagicMock()
+        with (
+            patch("vllm.v1.core.sched.scheduler.Scheduler.finish_requests", return_value=[]),
+            patch.object(SpyreMultiprocExecutor, "get_mm_cancel_queue", return_value=mock_cq),
+        ):
+            scheduler.finish_requests(["req-aborted"], RequestStatus.FINISHED_ABORTED)
+
+        assert mock_cq.put_nowait.called, (
+            "scheduler.finish_requests did not notify the encoder of the cancelled "
+            "request; the encoder will still process it (DoS via cancelled large images)."
+        )
+        mock_cq.put_nowait.assert_called_with("req-aborted")
 
     def test_finish_all_clears_everything(self, scheduler):
         """finish_requests(None, …) must clear all encoding sets."""

@@ -300,6 +300,88 @@ class TestEncoderProcessMain:
         assert shape is None
         assert dtype is None
 
+    def test_cancel_queue_skips_job_before_encode(self):
+        """When a req_id is on the cancel_queue before its job is dequeued,
+        execute_model must not be called and (req_id, None, None) is returned."""
+        from sendnn_inference.v1.worker.mm_encoder_process import encoder_process_main
+
+        jq = multiprocessing.Queue()
+        rq = multiprocessing.Queue()
+        cq = multiprocessing.Queue()
+        stop = multiprocessing.Event()
+
+        cq.put("req-cancel")  # cancel token arrives before the job
+        job = _make_mm_encode_request("req-cancel")
+        jq.put(job)
+        jq.put(None)
+
+        mock_runner = MagicMock()
+
+        with (
+            patch(
+                "sendnn_inference.v1.worker.mm_encoder_process.VisionEncoderRunner",
+                return_value=mock_runner,
+            ),
+            patch("sendnn_inference.v1.worker.mm_encoder_process.write_embeddings"),
+        ):
+            encoder_process_main(_make_vllm_config(), jq, rq, stop, cq)
+
+        assert rq.get(timeout=2) == "READY"
+        assert rq.get(timeout=2) == ("req-cancel", None, None)
+        assert not mock_runner.execute_model.called
+
+    def test_resubmitted_request_encodes_after_cancel_consumed(self):
+        """Scenario: req_id_1 cancelled, re-request with same req_id arrives.
+
+        Safe path: the cancel token is consumed when the original job is
+        skipped, so skip_ids is cleared before the re-request arrives.
+        The re-request must be encoded normally.
+
+          cancel_queue: [req_id_1]
+          job_queue:    [job(req_id_1), job(req_id_1-retry), None]
+          Expected:     first job skipped, retry encoded normally.
+
+        Note: in practice vLLM assigns a unique UUID per request so req_ids
+        are not reused; this tests the skip_ids cleanup invariant.
+        """
+        from sendnn_inference.v1.worker.mm_encoder_process import encoder_process_main
+
+        jq = multiprocessing.Queue()
+        rq = multiprocessing.Queue()
+        cq = multiprocessing.Queue()
+        stop = multiprocessing.Event()
+
+        jq.put(_make_mm_encode_request("req-1"))  # original job already queued
+        cq.put("req-1")  # user cancels after job was submitted
+        jq.put(_make_mm_encode_request("req-1"))  # re-request with same req_id
+        jq.put(None)
+
+        fake_embeds = torch.zeros(1, 4, 8, dtype=torch.float16)
+        mock_runner = MagicMock()
+        mock_runner.execute_model.return_value = fake_embeds
+        mock_shm = MagicMock()
+
+        with (
+            patch(
+                "sendnn_inference.v1.worker.mm_encoder_process.VisionEncoderRunner",
+                return_value=mock_runner,
+            ),
+            patch(
+                "sendnn_inference.v1.worker.mm_encoder_process.write_embeddings",
+                return_value=mock_shm,
+            ),
+        ):
+            encoder_process_main(_make_vllm_config(), jq, rq, stop, cq)
+
+        assert rq.get(timeout=2) == "READY"
+        # First job: cancelled → abort result
+        assert rq.get(timeout=2) == ("req-1", None, None)
+        # Re-request: skip_ids cleared → encoded normally
+        req_id, shape, dtype = rq.get(timeout=2)
+        assert req_id == "req-1"
+        assert shape is not None
+        mock_runner.execute_model.assert_called_once()
+
     def test_stop_event_terminates_loop(self):
         from sendnn_inference.v1.worker.mm_encoder_process import encoder_process_main
 
