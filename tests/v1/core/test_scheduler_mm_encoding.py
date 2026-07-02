@@ -65,6 +65,11 @@ def scheduler():
     sched.requests = {}  # vLLM base Scheduler attribute: req_id → Request
     sched._mm_encoding_submitted = set()
     sched._mm_encoding_ready = set()
+    sched.paused_decoding_requests = []
+    sched.request_last_decode_step = {}
+    sched.long_output_prio = False
+    sched.pause_events = 0
+    sched.resume_events = 0
     sched._get_required_blocks = lambda req, *a, **k: (0, 0)
     sched._get_free_blocks = lambda: 100
     sched.kv_cache_manager = Mock()
