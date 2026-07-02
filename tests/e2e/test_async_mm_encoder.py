@@ -86,6 +86,7 @@ def llm():
     # module-scoped too. We can't easily do that with monkeypatch, so set
     # env vars directly inside the fixture body instead.
     import os
+
     os.environ["SENDNN_INFERENCE_ASYNC_MM_ENCODER"] = "1"
     os.environ["SENDNN_INFERENCE_DYNAMO_BACKEND"] = "eager"
     os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"

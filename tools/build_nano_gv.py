@@ -126,6 +126,7 @@ def _make_nano_config(source_config):
     cfg["text_config"]["tie_word_embeddings"] = True
 
     from transformers import LlavaNextConfig
+
     return LlavaNextConfig(**cfg)
 
 
@@ -173,9 +174,11 @@ def build(source_model: str, out_dir: Path) -> None:
 
     # AutoProcessor.save_pretrained handles most of _TOKENIZER_FILES, but not
     # merges.txt / vocab.json for BPE tokenizers — copy manually if missing.
-    src_snapshot = Path(processor.tokenizer.vocab_file).parent if getattr(
-        processor.tokenizer, "vocab_file", None
-    ) else None
+    src_snapshot = (
+        Path(processor.tokenizer.vocab_file).parent
+        if getattr(processor.tokenizer, "vocab_file", None)
+        else None
+    )
     if src_snapshot is not None:
         for fname in ("merges.txt", "vocab.json"):
             src = src_snapshot / fname

@@ -77,14 +77,15 @@ def write_embeddings(tensor: torch.Tensor, req_id: str) -> SharedMemory:
     assert tensor.dtype in _DTYPE_TO_IDX, f"Unsupported dtype for SHM transfer: {tensor.dtype}"
 
     data_shm = SharedMemory(create=True, size=tensor.nbytes, name=_shm_name(req_id))
+    assert data_shm.buf is not None
     # POSIX shared memory rounds the segment up to a page boundary (16 KiB
     # on macOS ARM64, 4 KiB on Linux x86_64), so data_shm.buf is generally
     # larger than tensor.nbytes. Slice to the exact byte count before
     # reshaping, otherwise the trailing padding produces an off-by-page-size
     # reshape error.
-    torch.frombuffer(data_shm.buf[: tensor.nbytes], dtype=tensor.dtype).reshape(
-        tensor.shape
-    ).copy_(tensor)
+    torch.frombuffer(data_shm.buf[: tensor.nbytes], dtype=tensor.dtype).reshape(tensor.shape).copy_(
+        tensor
+    )
 
     logger.debug(
         "Wrote MM embeddings to SHM for req '%s': shape=%s dtype=%s bytes=%d",
@@ -109,6 +110,7 @@ def read_embeddings(
     Opens and closes the shared-memory handle internally.
     """
     data_shm = SharedMemory(name=_shm_name(req_id))
+    assert data_shm.buf is not None
     # Match the byte count slice from write_embeddings — the SHM buf is
     # page-padded, so passing the full buf would fail .reshape(shape).
     nbytes = math.prod(shape) * torch.empty((), dtype=dtype).element_size()

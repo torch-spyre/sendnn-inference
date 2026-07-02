@@ -110,17 +110,21 @@ def server():
     with RemoteOpenAIServer(
         NANO_GV_MODEL,
         vllm_serve_args=[
-            "--tensor-parallel-size", "2",
+            "--tensor-parallel-size",
+            "2",
             "--enforce-eager",
-            "--max-num-seqs", "4",
+            "--max-num-seqs",
+            "4",
             # nano-gv image_size is 112, which yields ~64 vision patches
             # + chat template overhead — 1024 is plenty.
-            "--max-model-len", "1024",
+            "--max-model-len",
+            "1024",
             "--no-enable-prefix-caching",
             # served-model-name is what clients pass in the OpenAI API's
             # `model` field. Use a short stable alias so tests don't need
             # to know the tmp-path where nano-gv was built.
-            "--served-model-name", "nano-gv",
+            "--served-model-name",
+            "nano-gv",
         ],
         env_dict=env_overrides,
         max_wait_seconds=600,
@@ -157,9 +161,7 @@ def _build_chat_messages(question: str = "Describe this image.") -> list[dict]:
     ]
 
 
-async def _submit_and_cancel(
-    base_url: str, api_key: str, idx: int, cancel_after: float
-) -> str:
+async def _submit_and_cancel(base_url: str, api_key: str, idx: int, cancel_after: float) -> str:
     """Submit one chat completion, then cancel it after `cancel_after` seconds.
 
     Uses `httpx.AsyncClient` directly so we can `aclose` the connection
@@ -222,9 +224,7 @@ def test_server_health_survives_cancel_storm(server: RemoteOpenAIServer):
     A non-200 health check post-storm is unambiguous evidence the engine
     deadlocked.
     """
-    asyncio.run(
-        _fire_cancel_storm(server.url_for("v1"), server.DUMMY_API_KEY, N_CANCELLED)
-    )
+    asyncio.run(_fire_cancel_storm(server.url_for("v1"), server.DUMMY_API_KEY, N_CANCELLED))
 
     # The health endpoint should answer immediately. Give it a tiny grace
     # period in case the in-flight cancellations are still draining.
@@ -263,9 +263,7 @@ def test_fresh_request_completes_after_cancel_storm(server: RemoteOpenAIServer):
 
     Either failure mode shows up as the OpenAI client timing out.
     """
-    asyncio.run(
-        _fire_cancel_storm(server.url_for("v1"), server.DUMMY_API_KEY, N_CANCELLED)
-    )
+    asyncio.run(_fire_cancel_storm(server.url_for("v1"), server.DUMMY_API_KEY, N_CANCELLED))
 
     client = server.get_client(timeout=POST_BURST_TIMEOUT)
     t0 = time.time()

@@ -254,12 +254,11 @@ class SpyreMultiprocExecutor(MultiprocExecutor):
             SpyreMultiprocExecutor._shared_mm_cancel_queue = self._mm_cancel_queue
 
         except Exception as exc:
-            logger.error(
+            logger.exception(
                 "SpyreMultiprocExecutor: failed to start encoder process (%s: %s) — "
                 "restarting the server is required to restore MM encoding.",
                 type(exc).__name__,
                 exc,
-                exc_info=True,
             )
             self._cleanup_encoder()
             raise
