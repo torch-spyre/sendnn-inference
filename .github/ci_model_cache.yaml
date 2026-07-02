@@ -2,7 +2,7 @@
 #
 # Adding/removing/changing an entry here changes the cache key and will trigger
 # a fresh download + cache save on the next push to main. Total uncompressed
-# size of all entries must stay under 8 GiB (GHA cache limit is 10 GiB).
+# size of all entries must stay under 10 GiB (GHA cache hard limit).
 
 models:
   - repo: ibm-ai-platform/micro-g3.3-8b-instruct-1b
@@ -13,3 +13,8 @@ models:
     revision: cf74d8acd4f198de950bf004b262e6accfed5d2c
   - repo: cross-encoder/stsb-roberta-large
     revision: 2b12c2c0088918e76151fd5937b7bba986ef1f98
+  # Random-init CI fixture (~10 MB) that stands in for granite-vision-3.2-2b
+  # in the async-MM-encoder e2e tests. See tests/e2e/conftest.py — the
+  # revision must match NANO_GV_REVISION there.
+  - repo: joerunde/nano-gv
+    revision: c9470d9e54b023dd9ab8a8a98057489fdb18ba03
