@@ -90,6 +90,12 @@ def llm():
     os.environ["SENDNN_INFERENCE_DYNAMO_BACKEND"] = "eager"
     os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
     os.environ["SENDNN_INFERENCE_TP_MM_SHARING"] = "0"
+    # Keep the EngineCore in-process so test_async_encoder_subprocess_is_running
+    # can reach llm.llm_engine.model_executor (set by V1 LLMEngine only when
+    # multiprocess_mode=False).  With VLLM_ENABLE_V1_MULTIPROCESSING=1 the
+    # engine_core is a SyncMPClient and the executor is not reachable from
+    # the test process.
+    os.environ["VLLM_ENABLE_V1_MULTIPROCESSING"] = "0"
     # Use a distinct MASTER_PORT so back-to-back runs with
     # test_mm_cancel_storm.py don't collide on port 12345 (torch.distributed
     # holds it in TIME_WAIT for ~60s after teardown).
@@ -189,7 +195,9 @@ def test_async_encoder_subprocess_is_running(llm):
     """
     from sendnn_inference.v1.executor.spyre_executor import SpyreMultiprocExecutor
 
-    executor = llm.llm_engine.engine_core.engine_core.model_executor  # type: ignore[attr-defined]
+    # model_executor is set as a direct shortcut by V1 LLMEngine.__init__
+    # when multiprocess_mode=False (VLLM_ENABLE_V1_MULTIPROCESSING=0).
+    executor = llm.llm_engine.model_executor  # type: ignore[attr-defined]
     assert isinstance(executor, SpyreMultiprocExecutor), (
         f"expected SpyreMultiprocExecutor, got {type(executor).__name__}; "
         "platform.py did not swap in the async-MM executor — check that "
