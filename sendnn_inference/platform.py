@@ -664,9 +664,7 @@ class SpyrePlatform(Platform):
         # to a total greater than cpu_count.
         if cls._config.model_config.is_multimodal_model:
             if platform.machine() == "ppc64le":
-                cpus_per_worker = (
-                    min(psutil.cpu_count(logical=True), 36) if cpu_count is not None else None
-                )
+                cpus_per_worker = min(os.cpu_count() or 1, 36) if cpu_count is not None else None
             else:
                 # Formula for cpus_per_worker can be adjusted per architecture
                 cpus_per_worker = math.ceil(cpu_count) if cpu_count is not None else None
