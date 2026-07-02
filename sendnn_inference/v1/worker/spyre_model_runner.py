@@ -167,6 +167,9 @@ class BaseSpyreModelRunner(ABC, Generic[InputBatchT, RequestStateT, ModelInputsT
         # Requests
         self.requests: dict[str, RequestStateT] = {}
 
+        # Track paused requests to ensure we only restore previously paused ones
+        self.paused_req_ids: set[str] = set()
+
     @abstractmethod
     def build_input_batch(self) -> InputBatchT:
         raise NotImplementedError
@@ -324,7 +327,9 @@ class SpyrePoolingModelRunner(
                 )
                 self._model = self._model.base_model
             else:
-                self._model = AutoModel.from_pretrained(self.model_config.model)
+                self._model = AutoModel.from_pretrained(
+                    self.model_config.model, dtype=torch.float16
+                )
         elif task == "classify":
             class_model = AutoModelForSequenceClassification.from_pretrained(
                 self.model_config.model
@@ -1234,6 +1239,9 @@ class ChunkedPrefillModelRunner(
         input_tokens = input_tokens.unsqueeze(0).clone()
         input_positions = input_positions.unsqueeze(0).clone()
 
+        # Set tkv to prompt length at each prefill step
+        self.tkv = prompt_len
+
         # NOTE(wallas): Looks like we need to use multiple of blocks for prefill
         # so, later we use model.n_pads_right to get right logits.
         # In my naive mind this would be the `request_tkv` below,
@@ -1496,15 +1504,9 @@ class ChunkedPrefillModelRunner(
         assert sampling_params is not None, "sampling_params are required for this model runner"
         assert prompt_token_ids is not None, "prompt token ids are required for this model runner"
 
-        is_new_batch = self.input_batch.num_reqs == 0
-        prompt_len = len(prompt_token_ids)
         mm_features = getattr(request, "mm_features", None)
 
         self.prefill_batch.clear_requests()
-
-        # set the new tkv to the prompt length if starting a new decode batch
-        if is_new_batch:
-            self.tkv = prompt_len
 
         block_ids_per_kv_cache_group = request.block_ids
         assert len(block_ids_per_kv_cache_group) == 1
@@ -1570,16 +1572,6 @@ class ChunkedPrefillModelRunner(
                 req_id,
             )
             request.cached_mm_embeddings = None
-
-        # Last prefill: we might need to update the tkv
-        req_n_blocks = math.ceil(prompt_len / self.block_size)
-        cur_n_blocks = math.ceil(self.tkv / self.block_size)
-        new_n_blocks = max(req_n_blocks, cur_n_blocks)
-        assert new_n_blocks > 0
-        base_n_tokens = (new_n_blocks - 1) * self.block_size
-        req_tkv_new_block = base_n_tokens + (prompt_len - 1) % self.block_size + 1
-        cur_tkv_new_block = base_n_tokens + (self.tkv - 1) % self.block_size + 1
-        self.tkv = max(req_tkv_new_block, cur_tkv_new_block)
 
         # Last prefill we need to setup the logitsprocessors to sampling
         prefill_index = self.input_batch.add_request(request)
@@ -1664,12 +1656,43 @@ class ChunkedPrefillModelRunner(
 
     def _update_batch(self, scheduler_output: SchedulerOutput):
         """Updates the states for the in progress batch
+        - Synchronizes input_batch with scheduler output (handles pause/resume)
         - Bumps the count of computed tokens for each request
         - Updates the KV cache metadata for each request
         - Safely removes finished requests from the batch
         - Refreshes metadata for logits processors
         """
         req_data = scheduler_output.scheduled_cached_reqs
+
+        # Synchronize input_batch with scheduler output: remove requests
+        # that are not in scheduler output. This handles pausing of decode
+        # requests where scheduler temporarily removes them from running queue
+        scheduled_req_ids = set(req_data.req_ids)
+        current_batch_req_ids = set(self.input_batch.req_id_to_index.keys())
+        need_metadata_refresh = True
+
+        # Find requests that are in input_batch but not in scheduler output (paused)
+        paused_req_ids = current_batch_req_ids - scheduled_req_ids
+        for req_id in sorted(paused_req_ids):
+            # Only pause if it's not a finished request (finished requests are handled separately)
+            if req_id not in (scheduler_output.finished_req_ids or []):
+                self.input_batch.pause_request(req_id)
+                self.paused_req_ids.add(req_id)
+                self.input_batch.refresh_metadata()
+                need_metadata_refresh = False
+
+        # Find requests that are in scheduler output but not in input_batch
+        # (restore from pausing)
+        restored_req_ids = scheduled_req_ids - current_batch_req_ids
+        for req_id in sorted(restored_req_ids):
+            # Only restore requests that were previously paused
+            if req_id in self.paused_req_ids and req_id in self.requests:
+                req_state = self.requests[req_id]
+                self.input_batch.resume_request(req_state)
+                self.paused_req_ids.discard(req_id)
+                self.input_batch.refresh_metadata()
+                need_metadata_refresh = False
+
         for i, req_id in enumerate(req_data.req_ids):
             req_state: SamplingRequestState = self.requests[req_id]
 
@@ -1690,11 +1713,15 @@ class ChunkedPrefillModelRunner(
                 # store_mm_embeddings() discards the late result when it arrives.
                 if self.pending_mm_embeddings.pop(req_id, None) is None:
                     self._finished_encode_req_ids.add(req_id)
+                self.requests.pop(req_id, None)
+                # Clean up paused tracking for finished requests
+                self.paused_req_ids.discard(req_id)
                 # TODO: Processing multiple removals at once can break alignment
                 # of logitprocs. Refactor so that we can batch removals to the
                 # `input_batch`
                 self.input_batch.refresh_metadata()
-        else:
+                need_metadata_refresh = False
+        if need_metadata_refresh:
             # Due to logits processor we need to refresh metadata at each step
             self.input_batch.refresh_metadata()
 

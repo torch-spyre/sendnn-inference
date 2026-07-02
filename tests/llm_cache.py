@@ -192,6 +192,7 @@ def _create_llm(
         "max_num_batched_tokens": max_num_batched_tokens,
         "logits_processors": [GoldenTokenInjector],
         "enable_prefix_caching": enable_prefix_caching,
+        "disable_log_stats": False,
     }
     if structured_outputs_config is not None:
         llm_kwargs["structured_outputs_config"] = structured_outputs_config
@@ -307,7 +308,7 @@ class EngineCache:
         executor_class = Executor.get_class(vllm_config)
 
         engine_core = EngineCore(
-            vllm_config=vllm_config, executor_class=executor_class, log_stats=False
+            vllm_config=vllm_config, executor_class=executor_class, log_stats=True
         )
 
         # Set scheduler configs for max_model_len and max_num_seqs to the

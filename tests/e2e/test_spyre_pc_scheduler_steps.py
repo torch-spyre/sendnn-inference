@@ -407,9 +407,7 @@ def test_prefix_hit_decoded_block_within_batch(
         {  # prefill chunk 2 seq 1
             # no prefix hit, always recompute last chunk
             "step": 68,
-            # seq 1 tkv (193) is in 4th block. Need to pad seq 0 tkv to 4th
-            # block as well: 192 + 64 = 256
-            "tkv": 256,
+            "tkv": 193,
             "waiting": [],
             "running": ["1", "0"],
             "request_outputs": ["1"],
@@ -1710,7 +1708,7 @@ def test_first_chunk_partial_match(
         request_id=1,
         add_step=0,
         max_tokens=2,
-        prompt=prompt2,
+        prompt=prompt2,  # prompt_len: 64 + (192 * 2) - 64 - 64 = 320
         use_golden_token_injection=True,
     )
 
@@ -1734,9 +1732,9 @@ def test_first_chunk_partial_match(
             "block_tables": {"0": [1]},
             "n_reserved_blocks": 1,
         },
-        {  # prefill seq 1. This step was crashing before
+        {  # prefill seq 1
             "step": 2,
-            "tkv": 64,
+            "tkv": 320,  # prompt len of request 1
             "waiting": [],
             "running": ["1", "0"],
             "request_outputs": [],
