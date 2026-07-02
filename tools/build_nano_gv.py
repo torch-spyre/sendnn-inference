@@ -235,7 +235,7 @@ image-size fields rescaled to 112) so `image_token_index` and the chat
 template stay valid.
 """
     )
-    print(f"[nano-gv] wrote README.md")
+    print("[nano-gv] wrote README.md")
 
 
 def _publish(local_dir: Path, repo_id: str, private: bool, message: str) -> None:

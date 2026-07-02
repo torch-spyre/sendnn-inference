@@ -4,7 +4,6 @@ import math
 from collections import deque
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Iterable, Union
-from dataclasses import dataclass
 from collections import defaultdict
 
 
