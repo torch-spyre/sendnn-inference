@@ -906,5 +906,3 @@ def _compute_config_format(namespace: argparse.Namespace) -> str:
     ):
         return "mistral"
     return "auto"
-
-
