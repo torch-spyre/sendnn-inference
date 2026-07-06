@@ -455,7 +455,7 @@ def test_prefill_exceeds_max_batch_tkv(
             "running": ["2"],
             "request_outputs": ["2"],
             "n_used_blocks": 2,
-            "block_tables": {"2": [3, 4]},
+            "block_tables": {"2": [1, 2]},
         },
         {
             # Decode sequence 2
@@ -465,7 +465,7 @@ def test_prefill_exceeds_max_batch_tkv(
             "running": ["2"],
             "request_outputs": ["2"],
             "n_used_blocks": 2,
-            "block_tables": {"2": [3, 4]},
+            "block_tables": {"2": [1, 2]},
         },
         {
             # Sequence 2 finishes

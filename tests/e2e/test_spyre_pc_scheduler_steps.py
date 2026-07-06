@@ -570,7 +570,7 @@ def test_prefix_hit_not_in_batch(
             "n_prefix_hits": 0,
             "n_cached_blocks": 1,
             "block_tables": {
-                "1": [1, 2, 5],
+                "1": [1, 2, 4],
             },
             "n_reserved_blocks": 1,
         },

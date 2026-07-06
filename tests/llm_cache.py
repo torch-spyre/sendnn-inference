@@ -12,6 +12,7 @@ from vllm import LLM, EngineArgs
 from vllm.v1.engine.core import EngineCore
 from vllm.v1.executor.abstract import Executor
 from vllm.forward_context import get_forward_context
+from vllm.v1.request import RequestStatus
 
 
 from sendnn_inference.compat_utils import has_argument
@@ -240,6 +241,19 @@ class EngineCache:
         )
 
         def _reset_scheduler(scheduler):
+            # Abort any requests left over from a previous failed test. Without
+            # this, a test that fails mid-run (e.g. a step assertion) leaves
+            # request IDs in scheduler.requests; the next parametrized run of
+            # the same test reuses the same cached engine and hits
+            # "duplicate request id" when it tries to add the same IDs again.
+            if scheduler.requests:
+                scheduler.finish_requests(None, RequestStatus.FINISHED_ABORTED)
+            # Also reset plugin-specific block accounting that finish_requests
+            # does not clear (it's normally handled in update_from_output).
+            if hasattr(scheduler, "total_reserved_blocks"):
+                scheduler.total_reserved_blocks = 0
+                scheduler.reserved_blocks.clear()
+                scheduler.request_last_decode_step.clear()
             if engine_available_blocks:
                 scheduler.kv_cache_config.num_blocks = engine_available_blocks
             kv_cache_manager_kwargs = {}
