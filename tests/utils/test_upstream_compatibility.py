@@ -43,3 +43,34 @@ def test_kv_cache_manager_scheduler_block_size_compat():
             "Backwards compatibility shim for scheduler_block_size in tests/llm_cache.py "
             "can be removed"
         )
+
+
+def test_tokenizer_registry_circular_import_compat():
+    """
+    In vLLM >= 0.24.0, vllm.utils.torch_utils imports is_pin_memory_available at module-level,
+    creating a circular import when platform.py tries to patch vllm.tokenizers.registry at
+    module-level during platform resolution. The shim in platform.py guards the module-level
+    call with a sys.modules check and defers to check_and_update_config instead.
+
+    When this test fails (lowest supported vllm no longer has the module-level
+    is_pin_memory_available import in torch_utils.py), the sys.modules guard in platform.py
+    can be removed and the unconditional module-level call restored.
+    """
+    import importlib
+    import sys
+
+    if VLLM_VERSION == "vLLM:lowest":
+        # On the lowest supported version, torch_utils should NOT import
+        # is_pin_memory_available at module-level (i.e. the guard is not needed yet)
+        if "vllm.utils.torch_utils" in sys.modules:
+            torch_utils = sys.modules["vllm.utils.torch_utils"]
+        else:
+            torch_utils = importlib.import_module("vllm.utils.torch_utils")
+        import inspect
+
+        source = inspect.getsource(torch_utils)
+        assert "from vllm.utils.platform_utils import is_pin_memory_available" not in source, (
+            "vLLM:lowest now imports is_pin_memory_available at module-level in torch_utils.py. "
+            "The sys.modules guard in the platform.py module-level patch can be removed and "
+            "SpyrePlatform._patch_tokenizer_registry_get_config() called unconditionally again."
+        )

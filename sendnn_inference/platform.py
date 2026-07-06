@@ -85,6 +85,7 @@ class SpyrePlatform(Platform):
     _torch_sendnn_configured: bool = False
 
     _max_batch_tkv_limit: int = 0
+    _tokenizer_registry_patched: bool = False
 
     # Backend for dynamic compilation ops
     # See vllm batched_count_greater_than method
@@ -219,6 +220,12 @@ class SpyrePlatform(Platform):
 
     @classmethod
     def check_and_update_config(cls, vllm_config: VllmConfig) -> None:
+        # 🌶🌶🌶 Apply deferred patches that cannot run at module-level due to
+        # circular imports introduced in vLLM 0.24.0 (torch_utils now imports
+        # is_pin_memory_available at module-level, triggering platform resolution
+        # before torch_utils finishes initializing).
+        cls._patch_tokenizer_registry_get_config()
+
         # 🌶🌶🌶 Patch in our perf logger before the engine is created
         from sendnn_inference.v1.metrics import patch_async_llm_stat_loggers
 
@@ -755,6 +762,9 @@ class SpyrePlatform(Platform):
         reference directly, not just the source module.
 
         """
+        if cls._tokenizer_registry_patched:
+            return
+
         import vllm.tokenizers.registry as tokenizer_registry
 
         original_get_config = tokenizer_registry.get_config
@@ -767,6 +777,7 @@ class SpyrePlatform(Platform):
 
         # Patch the imported reference in the registry module
         tokenizer_registry.get_config = safe_get_config  # type:ignore[invalid-assignment]
+        cls._tokenizer_registry_patched = True
 
         logger.debug("Patched get_config in vllm.tokenizers.registry to suppress KeyError")
 
@@ -901,5 +912,10 @@ def _compute_config_format(namespace: argparse.Namespace) -> str:
 # an unknown model_type is encountered in LazyConfigDict. The original code
 # only suppresses ValueError and OSError, but KeyError should also be
 # suppressed since it's expected for models not in the registry.
-# This must be done at import time to be applied to spawned worker processes.
-SpyrePlatform._patch_tokenizer_registry_get_config()
+#
+# In vLLM >= 0.24.0, torch_utils.py imports is_pin_memory_available() at
+# module-level, which triggers platform resolution before torch_utils finishes
+# initializing. Importing vllm.tokenizers.registry here would cause a circular
+# import, so the call is deferred to SpyrePlatform.check_and_update_config.
+# Workers use model execution paths, not the tokenizer registry, so they do
+# not need this patch applied at module-level.
