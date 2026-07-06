@@ -13,6 +13,7 @@ from vllm.v1.metrics.stats import SchedulerStats
 from vllm.v1.request import Request, RequestStatus
 
 import sendnn_inference.envs as envs_spyre
+from sendnn_inference.compat_utils import has_argument
 from sendnn_inference.platform import SpyrePlatform
 from sendnn_inference.v1.worker.spyre_model_runner import SpyreModelRunnerOutput
 
@@ -57,7 +58,7 @@ class PoolingSpyreScheduler(SpyreScheduler):
             self.scheduler_config
         )
 
-    def schedule(self) -> SchedulerOutput:
+    def schedule(self, throttle_prefills: bool = False) -> SchedulerOutput:
         """This override adds constraints and then delegates most of the work
         to the base scheduler"""
         # First purge the full waiting queue into our holdback queue, preserving
@@ -119,7 +120,12 @@ class PoolingSpyreScheduler(SpyreScheduler):
             logger.debug("Scheduling a running batch of %d requests", len(self.running))
 
         # delegate to super of SpyreScheduler: base V1 Scheduler
-        outputs = super(SpyreScheduler, self).schedule()
+        _schedule_kwargs = (
+            {"throttle_prefills": throttle_prefills}
+            if has_argument(Scheduler.schedule, "throttle_prefills")
+            else {}
+        )
+        outputs = super(SpyreScheduler, self).schedule(**_schedule_kwargs)
 
         # first move skipped and then unscheduled requests back
         # to the waiting queue, preserving priority
@@ -327,7 +333,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
     def _get_free_blocks(self) -> int:
         return self.kv_cache_manager.block_pool.get_num_free_blocks()
 
-    def schedule(self) -> "SchedulerOutput":
+    def schedule(self, throttle_prefills: bool = False) -> "SchedulerOutput":
         """
         The chunked prefill scheduling policy is enforced in this method, then
         delegates the final scheduling decision to the base scheduler
@@ -454,7 +460,12 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         )
 
         # delegate to super of SpyreScheduler: base V1 Scheduler
-        outputs = super(SpyreScheduler, self).schedule()
+        _schedule_kwargs = (
+            {"throttle_prefills": throttle_prefills}
+            if has_argument(Scheduler.schedule, "throttle_prefills")
+            else {}
+        )
+        outputs = super(SpyreScheduler, self).schedule(**_schedule_kwargs)
 
         # Track as ongoing prefills only the requests that were actually
         # scheduled (i.e., moved from waiting to running by the base

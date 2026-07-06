@@ -45,6 +45,28 @@ def test_kv_cache_manager_scheduler_block_size_compat():
         )
 
 
+def test_scheduler_schedule_throttle_prefills_compat():
+    """
+    In vLLM >= 0.24.0, Scheduler.schedule() gained a `throttle_prefills: bool`
+    parameter. SpyreScheduler.schedule() and ChunkedPrefillSpyreScheduler.schedule()
+    must accept and forward it.
+
+    When this test fails (lowest supported vllm already has throttle_prefills),
+    the default value in both overrides can be dropped and the signature
+    simplified to match upstream exactly.
+    """
+    from vllm.v1.core.sched.interface import SchedulerInterface
+
+    from sendnn_inference.compat_utils import has_argument
+
+    if VLLM_VERSION == "vLLM:lowest":
+        assert not has_argument(SchedulerInterface.schedule, "throttle_prefills"), (
+            "Backwards compatibility shim for throttle_prefills in "
+            "sendnn_inference/v1/core/scheduler.py can be removed — "
+            "lowest vLLM version already has the parameter."
+        )
+
+
 def test_tokenizer_registry_circular_import_compat():
     """
     In vLLM >= 0.24.0, vllm.utils.torch_utils imports is_pin_memory_available at module-level,
