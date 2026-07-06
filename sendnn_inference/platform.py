@@ -585,6 +585,59 @@ class SpyrePlatform(Platform):
         ConditionalDefaultManager.apply(parser)
 
     @classmethod
+    def get_cpu_count(cls) -> tuple[float | None, str]:
+        """Return (cpu_count, detection_message) for threading configuration.
+
+        Priority:
+          1. SENDNN_INFERENCE_NUM_CPUS override
+          2. cgroup v2 CPU quota (/sys/fs/cgroup/cpu.max)
+          3. psutil physical core count
+          4. os.cpu_count() fallback
+        """
+        if (num_cpu := envs_spyre.SENDNN_INFERENCE_NUM_CPUS) > 0:
+            return float(num_cpu), f"SENDNN_INFERENCE_NUM_CPUS is set to {num_cpu}"
+
+        cpu_count: float | None = None
+        detection_message = ""
+
+        try:
+            with open("/sys/fs/cgroup/cpu.max") as f:
+                quota_str, period_str = f.read().strip().split()
+            if quota_str != "max":
+                quota = int(quota_str)
+                period = int(period_str)
+                cpu_count = quota / period
+                detection_message = f"Detected cgroup CPU limit of {cpu_count}"
+        except FileNotFoundError:
+            # file may not exist if not running under cgroups v2
+            pass
+        except Exception as e:
+            logger.debug("Error parsing /sys/fs/cgroup/cpu.max to get CPU info", exc_info=e)
+
+        # try psutil to get physical core count
+        if cpu_count is None:
+            try:
+                import psutil
+
+                cpu_count = float(psutil.cpu_count(logical=False))
+                detection_message = (
+                    f"Detected {cpu_count} physical CPUs from psutil.cpu_count(logical=False)"
+                )
+            except ImportError:
+                logger.info("Install psutil to count physical CPU cores")
+            except Exception as e:
+                logger.debug("Error using psutil", exc_info=e)
+
+        # could try `nproc` here, but it is affected by OMP_NUM_THREADS itself
+
+        # fallback: os.cpu_count()
+        if cpu_count is None and (cpu_count_res := os.cpu_count()) is not None:
+            cpu_count = float(cpu_count_res)
+            detection_message = f"Detected {cpu_count} CPUs from `os.cpu_count()`"
+
+        return cpu_count, detection_message
+
+    @classmethod
     def _check_threading_config(cls, worker_count: int):
         """
         Check parallelism configuration to avoid CPU contention
@@ -612,64 +665,19 @@ class SpyrePlatform(Platform):
             " ".join([f"{env}={value}" for env, value in env_map.items()]),
         )
 
-        # Try to determine the CPU time/cores that we are allocated
-        cpu_count: float | None = None
-        detection_message = ""
-
-        if (num_cpu := envs_spyre.SENDNN_INFERENCE_NUM_CPUS) > 0:
-            cpu_count = num_cpu
-            detection_message = f"SENDNN_INFERENCE_NUM_CPUS is set to {cpu_count}"
-        else:
-            try:
-                # try to query cgroup CPU limits
-                with open("/sys/fs/cgroup/cpu.max") as f:
-                    quota_str, period_str = f.read().strip().split()
-
-                if quota_str != "max":
-                    quota = int(quota_str)
-                    period = int(period_str)
-                    cpu_count = quota / period
-                    detection_message = f"Detected cgroup CPU limit of {cpu_count}"
-
-            except FileNotFoundError:
-                # file may not exist if not running under cgroups v2
-                pass
-            except Exception as e:
-                logger.debug("Error parsing /sys/fs/cgroup/cpu.max to get CPU info", exc_info=e)
-
-            # try psutil to get physical core count
-            if cpu_count is None:
-                try:
-                    import psutil
-
-                    cpu_count = float(psutil.cpu_count(logical=False))
-                    detection_message = (
-                        f"Detected {cpu_count} physical CPUs from psutil.cpu_count(logical=False)"
-                    )
-                except ImportError:
-                    logger.info("Install psutil to count physical CPU cores")
-                    pass
-                except Exception as e:
-                    logger.debug("Error using psutil", exc_info=e)
-
-            # could try `nproc` here, but it is affected by
-            # OMP_NUM_THREADS itself
-
-            # try os.cpu_count() to get node CPU count
-            if cpu_count is None and (cpu_count_res := os.cpu_count()) is not None:
-                cpu_count = float(cpu_count_res)
-                detection_message = f"Detected {cpu_count} CPUs from `os.cpu_count()`"
+        is_multimodal = cls._config.model_config.is_multimodal_model
+        cpu_count, detection_message = cls.get_cpu_count()
 
         # NOTE: math.ceil can output a number for each worker that sums
         # to a total greater than cpu_count.
-        if cls._config.model_config.is_multimodal_model:
-            if platform.machine() == "ppc64le":
-                cpus_per_worker = (
-                    min(psutil.cpu_count(logical=True), 36) if cpu_count is not None else None
-                )
+        if is_multimodal:
+            if cpu_count is None:
+                cpus_per_worker = None
+            elif platform.machine() == "ppc64le":
+                # Cap at 36 on ppc64le to avoid over-subscription
+                cpus_per_worker = min(math.ceil(cpu_count), 36)
             else:
-                # Formula for cpus_per_worker can be adjusted per architecture
-                cpus_per_worker = math.ceil(cpu_count) if cpu_count is not None else None
+                cpus_per_worker = math.ceil(cpu_count)
         else:
             cpus_per_worker = math.ceil(cpu_count / worker_count) if cpu_count is not None else None
 
