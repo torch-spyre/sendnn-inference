@@ -45,6 +45,27 @@ def test_kv_cache_manager_scheduler_block_size_compat():
         )
 
 
+def test_sampling_params_validate_structured_outputs_model_config_compat():
+    """
+    In vLLM >= 0.24.0, SamplingParams._validate_structured_outputs() gained
+    `model_config` as its first positional argument. The call in
+    tests/v1/core/test_scheduler_structured_outputs.py passes it explicitly.
+
+    When this test fails (lowest vllm already has model_config), the
+    `model_config` argument in that call is already required and the shim
+    is no longer needed.
+    """
+    from vllm.sampling_params import SamplingParams
+
+    from sendnn_inference.compat_utils import has_argument
+
+    if VLLM_VERSION == "vLLM:lowest":
+        assert not has_argument(SamplingParams._validate_structured_outputs, "model_config"), (
+            "Backwards compatibility shim for model_config in "
+            "tests/v1/core/test_scheduler_structured_outputs.py can be removed."
+        )
+
+
 def test_scheduler_schedule_throttle_prefills_compat():
     """
     In vLLM >= 0.24.0, Scheduler.schedule() gained a `throttle_prefills: bool`

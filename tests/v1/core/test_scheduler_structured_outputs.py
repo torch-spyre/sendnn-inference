@@ -11,6 +11,7 @@ import pytest
 from unittest.mock import Mock, patch
 from vllm import SamplingParams
 from vllm.sampling_params import StructuredOutputsParams
+from sendnn_inference.compat_utils import has_argument
 from vllm.v1.core.sched.request_queue import FCFSRequestQueue
 from vllm.v1.request import Request, RequestStatus
 from vllm.v1.core.sched.output import CachedRequestData
@@ -428,9 +429,19 @@ def test_sparse_index_grammar_crash(
         request.request.structured_output_request = StructuredOutputRequest.from_sampling_params(
             sampling_params
         )
-        sampling_params._validate_structured_outputs(
-            pc_model_runner.vllm_config.structured_outputs_config, tokenizer
+        validate_kwargs = (
+            {
+                "model_config": pc_model_runner.vllm_config.model_config,
+                "structured_outputs_config": pc_model_runner.vllm_config.structured_outputs_config,
+                "tokenizer": tokenizer,
+            }
+            if has_argument(SamplingParams._validate_structured_outputs, "model_config")
+            else {
+                "structured_outputs_config": pc_model_runner.vllm_config.structured_outputs_config,
+                "tokenizer": tokenizer,
+            }
         )
+        sampling_params._validate_structured_outputs(**validate_kwargs)
         pc_model_runner.scheduler.structured_output_manager.grammar_init(request.request)
 
         assert (structured := request.request.structured_output_request) is not None
