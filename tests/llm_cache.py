@@ -251,8 +251,6 @@ class EngineCache:
             if hasattr(scheduler, "total_reserved_blocks"):
                 scheduler.total_reserved_blocks = 0
                 scheduler.reserved_blocks.clear()
-            if hasattr(scheduler, "request_last_decode_step"):
-                scheduler.request_last_decode_step.clear()
             if engine_available_blocks:
                 scheduler.kv_cache_config.num_blocks = engine_available_blocks
             scheduler.kv_cache_manager.__init__(
