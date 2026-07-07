@@ -158,30 +158,7 @@ def _configure_encoder_threads() -> None:
         workers: cpu_count / num_workers  (unchanged — set by platform.py)
         encoder: cpu_count
     """
-    # Derive cpu_count the same way configure_thread_settings does.
-    cpu_count: float | None = None
-
-    if (num_cpu := envs_spyre.SENDNN_INFERENCE_NUM_CPUS) > 0:
-        cpu_count = float(num_cpu)
-    else:
-        try:
-            with open("/sys/fs/cgroup/cpu.max") as f:
-                quota_str, period_str = f.read().strip().split()
-            if quota_str != "max":
-                cpu_count = int(quota_str) / int(period_str)
-        except Exception:
-            pass
-
-        if cpu_count is None:
-            try:
-                import psutil
-
-                cpu_count = float(psutil.cpu_count(logical=False))
-            except Exception:
-                pass
-
-        if cpu_count is None and (n := os.cpu_count()) is not None:
-            cpu_count = float(n)
+    cpu_count, _ = SpyrePlatform.get_cpu_count()
 
     if cpu_count is None:
         encoder_cpu_count = None
