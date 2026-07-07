@@ -871,16 +871,12 @@ class SpyrePlatform(Platform):
 
 
 def _compute_config_format(namespace: argparse.Namespace) -> str:
-    """Check if a model is in mistral format by looking for params.json.
+    """Check if a model is in mistral format.
 
-    This uses get_repo_files which correctly handles both local paths
-    and HuggingFace cache, including offline mode support.
-    
-    Note: Only root-level params.json indicates mistral format. Files in
-    subdirectories like original/params.json (found in some Llama models)
-    should be ignored.
+    Uses vLLM's is_mistral_model_repo which checks for consolidated*.safetensors
+    files that are characteristic of Mistral-format models.
     """
-    from vllm.transformers_utils.repo_utils import get_repo_files, get_model_path
+    from vllm.transformers_utils.repo_utils import is_mistral_model_repo
 
     # Check both 'model' and 'model_tag' since vLLM uses different
     # attribute names in different contexts
@@ -893,24 +889,13 @@ def _compute_config_format(namespace: argparse.Namespace) -> str:
     revision = getattr(namespace, "revision", None)
     token = getattr(namespace, "hf_token", None)
 
-    # Resolve local path in offline mode (if not already a local path)
-    if huggingface_hub.constants.HF_HUB_OFFLINE:
-        model = get_model_path(model, revision)
-
-    # Look for params.json which indicates a mistral-format model
-    # Only root-level params.json should trigger mistral format, not files in subdirectories
-    try:
-        files = get_repo_files(
-            model,
-            allow_patterns=["**/params.json"],
-            revision=revision,
-            token=token,
-        )
-        # Check if params.json exists at root level (not in subdirectories)
-        if "params.json" in files:
-            return "mistral"
-    except Exception as e:
-        logger.debug("Error checking for params.json: %s", e)
+    # Use vLLM's built-in function to detect Mistral-format models
+    if is_mistral_model_repo(
+        model_name_or_path=model,
+        revision=revision,
+        token=token,
+    ):
+        return "mistral"
     
     return "auto"
 
