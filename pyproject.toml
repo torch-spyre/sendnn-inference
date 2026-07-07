@@ -16,6 +16,8 @@ dependencies = [
     # NB: use strict < with the next patch version to not exclude versions with
     # build metadata suffixes
     "vllm>=0.24.0,<0.24.1",
+    # transformers 5.12.1 includes fixes required for our mistral and granite-4.1-8b models.
+    "transformers>=5.12.1",
 
     # Specific torch version overrides handled by uv
     "torch",
@@ -82,9 +84,6 @@ override-dependencies = [
     # TODO: Remove this override once vLLM's requirement range includes or moves past 1.7.3.
     # See: https://github.com/vllm-project/vllm/blob/v0.19.1/requirements/common.txt#L22
     "llguidance>=1.7.3",
-
-    # transformers 5.12.1 includes fixes required for our mistral and granite-4.1-8b models.
-    "transformers>=5.12.1"
 ]
 # This adds constraints to all dependent build environments, which will ensure everything is built
 # with the same version of torch. This CANNOT conflict with a package's existing build dependencies
