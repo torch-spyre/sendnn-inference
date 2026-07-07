@@ -900,7 +900,7 @@ def _compute_config_format(namespace: argparse.Namespace) -> str:
         token=token,
     ):
         return "mistral"
-    
+
     return "auto"
 
 
