@@ -184,7 +184,7 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # its embedding is available.  Only effective for decoder models with TP > 1.
     # Defaults to 0 (disabled) — uses the Phase 1 blocking encode path.
     "SENDNN_INFERENCE_ASYNC_MM_ENCODER": lambda: bool(
-        int(os.getenv("SENDNN_INFERENCE_ASYNC_MM_ENCODER", "0"))
+        int(os.getenv("SENDNN_INFERENCE_ASYNC_MM_ENCODER", "1"))
     ),
     # When "1" (default), rank 0 runs the vision encoder and shares the result
     # with other TP ranks via POSIX shared memory (one encoder call instead of

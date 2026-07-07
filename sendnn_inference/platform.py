@@ -266,12 +266,19 @@ class SpyrePlatform(Platform):
         # Pydantic's Literal validator silently dropping a string class path.
         if (
             is_decoder
+            and model_config.is_multimodal_model
             and parallel_config.world_size > 1
             and envs_spyre.SENDNN_INFERENCE_ASYNC_MM_ENCODER
         ):
             from sendnn_inference.v1.executor.spyre_executor import SpyreMultiprocExecutor
 
             parallel_config.distributed_executor_backend = SpyreMultiprocExecutor
+            logger.info(
+                "Using SpyreMultiprocExecutor with async MM encoder subprocess "
+                "(world_size=%d, model=%s)",
+                parallel_config.world_size,
+                model_config.model,
+            )
 
         cls._check_threading_config(parallel_config.world_size)
 
