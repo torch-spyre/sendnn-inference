@@ -64,53 +64,7 @@ jobs:
           # Lower bound support
           - vllm_version:
               name: "vLLM:lowest"
-              repo: "git+https://github.com/vllm-project/vllm --tag v0.19.1"
-            test_suite:
-              name: "backward compat"
-              markers: "compat or (cpu and basic and not quantized)"
-              flags: "--timeout=300"
-            os: "ubuntu-latest"
-            python_version: "3.12"
-          # Intermediate versions of vllm to check basic support for as well
-          - vllm_version:
-              name: "vLLM:0.20.0"
-              repo: "git+https://github.com/vllm-project/vllm --tag v0.20.0"
-            test_suite:
-              name: "backward compat"
-              markers: "compat or (cpu and basic and not quantized)"
-              flags: "--timeout=300"
-            os: "ubuntu-latest"
-            python_version: "3.12"
-          - vllm_version:
-              name: "vLLM:0.20.1"
-              repo: "git+https://github.com/vllm-project/vllm --tag v0.20.1"
-            test_suite:
-              name: "backward compat"
-              markers: "compat or (cpu and basic and not quantized)"
-              flags: "--timeout=300"
-            os: "ubuntu-latest"
-            python_version: "3.12"
-          - vllm_version:
-              name: "vLLM:0.20.2"
-              repo: "git+https://github.com/vllm-project/vllm --tag v0.20.2"
-            test_suite:
-              name: "backward compat"
-              markers: "compat or (cpu and basic and not quantized)"
-              flags: "--timeout=300"
-            os: "ubuntu-latest"
-            python_version: "3.12"
-          - vllm_version:
-              name: "vLLM:0.21.0"
-              repo: "git+https://github.com/vllm-project/vllm --tag v0.21.0"
-            test_suite:
-              name: "backward compat"
-              markers: "compat or (cpu and basic and not quantized)"
-              flags: "--timeout=300"
-            os: "ubuntu-latest"
-            python_version: "3.12"
-          - vllm_version:
-              name: "vLLM:0.22.0"
-              repo: "git+https://github.com/vllm-project/vllm --tag v0.22.0"
+              repo: "git+https://github.com/vllm-project/vllm --tag v0.24.0"
             test_suite:
               name: "backward compat"
               markers: "compat or (cpu and basic and not quantized)"
