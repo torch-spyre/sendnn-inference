@@ -429,7 +429,9 @@ def test_sparse_index_grammar_crash(
             sampling_params
         )
         sampling_params._validate_structured_outputs(
-            pc_model_runner.vllm_config.structured_outputs_config, tokenizer
+            model_config=pc_model_runner.vllm_config.model_config,
+            structured_outputs_config=pc_model_runner.vllm_config.structured_outputs_config,
+            tokenizer=tokenizer,
         )
         pc_model_runner.scheduler.structured_output_manager.grammar_init(request.request)
 
