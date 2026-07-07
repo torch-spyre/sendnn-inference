@@ -876,7 +876,7 @@ def _compute_config_format(namespace: argparse.Namespace) -> str:
     Uses vLLM's is_mistral_model_repo which checks for consolidated*.safetensors
     files that are characteristic of Mistral-format models.
     """
-    from vllm.transformers_utils.repo_utils import is_mistral_model_repo
+    from vllm.transformers_utils.repo_utils import is_mistral_model_repo, get_model_path
 
     # Check both 'model' and 'model_tag' since vLLM uses different
     # attribute names in different contexts
@@ -888,6 +888,10 @@ def _compute_config_format(namespace: argparse.Namespace) -> str:
     # Get optional HF arguments
     revision = getattr(namespace, "revision", None)
     token = getattr(namespace, "hf_token", None)
+
+    # Resolve local path in offline mode (if not already a local path)
+    if huggingface_hub.constants.HF_HUB_OFFLINE:
+        model = get_model_path(model, revision)
 
     # Use vLLM's built-in function to detect Mistral-format models
     if is_mistral_model_repo(
