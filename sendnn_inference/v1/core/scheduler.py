@@ -55,7 +55,7 @@ class PoolingSpyreScheduler(SpyreScheduler):
             self.scheduler_config
         )
 
-    def schedule(self) -> SchedulerOutput:
+    def schedule(self, throttle_prefills: bool = False) -> SchedulerOutput:
         """This override adds constraints and then delegates most of the work
         to the base scheduler"""
         # First purge the full waiting queue into our holdback queue, preserving
@@ -117,7 +117,7 @@ class PoolingSpyreScheduler(SpyreScheduler):
             logger.debug("Scheduling a running batch of %d requests", len(self.running))
 
         # delegate to super of SpyreScheduler: base V1 Scheduler
-        outputs = super(SpyreScheduler, self).schedule()
+        outputs = super(SpyreScheduler, self).schedule(throttle_prefills=throttle_prefills)
 
         # first move skipped and then unscheduled requests back
         # to the waiting queue, preserving priority
@@ -311,7 +311,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
     def _get_free_blocks(self) -> int:
         return self.kv_cache_manager.block_pool.get_num_free_blocks()
 
-    def schedule(self) -> "SchedulerOutput":
+    def schedule(self, throttle_prefills: bool = False) -> "SchedulerOutput":
         """
         The chunked prefill scheduling policy is enforced in this method, then
         delegates the final scheduling decision to the base scheduler
@@ -435,7 +435,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         )
 
         # delegate to super of SpyreScheduler: base V1 Scheduler
-        outputs = super(SpyreScheduler, self).schedule()
+        outputs = super(SpyreScheduler, self).schedule(throttle_prefills=throttle_prefills)
 
         # Track as ongoing prefills only the requests that were actually
         # scheduled (i.e., moved from waiting to running by the base

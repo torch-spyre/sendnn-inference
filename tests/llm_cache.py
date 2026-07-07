@@ -12,9 +12,9 @@ from vllm import LLM, EngineArgs
 from vllm.v1.engine.core import EngineCore
 from vllm.v1.executor.abstract import Executor
 from vllm.forward_context import get_forward_context
+from vllm.v1.request import RequestStatus
 
 
-from sendnn_inference.compat_utils import has_argument
 from sendnn_inference.v1.sample.golden_token_injector import GoldenTokenInjector
 
 T = TypeVar("T")
@@ -239,11 +239,22 @@ class EngineCache:
         )
 
         def _reset_scheduler(scheduler):
+            # Abort any requests left over from a previous failed test. Without
+            # this, a test that fails mid-run (e.g. a step assertion) leaves
+            # request IDs in scheduler.requests; the next parametrized run of
+            # the same test reuses the same cached engine and hits
+            # "duplicate request id" when it tries to add the same IDs again.
+            if scheduler.requests:
+                scheduler.finish_requests(None, RequestStatus.FINISHED_ABORTED)
+            # Also reset plugin-specific block accounting that finish_requests
+            # does not clear (it's normally handled in update_from_output).
+            if hasattr(scheduler, "total_reserved_blocks"):
+                scheduler.total_reserved_blocks = 0
+                scheduler.reserved_blocks.clear()
+            if hasattr(scheduler, "request_last_decode_step"):
+                scheduler.request_last_decode_step.clear()
             if engine_available_blocks:
                 scheduler.kv_cache_config.num_blocks = engine_available_blocks
-            kv_cache_manager_kwargs = {}
-            if has_argument(scheduler.kv_cache_manager.__init__, "scheduler_block_size"):
-                kv_cache_manager_kwargs["scheduler_block_size"] = scheduler.block_size
             scheduler.kv_cache_manager.__init__(
                 kv_cache_config=scheduler.kv_cache_config,
                 max_model_len=scheduler.max_model_len,
@@ -254,8 +265,8 @@ class EngineCache:
                 dcp_world_size=scheduler.dcp_world_size,
                 pcp_world_size=scheduler.pcp_world_size,
                 hash_block_size=scheduler.block_size,
+                scheduler_block_size=scheduler.block_size,
                 metrics_collector=scheduler.kv_metrics_collector,
-                **kv_cache_manager_kwargs,
             )
 
         maybe_engine = self._cache.maybe_get(runtime_config)
