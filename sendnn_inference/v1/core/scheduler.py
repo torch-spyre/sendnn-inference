@@ -13,7 +13,6 @@ from vllm.v1.metrics.stats import SchedulerStats
 from vllm.v1.request import Request, RequestStatus
 
 import sendnn_inference.envs as envs_spyre
-from sendnn_inference.compat_utils import has_argument
 from sendnn_inference.platform import SpyrePlatform
 from sendnn_inference.v1.worker.spyre_model_runner import SpyreModelRunnerOutput
 
@@ -120,12 +119,7 @@ class PoolingSpyreScheduler(SpyreScheduler):
             logger.debug("Scheduling a running batch of %d requests", len(self.running))
 
         # delegate to super of SpyreScheduler: base V1 Scheduler
-        _schedule_kwargs = (
-            {"throttle_prefills": throttle_prefills}
-            if has_argument(Scheduler.schedule, "throttle_prefills")
-            else {}
-        )
-        outputs = super(SpyreScheduler, self).schedule(**_schedule_kwargs)
+        outputs = super(SpyreScheduler, self).schedule(throttle_prefills=throttle_prefills)
 
         # first move skipped and then unscheduled requests back
         # to the waiting queue, preserving priority
@@ -460,12 +454,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         )
 
         # delegate to super of SpyreScheduler: base V1 Scheduler
-        _schedule_kwargs = (
-            {"throttle_prefills": throttle_prefills}
-            if has_argument(Scheduler.schedule, "throttle_prefills")
-            else {}
-        )
-        outputs = super(SpyreScheduler, self).schedule(**_schedule_kwargs)
+        outputs = super(SpyreScheduler, self).schedule(throttle_prefills=throttle_prefills)
 
         # Track as ongoing prefills only the requests that were actually
         # scheduled (i.e., moved from waiting to running by the base

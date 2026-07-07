@@ -219,19 +219,6 @@ class SpyrePlatform(Platform):
 
     @classmethod
     def check_and_update_config(cls, vllm_config: VllmConfig) -> None:
-        # 🌶️🌶️🌶️ Patch vllm.tokenizers.registry to suppress KeyError from get_config.
-        # The tokenizer registry calls get_config() which can raise KeyError when
-        # an unknown model_type is encountered in LazyConfigDict. The original code
-        # only suppresses ValueError and OSError, but KeyError should also be
-        # suppressed since it's expected for models not in the registry.
-        # This cannot be done at platform.py module-level in vLLM >= 0.24.0:
-        # torch_utils.py now imports is_pin_memory_available() at module-level,
-        # which triggers platform resolution before torch_utils finishes
-        # initializing, causing a circular import if we import
-        # vllm.tokenizers.registry here. check_and_update_config is called after
-        # all imports settle, so it is safe here.
-        cls._patch_tokenizer_registry_get_config()
-
         # 🌶🌶🌶 Patch in our perf logger before the engine is created
         from sendnn_inference.v1.metrics import patch_async_llm_stat_loggers
 
@@ -756,31 +743,6 @@ class SpyrePlatform(Platform):
                 max_new_tokens = max(max_new_tokens, shape["new_tokens"])
 
         return max_new_tokens
-
-    @classmethod
-    def _patch_tokenizer_registry_get_config(cls) -> None:
-        """Patch get_config to suppress KeyError when called from tokenizer registry.
-
-        The tokenizer registry imports get_config via:
-            from vllm.transformers_utils.config import get_config
-
-        This creates a local reference, so we must patch the registry module's
-        reference directly, not just the source module.
-        """
-        import vllm.tokenizers.registry as tokenizer_registry
-
-        original_get_config = tokenizer_registry.get_config
-
-        def safe_get_config(*args, **kwargs):
-            try:
-                return original_get_config(*args, **kwargs)
-            except KeyError:
-                return None
-
-        # Patch the imported reference in the registry module
-        tokenizer_registry.get_config = safe_get_config  # type:ignore[invalid-assignment]
-
-        logger.debug("Patched get_config in vllm.tokenizers.registry to suppress KeyError")
 
     @classmethod
     def is_backend_sendnn_enabled(cls) -> bool:
