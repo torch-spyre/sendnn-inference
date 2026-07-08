@@ -108,10 +108,13 @@ def _attach_pending_grammar(request, runner, ready_event):
     request.structured_output_request = StructuredOutputRequest.from_sampling_params(
         sampling_params
     )
-    # Set the backend on the structured outputs params as the engine input
-    # thread would have done via SamplingParams.verify().
-    sampling_params.structured_outputs._backend = (
-        runner.vllm_config.structured_outputs_config.backend
+    # Resolve the backend (which may be "auto") and set _backend on the
+    # structured outputs params, exactly as SamplingParams.verify() does in
+    # the engine input thread.
+    structured_output_manager = runner.scheduler.structured_output_manager
+    sampling_params._validate_structured_outputs(
+        runner.vllm_config.structured_outputs_config,
+        structured_output_manager.tokenizer,
     )
 
     runner.scheduler.structured_output_manager.grammar_init(request)
