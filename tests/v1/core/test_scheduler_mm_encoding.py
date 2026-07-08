@@ -187,7 +187,7 @@ class TestScheduleMixedQueue:
             patch.object(scheduler, "_satisfies_constraints", return_value=True),
             patch(
                 "vllm.v1.core.sched.scheduler.Scheduler.schedule",
-                side_effect=lambda: self._capture_prefill_candidates(scheduler),
+                side_effect=lambda **kwargs: self._capture_prefill_candidates(scheduler),
             ),
         ):
             scheduler.schedule()
@@ -216,7 +216,7 @@ class TestScheduleMixedQueue:
             patch.object(scheduler, "_satisfies_constraints", return_value=True),
             patch(
                 "vllm.v1.core.sched.scheduler.Scheduler.schedule",
-                side_effect=lambda: self._capture_prefill_candidates(scheduler),
+                side_effect=lambda **kwargs: self._capture_prefill_candidates(scheduler),
             ),
         ):
             scheduler.schedule()

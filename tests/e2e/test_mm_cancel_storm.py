@@ -161,13 +161,24 @@ def _build_chat_messages(question: str = "Describe this image.") -> list[dict]:
     ]
 
 
-async def _submit_and_cancel(base_url: str, api_key: str, idx: int, cancel_after: float) -> str:
+async def _submit_and_cancel(
+    base_url: str, api_key: str, idx: int, cancel_after: float, stream: bool = True
+) -> str:
     """Submit one chat completion, then cancel it after `cancel_after` seconds.
 
-    Uses `httpx.AsyncClient` directly so we can `aclose` the connection
-    cleanly mid-stream — this is what propagates the abort to vLLM's
-    request handler (vllm hooks the disconnect via the request_id cancel
-    channel).
+    When ``stream=True`` (default) the request uses SSE so that closing the
+    client connection mid-stream causes a write failure on the server side.
+    That write failure propagates an HTTP disconnect to vLLM's
+    ``listen_for_disconnect`` coroutine which then calls abort_request —
+    populating the cancel queue so the encoder subprocess can skip the
+    abandoned encode jobs.  This is the reliable cancel path.
+
+    When ``stream=False`` the request is a plain POST.  In vLLM ≥ v0.24.0
+    (non-streaming harmony refactor) the server's ``abort()`` runs as
+    background cleanup after the handler task is cancelled; cancel signals
+    reach the encoder on a best-effort basis.  The encoder may process some
+    or all jobs before the signals arrive, but nano-gv jobs are short enough
+    (~6 ms each) that the server drains within ``POST_BURST_TIMEOUT`` anyway.
 
     Returns a short status tag for logging: "cancelled" if we cancelled
     cleanly, "completed_early" if the response beat us to the punch,
@@ -178,35 +189,55 @@ async def _submit_and_cancel(base_url: str, api_key: str, idx: int, cancel_after
         "messages": _build_chat_messages(f"What is in image #{idx}?"),
         "max_tokens": 64,
         "temperature": 0.0,
+        "stream": stream,
     }
     headers = {"Authorization": f"Bearer {api_key}"}
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(120)) as client:
-        try:
-            # Wrap the request in a task we can cancel.
-            task = asyncio.create_task(
-                client.post(f"{base_url}/chat/completions", json=payload, headers=headers)
-            )
-            await asyncio.sleep(cancel_after)
-            if task.done():
-                # The request beat us — server is faster than we thought.
-                resp = task.result()
+    async def _do_request() -> str:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(120)) as client:
+            if stream:
+                async with client.stream(
+                    "POST", f"{base_url}/chat/completions", json=payload, headers=headers
+                ) as resp:
+                    if resp.status_code != 200:
+                        body = await resp.aread()
+                        return f"errored:{resp.status_code}:{body[:120]!r}"
+                    async for _ in resp.aiter_bytes():
+                        pass
+                return "completed_early"
+            else:
+                resp = await client.post(
+                    f"{base_url}/chat/completions", json=payload, headers=headers
+                )
                 return f"completed_early:{resp.status_code}"
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                return "cancelled"
-            except Exception as exc:
-                return f"errored:{type(exc).__name__}"
+
+    task = asyncio.create_task(_do_request())
+    await asyncio.sleep(cancel_after)
+    if task.done():
+        try:
+            return task.result()
         except Exception as exc:
-            return f"errored:{type(exc).__name__}:{exc}"
+            return f"errored:{type(exc).__name__}"
+    # Cancel the task.  For stream=True this triggers aclose() on the httpx
+    # stream context manager, sending a TCP FIN/RST that uvicorn converts into
+    # an http.disconnect ASGI event.  For stream=False, httpx abandons the
+    # connection; abort() runs async in the server as background cleanup.
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        return "cancelled"
+    except Exception as exc:
+        return f"errored:{type(exc).__name__}"
 
 
-async def _fire_cancel_storm(base_url: str, api_key: str, n: int) -> list[str]:
+async def _fire_cancel_storm(base_url: str, api_key: str, n: int, stream: bool = True) -> list[str]:
     """Fire N requests concurrently and cancel each after CANCEL_AFTER_SECONDS."""
     statuses = await asyncio.gather(
-        *(_submit_and_cancel(base_url, api_key, i, CANCEL_AFTER_SECONDS) for i in range(n))
+        *(
+            _submit_and_cancel(base_url, api_key, i, CANCEL_AFTER_SECONDS, stream=stream)
+            for i in range(n)
+        )
     )
     return list(statuses)
 
@@ -216,15 +247,24 @@ async def _fire_cancel_storm(base_url: str, api_key: str, n: int) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def test_server_health_survives_cancel_storm(server: RemoteOpenAIServer):
+@pytest.mark.parametrize("stream", [True, False], ids=["streaming", "non_streaming"])
+def test_server_health_survives_cancel_storm(server: RemoteOpenAIServer, stream: bool):
     """Hammer the server with MM requests, cancel them, then hit /health.
 
     Even if the encoder is wedged on abandoned jobs, the HTTP server
     thread should remain responsive — this is the cheapest tripwire.
     A non-200 health check post-storm is unambiguous evidence the engine
     deadlocked.
+
+    Parametrized over streaming and non-streaming cancels: both paths must
+    leave the server healthy.  The encoder cancel-skip mechanism is exercised
+    more reliably by streaming (where TCP FIN triggers an immediate disconnect
+    event), but non-streaming aborts (best-effort in vLLM ≥ v0.24.0) must
+    not deadlock the engine either.
     """
-    asyncio.run(_fire_cancel_storm(server.url_for("v1"), server.DUMMY_API_KEY, N_CANCELLED))
+    asyncio.run(
+        _fire_cancel_storm(server.url_for("v1"), server.DUMMY_API_KEY, N_CANCELLED, stream=stream)
+    )
 
     # The health endpoint should answer immediately. Give it a tiny grace
     # period in case the in-flight cancellations are still draining.
@@ -252,7 +292,8 @@ def test_server_health_survives_cancel_storm(server: RemoteOpenAIServer):
 # ---------------------------------------------------------------------------
 
 
-def test_fresh_request_completes_after_cancel_storm(server: RemoteOpenAIServer):
+@pytest.mark.parametrize("stream", [True, False], ids=["streaming", "non_streaming"])
+def test_fresh_request_completes_after_cancel_storm(server: RemoteOpenAIServer, stream: bool):
     """The real bar: after the burst, can a legitimate MM request still
     get through within a reasonable time?
 
@@ -262,8 +303,24 @@ def test_fresh_request_completes_after_cancel_storm(server: RemoteOpenAIServer):
     leaves _mm_encoding_submitted and the request hangs forever.
 
     Either failure mode shows up as the OpenAI client timing out.
+
+    Parametrized over streaming vs non-streaming cancels:
+
+    - ``stream=True``: TCP FIN on cancel triggers an immediate disconnect
+      event; abort() fires before the encoder processes most jobs.  The
+      encoder-skip path is exercised reliably — the fresh request should
+      return well under POST_BURST_TIMEOUT (soft threshold: 0.7×).
+
+    - ``stream=False``: In vLLM ≥ v0.24.0, abort() runs as background
+      cleanup after task cancellation; cancel signals reach the encoder on
+      a best-effort basis.  The encoder may process some or all of the 100
+      abandoned jobs, but nano-gv jobs are short (~6 ms each) so the server
+      drains within POST_BURST_TIMEOUT regardless.  Only the hard ceiling
+      is asserted here.
     """
-    asyncio.run(_fire_cancel_storm(server.url_for("v1"), server.DUMMY_API_KEY, N_CANCELLED))
+    asyncio.run(
+        _fire_cancel_storm(server.url_for("v1"), server.DUMMY_API_KEY, N_CANCELLED, stream=stream)
+    )
 
     client = server.get_client(timeout=POST_BURST_TIMEOUT)
     t0 = time.time()
@@ -278,7 +335,8 @@ def test_fresh_request_completes_after_cancel_storm(server: RemoteOpenAIServer):
         elapsed = time.time() - t0
         pytest.fail(
             f"fresh MM request timed out after {elapsed:.1f}s following a "
-            f"{N_CANCELLED}-request cancellation storm. Most likely cause: "
+            f"{N_CANCELLED}-request {'streaming' if stream else 'non-streaming'} "
+            "cancellation storm. Most likely cause: "
             "encoder subprocess is still encoding cancelled requests "
             "(finding 1), or scheduler has a stranded request from a "
             "swallowed put_nowait failure (finding 3)."
@@ -288,12 +346,12 @@ def test_fresh_request_completes_after_cancel_storm(server: RemoteOpenAIServer):
     assert response.choices, f"empty response after {elapsed:.1f}s"
     assert response.choices[0].message.content is not None, "no content in response"
 
-    # Soft assertion: if the encoder is sluggish but not hung, log it.
-    # The hard ceiling is POST_BURST_TIMEOUT (enforced by the OpenAI
-    # client timeout); we want a heads-up before we get there.
-    if elapsed > POST_BURST_TIMEOUT * 0.7:
+    if stream and elapsed > POST_BURST_TIMEOUT * 0.7:
+        # With streaming cancels the encoder-skip path is reliable: TCP FIN
+        # triggers an immediate abort, so the encoder should skip most of the
+        # 100 abandoned jobs.  A slow result here means the skip path is broken.
         pytest.fail(
-            f"fresh MM request took {elapsed:.1f}s after cancellation storm — "
+            f"fresh MM request took {elapsed:.1f}s after streaming cancellation storm — "
             f"under the {POST_BURST_TIMEOUT}s ceiling but in the danger zone. "
             "Encoder is probably still draining abandoned jobs (finding 1)."
         )
