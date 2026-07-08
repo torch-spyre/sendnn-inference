@@ -434,23 +434,14 @@ def test_sparse_index_grammar_crash(
         while not structured.is_grammar_ready:
             pass
 
-    def _run(sched_output):
-        """Execute one step, passing the real grammar output from the scheduler."""
-        output = pc_model_runner.execute_model(sched_output)
-        if output is None:
-            grammar_output = getattr(sched_output, "_spyre_grammar_output", None)
-            output = pc_model_runner.sample_tokens(grammar_output=grammar_output)
-        pc_model_runner.scheduler.update_from_output(sched_output, output)
-        return output
-
     # Run prefill of request 1
-    _run(pc_model_runner._schedule_new_request(request1.request))
+    pc_model_runner.execute_new_request(request1.request)
     # Run first decode of request 1
-    _run(pc_model_runner._schedule_running_requests())
+    pc_model_runner.execute_running_requests()
 
     # Run prefill of request 2
-    _run(pc_model_runner._schedule_new_request(request2.request))
+    pc_model_runner.execute_new_request(request2.request)
 
     for i in range(4):
         # Run decode of requests 1 and 2
-        _run(pc_model_runner._schedule_running_requests())
+        pc_model_runner.execute_running_requests()
