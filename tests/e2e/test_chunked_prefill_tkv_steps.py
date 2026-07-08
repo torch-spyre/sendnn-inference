@@ -92,6 +92,11 @@ def get_cpu_model_runner(
             )
             runner.execute_model(abort_sched)
 
+    # The engine is cached and reused across tests. A previous test that failed
+    # mid-step may have left _pending_sampling_state set (execute_model deferred
+    # but sample_tokens was never called). Reset it so the next test starts clean.
+    runner._pending_sampling_state = None
+
     return runner
 
 

@@ -36,12 +36,15 @@ def execute_and_sample(
     must be built asynchronously.  For incomplete prefill chunks no sampling is
     needed and execute_model returns a real (empty) output directly.  This
     helper handles both cases, including structured-output requests, by
-    obtaining the real grammar bitmask from the scheduler — mirroring what the
-    production engine does in EngineCore.step().
+    obtaining the real grammar bitmask from the scheduler (when available) —
+    mirroring what the production engine does in EngineCore.step().
     """
     output = runner.execute_model(scheduler_output)
     if output is None:
-        grammar_output = runner.scheduler.get_grammar_bitmask(scheduler_output)
+        scheduler = getattr(runner, "scheduler", None)
+        grammar_output = (
+            scheduler.get_grammar_bitmask(scheduler_output) if scheduler is not None else None
+        )
         output = runner.sample_tokens(grammar_output=grammar_output)
     return output
 

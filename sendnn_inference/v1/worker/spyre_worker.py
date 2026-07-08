@@ -414,7 +414,6 @@ class SpyreWorker(WorkerBase):
     def _warmup_spyre_dynamic_size(self, special_token_ids) -> float:
         warmup_start_t = time.time()
 
-        # satisfy mypy
         model_runner: ChunkedPrefillModelRunner = cast(ChunkedPrefillModelRunner, self.model_runner)
 
         vocab_size = model_runner.vocab_size
@@ -568,7 +567,6 @@ class SpyreWorker(WorkerBase):
         self.execute_model(scheduler_output)
         if isinstance(self.model_runner, ChunkedPrefillModelRunner):
             self.model_runner._pending_sampling_state = None
-            # satisfy mypy
             self.model_runner.tkv = 0
 
     def _warmup_spyre_fixed_size(self, prompt_len, special_token_ids, batch_size):

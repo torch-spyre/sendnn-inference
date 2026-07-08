@@ -441,12 +441,12 @@ def test_sparse_index_grammar_crash(
             pass
 
     # Run prefill of request 1
-    pc_model_runner.execute_new_request(request1.request)
+    pc_model_runner.execute_new_request(request=request1.request)
     # Run first decode of request 1
     pc_model_runner.execute_running_requests()
 
     # Run prefill of request 2
-    pc_model_runner.execute_new_request(request2.request)
+    pc_model_runner.execute_new_request(request=request2.request)
 
     for i in range(4):
         # Run decode of requests 1 and 2

@@ -36,7 +36,6 @@ from concurrent.futures import Future
 
 import pytest
 from vllm.sampling_params import StructuredOutputsParams
-from vllm.tokenizers import get_tokenizer
 from vllm.v1.outputs import ModelRunnerOutput
 from vllm.v1.request import RequestStatus
 from vllm.v1.structured_output.request import StructuredOutputRequest
@@ -92,7 +91,7 @@ def _event_gated_grammar_future(ready: threading.Event) -> Future:
     return fut
 
 
-def _attach_pending_grammar(request, runner, tokenizer, ready_event):
+def _attach_pending_grammar(request, runner, ready_event):
     """Equip a Request with a structured-output request whose grammar Future
     won't resolve until ``ready_event`` is set.
 
@@ -109,8 +108,10 @@ def _attach_pending_grammar(request, runner, tokenizer, ready_event):
     request.structured_output_request = StructuredOutputRequest.from_sampling_params(
         sampling_params
     )
-    sampling_params._validate_structured_outputs(
-        runner.vllm_config.structured_outputs_config, tokenizer
+    # Set the backend on the structured outputs params as the engine input
+    # thread would have done via SamplingParams.verify().
+    sampling_params.structured_outputs._backend = (
+        runner.vllm_config.structured_outputs_config.backend
     )
 
     runner.scheduler.structured_output_manager.grammar_init(request)
@@ -151,7 +152,6 @@ def test_grammar_pending_request_does_not_stall_running_decodes(
     )
 
     model = REFERENCE_MODELS[InstrumentedModelRunner.DEFAULT_TEST_MODEL]
-    tokenizer = get_tokenizer(tokenizer_name=model.name, revision=model.revision)
 
     unstructured_max_tokens = 8
     unstructured = [
@@ -177,7 +177,7 @@ def test_grammar_pending_request_does_not_stall_running_decodes(
         use_golden_token_injection=False,
         generate_hf_results=False,
     )
-    _attach_pending_grammar(structured.request, runner, tokenizer, grammar_ready)
+    _attach_pending_grammar(structured.request, runner, grammar_ready)
 
     output_tokens: dict[str, list[int]] = defaultdict(list)
     unstructured_ids = {req.request.request_id for req in unstructured}
@@ -207,9 +207,7 @@ def test_grammar_pending_request_does_not_stall_running_decodes(
         out = runner.execute_running_requests()
 
         alive_unstructured = {
-            rid
-            for rid in unstructured_ids
-            if 0 < len(output_tokens[rid]) < unstructured_max_tokens
+            rid for rid in unstructured_ids if 0 < len(output_tokens[rid]) < unstructured_max_tokens
         }
 
         if not out.req_ids:
@@ -257,6 +255,5 @@ def test_grammar_pending_request_does_not_stall_running_decodes(
             break
 
     assert output_tokens[structured_id], (
-        "structured request still didn't produce any tokens after the grammar "
-        "event was set"
+        "structured request still didn't produce any tokens after the grammar event was set"
     )

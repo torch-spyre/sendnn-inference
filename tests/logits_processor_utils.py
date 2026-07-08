@@ -10,6 +10,7 @@ from vllm.v1.sample.logits_processor import BatchUpdate, LogitsProcessor, MoveDi
 from sendnn_inference.v1.sample.spyre_logits_processor import (
     LogitProcessorWrapper,
 )
+from v1.worker.mock_model import execute_and_sample
 
 
 class DummyLogitsProcessor(LogitsProcessor):
@@ -341,8 +342,8 @@ def execute_step(
         free_encoder_mm_hashes=[],
     )
 
-    # Execute the step
-    output = runner.execute_model(sched_out)
+    # Execute the step (handles deferred sampling when output is None)
+    output = execute_and_sample(runner, sched_out)
 
     # Collect generated tokens into actual_outputs if provided
     if actual_outputs is not None and output.sampled_token_ids:
