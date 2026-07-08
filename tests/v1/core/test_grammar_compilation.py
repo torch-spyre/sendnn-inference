@@ -108,14 +108,9 @@ def _attach_pending_grammar(request, runner, ready_event):
     request.structured_output_request = StructuredOutputRequest.from_sampling_params(
         sampling_params
     )
-    # Resolve the backend (which may be "auto") and set _backend on the
-    # structured outputs params, exactly as SamplingParams.verify() does in
-    # the engine input thread.
-    structured_output_manager = runner.scheduler.structured_output_manager
-    sampling_params._validate_structured_outputs(
-        runner.vllm_config.structured_outputs_config,
-        structured_output_manager.tokenizer,
-    )
+    # grammar_init() reads _backend to pick the backend class and will raise if
+    # it sees "auto".  For a simple regex xgrammar is always the right choice.
+    sampling_params.structured_outputs._backend = "xgrammar"
 
     runner.scheduler.structured_output_manager.grammar_init(request)
     # Replace the real (eventually-completing) Future with our event-gated
