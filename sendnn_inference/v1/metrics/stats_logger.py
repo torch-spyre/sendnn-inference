@@ -4,19 +4,24 @@ import time
 from datetime import datetime
 from functools import wraps
 from pathlib import Path
+from prometheus_client import REGISTRY, Counter, Gauge
+from typing import cast
 
 from vllm.config import VllmConfig
 from vllm.logger import init_logger
 from vllm.v1.engine import async_llm, llm_engine
-from vllm.v1.metrics.loggers import StatLoggerBase, StatLoggerManager
+from vllm.v1.metrics.loggers import StatLoggerBase, AggregateStatLoggerBase
+from vllm.v1.metrics.loggers import StatLoggerManager
 from vllm.v1.metrics.stats import (
     FinishedRequestStats,
     IterationStats,
     MultiModalCacheStats,
     SchedulerStats,
 )
+from vllm.v1.metrics.utils import create_metric_per_engine
 
 from sendnn_inference import envs as envs_spyre
+from sendnn_inference.v1.core.scheduler import ChunkedPrefillSpyreSchedulerStats
 
 logger = init_logger(__name__)
 
@@ -186,9 +191,101 @@ class FileStatLogger(StatLoggerBase):
         return estimated_prefill_interrupt
 
 
+def unregister_spyre_metrics():
+    registry = REGISTRY
+    # Unregister any existing vLLM collectors
+    for collector in list(registry._collector_to_names):
+        if hasattr(collector, "_name") and "sendnn" in cast(str, collector._name):
+            registry.unregister(collector)
+
+
+class SpyrePrometheusStatLogger(AggregateStatLoggerBase):
+    def __init__(self, vllm_config: VllmConfig, engine_indexes: list[int] | None = None):
+        if engine_indexes is None:
+            engine_indexes = [0]
+        self.engine_indexes = engine_indexes
+
+        unregister_spyre_metrics()
+        self.vllm_config = vllm_config
+
+        labelnames = ["model_name", "engine"]
+        model_name = vllm_config.model_config.served_model_name
+
+        self.per_engine_labelvalues: dict[int, list[object]] = {
+            idx: [model_name, str(idx)] for idx in engine_indexes
+        }
+        per_engine_labelvalues = self.per_engine_labelvalues
+
+        # This is not the same as vllm:num_requests_running because we
+        # alternate between prefill and decode batches.
+        gauge_scheduler_decode_batch = Gauge(
+            name="sendnn:decode_batch",
+            documentation="Number of requests in decode batch.",
+            multiprocess_mode="mostrecent",
+            labelnames=labelnames,
+        )
+        self.gauge_scheduler_decode_batch = create_metric_per_engine(
+            gauge_scheduler_decode_batch, per_engine_labelvalues
+        )
+
+        gauge_scheduler_paused = Gauge(
+            name="sendnn:paused",
+            documentation="Number of paused requests.",
+            multiprocess_mode="mostrecent",
+            labelnames=labelnames,
+        )
+        self.gauge_scheduler_paused = create_metric_per_engine(
+            gauge_scheduler_paused, per_engine_labelvalues
+        )
+
+        counter_pause_events = Counter(
+            name="sendnn:pause_events",
+            documentation="Count of times a request was paused",
+            labelnames=labelnames,
+        )
+        self.counter_pause_events = create_metric_per_engine(
+            counter_pause_events, per_engine_labelvalues
+        )
+
+        counter_resume_events = Counter(
+            name="sendnn:resume_events",
+            documentation="Count of times a request was resumed",
+            labelnames=labelnames,
+        )
+        self.counter_resume_events = create_metric_per_engine(
+            counter_resume_events, per_engine_labelvalues
+        )
+
+    def record(
+        self,
+        scheduler_stats: SchedulerStats | None,
+        iteration_stats: IterationStats | None,
+        mm_cache_stats: MultiModalCacheStats | None = None,
+        engine_idx: int = 0,
+    ):
+        """Log to prometheus."""
+        if scheduler_stats is not None and scheduler_stats.kv_connector_stats:
+            sendnn_stats = scheduler_stats.kv_connector_stats.pop("sendnn-stats")
+            if sendnn_stats is not None:
+                if isinstance(sendnn_stats, dict):
+                    sendnn_stats = ChunkedPrefillSpyreSchedulerStats(**sendnn_stats)
+                self.gauge_scheduler_decode_batch[engine_idx].set(sendnn_stats.decode_batch_size)
+                self.gauge_scheduler_paused[engine_idx].set(sendnn_stats.num_paused_reqs)
+                self.counter_pause_events[engine_idx].inc(sendnn_stats.pause_events)
+                self.counter_resume_events[engine_idx].inc(sendnn_stats.resume_events)
+
+    def log_engine_initialized(self):
+        pass
+
+
 def file_stat_logger_factory(config: VllmConfig, engine_index=0) -> FileStatLogger:
     """Factory method accepted by vllm engine initializers"""
     return FileStatLogger(config, engine_index)
+
+
+def prom_stat_logger_factory(config: VllmConfig, engine_index=0) -> SpyrePrometheusStatLogger:
+    """Factory method accepted by vllm engine initializers"""
+    return SpyrePrometheusStatLogger(config, [engine_index])
 
 
 def patch_async_llm_stat_loggers():
@@ -203,6 +300,9 @@ def patch_async_llm_stat_loggers():
     🌶️🌶️🌶️
     """
     logger.debug("Setting up perf logger injection")
+    if getattr(async_llm.StatLoggerManager, "__patched", False):
+        return
+    setattr(async_llm.StatLoggerManager, "__patched", True)
     original_init = StatLoggerManager.__init__
 
     @wraps(original_init)
@@ -211,7 +311,7 @@ def patch_async_llm_stat_loggers():
         if "custom_stat_loggers" not in kwargs or kwargs["custom_stat_loggers"] is None:
             kwargs["custom_stat_loggers"] = []
 
-        kwargs["custom_stat_loggers"].append(file_stat_logger_factory)
+        kwargs["custom_stat_loggers"].extend([file_stat_logger_factory, prom_stat_logger_factory])
 
         original_init(self, *args, **kwargs)
 

@@ -59,6 +59,7 @@ THREADING_ENVS = [
 
 DEFAULT_MAX_MODEL_LEN = 32 * 1024
 DEFAULT_MAX_NUM_SEQS = 32
+DEFAULT_TKV_LIMIT = 131072  # 128k
 
 
 # Needed by vllm/model_executor/layers/pooler.py:562
@@ -218,7 +219,7 @@ class SpyrePlatform(Platform):
 
     @classmethod
     def check_and_update_config(cls, vllm_config: VllmConfig) -> None:
-        # 🌶️🌶️🌶️ Patch in our perf logger before the engine is created
+        # 🌶🌶🌶 Patch in our perf logger before the engine is created
         from sendnn_inference.v1.metrics import patch_async_llm_stat_loggers
 
         patch_async_llm_stat_loggers()
@@ -337,12 +338,15 @@ class SpyrePlatform(Platform):
                     DEFAULT_MAX_NUM_SEQS,
                     DEFAULT_MAX_MODEL_LEN,
                 )
-                vllm_config.scheduler_config.max_num_seqs = min(
-                    vllm_config.scheduler_config.max_num_seqs, DEFAULT_MAX_NUM_SEQS
-                )
-                vllm_config.model_config.max_model_len = min(
-                    vllm_config.model_config.max_model_len, DEFAULT_MAX_MODEL_LEN
-                )
+                if is_decoder:
+                    vllm_config.scheduler_config.max_num_seqs = min(
+                        vllm_config.scheduler_config.max_num_seqs, DEFAULT_MAX_NUM_SEQS
+                    )
+                    vllm_config.model_config.max_model_len = min(
+                        vllm_config.model_config.max_model_len, DEFAULT_MAX_MODEL_LEN
+                    )
+                    tkv_env = int(os.getenv("VLLM_DT_MAX_BATCH_TKV_LIMIT", f"{DEFAULT_TKV_LIMIT}"))
+                    os.environ["VLLM_DT_MAX_BATCH_TKV_LIMIT"] = str(min(DEFAULT_TKV_LIMIT, tkv_env))
 
         else:
             logger.debug(
@@ -581,6 +585,59 @@ class SpyrePlatform(Platform):
         ConditionalDefaultManager.apply(parser)
 
     @classmethod
+    def get_cpu_count(cls) -> tuple[float | None, str]:
+        """Return (cpu_count, detection_message) for threading configuration.
+
+        Priority:
+          1. SENDNN_INFERENCE_NUM_CPUS override
+          2. cgroup v2 CPU quota (/sys/fs/cgroup/cpu.max)
+          3. psutil physical core count
+          4. os.cpu_count() fallback
+        """
+        if (num_cpu := envs_spyre.SENDNN_INFERENCE_NUM_CPUS) > 0:
+            return float(num_cpu), f"SENDNN_INFERENCE_NUM_CPUS is set to {num_cpu}"
+
+        cpu_count: float | None = None
+        detection_message = ""
+
+        try:
+            with open("/sys/fs/cgroup/cpu.max") as f:
+                quota_str, period_str = f.read().strip().split()
+            if quota_str != "max":
+                quota = int(quota_str)
+                period = int(period_str)
+                cpu_count = quota / period
+                detection_message = f"Detected cgroup CPU limit of {cpu_count}"
+        except FileNotFoundError:
+            # file may not exist if not running under cgroups v2
+            pass
+        except Exception as e:
+            logger.debug("Error parsing /sys/fs/cgroup/cpu.max to get CPU info", exc_info=e)
+
+        # try psutil to get physical core count
+        if cpu_count is None:
+            try:
+                import psutil
+
+                cpu_count = float(psutil.cpu_count(logical=False))
+                detection_message = (
+                    f"Detected {cpu_count} physical CPUs from psutil.cpu_count(logical=False)"
+                )
+            except ImportError:
+                logger.info("Install psutil to count physical CPU cores")
+            except Exception as e:
+                logger.debug("Error using psutil", exc_info=e)
+
+        # could try `nproc` here, but it is affected by OMP_NUM_THREADS itself
+
+        # fallback: os.cpu_count()
+        if cpu_count is None and (cpu_count_res := os.cpu_count()) is not None:
+            cpu_count = float(cpu_count_res)
+            detection_message = f"Detected {cpu_count} CPUs from `os.cpu_count()`"
+
+        return cpu_count, detection_message
+
+    @classmethod
     def _check_threading_config(cls, worker_count: int):
         """
         Check parallelism configuration to avoid CPU contention
@@ -608,64 +665,19 @@ class SpyrePlatform(Platform):
             " ".join([f"{env}={value}" for env, value in env_map.items()]),
         )
 
-        # Try to determine the CPU time/cores that we are allocated
-        cpu_count: float | None = None
-        detection_message = ""
-
-        if (num_cpu := envs_spyre.SENDNN_INFERENCE_NUM_CPUS) > 0:
-            cpu_count = num_cpu
-            detection_message = f"SENDNN_INFERENCE_NUM_CPUS is set to {cpu_count}"
-        else:
-            try:
-                # try to query cgroup CPU limits
-                with open("/sys/fs/cgroup/cpu.max") as f:
-                    quota_str, period_str = f.read().strip().split()
-
-                if quota_str != "max":
-                    quota = int(quota_str)
-                    period = int(period_str)
-                    cpu_count = quota / period
-                    detection_message = f"Detected cgroup CPU limit of {cpu_count}"
-
-            except FileNotFoundError:
-                # file may not exist if not running under cgroups v2
-                pass
-            except Exception as e:
-                logger.debug("Error parsing /sys/fs/cgroup/cpu.max to get CPU info", exc_info=e)
-
-            # try psutil to get physical core count
-            if cpu_count is None:
-                try:
-                    import psutil
-
-                    cpu_count = float(psutil.cpu_count(logical=False))
-                    detection_message = (
-                        f"Detected {cpu_count} physical CPUs from psutil.cpu_count(logical=False)"
-                    )
-                except ImportError:
-                    logger.info("Install psutil to count physical CPU cores")
-                    pass
-                except Exception as e:
-                    logger.debug("Error using psutil", exc_info=e)
-
-            # could try `nproc` here, but it is affected by
-            # OMP_NUM_THREADS itself
-
-            # try os.cpu_count() to get node CPU count
-            if cpu_count is None and (cpu_count_res := os.cpu_count()) is not None:
-                cpu_count = float(cpu_count_res)
-                detection_message = f"Detected {cpu_count} CPUs from `os.cpu_count()`"
+        is_multimodal = cls._config.model_config.is_multimodal_model
+        cpu_count, detection_message = cls.get_cpu_count()
 
         # NOTE: math.ceil can output a number for each worker that sums
         # to a total greater than cpu_count.
-        if cls._config.model_config.is_multimodal_model:
-            if platform.machine() == "ppc64le":
-                cpus_per_worker = (
-                    min(psutil.cpu_count(logical=True), 36) if cpu_count is not None else None
-                )
+        if is_multimodal:
+            if cpu_count is None:
+                cpus_per_worker = None
+            elif platform.machine() == "ppc64le":
+                # Cap at 36 on ppc64le to avoid over-subscription
+                cpus_per_worker = min(math.ceil(cpu_count), 36)
             else:
-                # Formula for cpus_per_worker can be adjusted per architecture
-                cpus_per_worker = math.ceil(cpu_count) if cpu_count is not None else None
+                cpus_per_worker = math.ceil(cpu_count)
         else:
             cpus_per_worker = math.ceil(cpu_count / worker_count) if cpu_count is not None else None
 
@@ -739,32 +751,6 @@ class SpyrePlatform(Platform):
                 max_new_tokens = max(max_new_tokens, shape["new_tokens"])
 
         return max_new_tokens
-
-    @classmethod
-    def _patch_tokenizer_registry_get_config(cls) -> None:
-        """Patch get_config to suppress KeyError when called from tokenizer registry.
-
-        The tokenizer registry imports get_config via:
-            from vllm.transformers_utils.config import get_config
-
-        This creates a local reference, so we must patch the registry module's
-        reference directly, not just the source module.
-
-        """
-        import vllm.tokenizers.registry as tokenizer_registry
-
-        original_get_config = tokenizer_registry.get_config
-
-        def safe_get_config(*args, **kwargs):
-            try:
-                return original_get_config(*args, **kwargs)
-            except KeyError:
-                return None
-
-        # Patch the imported reference in the registry module
-        tokenizer_registry.get_config = safe_get_config  # type:ignore[invalid-assignment]
-
-        logger.debug("Patched get_config in vllm.tokenizers.registry to suppress KeyError")
 
     @classmethod
     def is_backend_sendnn_enabled(cls) -> bool:
@@ -890,12 +876,3 @@ def _compute_config_format(namespace: argparse.Namespace) -> str:
     ):
         return "mistral"
     return "auto"
-
-
-# 🌶️🌶️🌶️ Patch vllm.tokenizers.registry to suppress KeyError from get_config
-# The tokenizer registry calls get_config() which can raise KeyError when
-# an unknown model_type is encountered in LazyConfigDict. The original code
-# only suppresses ValueError and OSError, but KeyError should also be
-# suppressed since it's expected for models not in the registry.
-# This must be done at import time to be applied to spawned worker processes.
-SpyrePlatform._patch_tokenizer_registry_get_config()

@@ -26,12 +26,11 @@ from vllm.v1.core.kv_cache_utils import (
     get_request_block_hasher,
     init_none_hash,
 )
-
+from vllm.v1.metrics.loggers import StatLoggerManager
 
 from sendnn_inference.v1.core.scheduler import (
     ChunkedPrefillSpyreScheduler,
 )
-
 
 DISABLE_ASSERTS = False  # used for debugging
 
@@ -328,6 +327,14 @@ def validate_scheduler_steps(
         backend=backend,
         monkeypatch=monkeypatch,
     )
+    # the custom stat logger are already set through monkeypatching
+    # the StatLoggerManager.__init__ method
+    logger_manager = StatLoggerManager(
+        vllm_config=engine_core.vllm_config,
+        enable_default_loggers=True,
+        aggregate_engine_logging=False,
+    )
+    logger_manager.log_engine_initialized()
     scheduler: ChunkedPrefillSpyreScheduler = engine_core.scheduler
 
     tokenizer = get_tokenizer(model.name, revision=model.revision)
@@ -472,6 +479,13 @@ def validate_scheduler_steps(
         step_output = engine_core.step()
         engine_core_output = step_output[0].get(0)
         request_outputs = engine_core_output.outputs if engine_core_output is not None else []
+
+        if engine_core_output is not None:
+            logger_manager.record(
+                scheduler_stats=engine_core_output.scheduler_stats,
+                iteration_stats=None,
+                mm_cache_stats=None,
+            )
 
         for output in request_outputs:
             new_token_ids = output.new_token_ids

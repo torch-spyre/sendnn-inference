@@ -15,8 +15,10 @@ dependencies = [
     "ibm-fms>=1.11.1,<2",
     # NB: use strict < with the next patch version to not exclude versions with
     # build metadata suffixes
-    "vllm>=0.19.1,<0.23.1",
-    
+    "vllm>=0.24.0,<0.24.1",
+    # transformers 5.12.1 includes fixes required for our mistral and granite-4.1-8b models.
+    "transformers>=5.12.1",
+
     # Specific torch version overrides handled by uv
     "torch",
     "torchvision",
@@ -81,7 +83,7 @@ override-dependencies = [
     # This conflicts with vLLM's version range (llguidance >= 1.3.0, < 1.4.0).
     # TODO: Remove this override once vLLM's requirement range includes or moves past 1.7.3.
     # See: https://github.com/vllm-project/vllm/blob/v0.19.1/requirements/common.txt#L22
-    "llguidance>=1.7.3"
+    "llguidance>=1.7.3",
 ]
 # This adds constraints to all dependent build environments, which will ensure everything is built
 # with the same version of torch. This CANNOT conflict with a package's existing build dependencies
@@ -90,7 +92,7 @@ build-constraint-dependencies = []
 extra-build-variables = { vllm = { VLLM_TARGET_DEVICE = "empty" } }
 
 [tool.uv.sources]
-vllm = { git = "https://github.com/vllm-project/vllm", rev = "v0.23.0" }
+vllm = { git = "https://github.com/vllm-project/vllm", rev = "v0.24.0" }
 torch = [
   { index = "pytorch-cpu" },
 ]
@@ -100,7 +102,7 @@ torchvision = [
 
 # The pytorch-cpu index here ensures we always pull the cpu version of torch everywhere
 # The `explicit=true` setting means this index will only be used for packages that we explicitly set
-# it for in `tool.uv.sources`. This is important to avoid requiring the use of 
+# it for in `tool.uv.sources`. This is important to avoid requiring the use of
 # `--index-strategy unsafe-best-match`
 [[tool.uv.index]]
 name = "pytorch-cpu"

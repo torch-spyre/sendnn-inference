@@ -27,6 +27,8 @@ if TYPE_CHECKING:
     SENDNN_INFERENCE_CPU_MM_DTYPE: torch.dtype = torch.float16
     SENDNN_INFERENCE_MM_DEVICE: str = "auto"
     SENDNN_INFERENCE_TP_MM_SHARING: bool = True
+    SENDNN_INFERENCE_LONG_OUT_PRIO: bool = False
+    SENDNN_INFERENCE_PAUSING_ENABLED: bool = True
 
 logger = init_logger(__name__)
 
@@ -180,6 +182,22 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # SHM-related failure modes at the cost of redundant CPU work.
     "SENDNN_INFERENCE_TP_MM_SHARING": lambda: bool(
         int(os.getenv("SENDNN_INFERENCE_TP_MM_SHARING", "1"))
+    ),
+    # When "0" (default) and when there are paused requests, the request with
+    # the shortest current output is prioritized when both request have been
+    # paused for the same amount of time. Setting this to 0 will prevent a few
+    # requests from having a very high E2E latency, but at the cost of other
+    # metrics like throughput, mean TTFT and mean ITL.
+    "SENDNN_INFERENCE_LONG_OUT_PRIO": lambda: bool(
+        int(os.getenv("SENDNN_INFERENCE_LONG_OUT_PRIO", "0"))
+    ),
+    # When "1" (default), all requests can be scheduled as long as there are
+    # enough KV-cache blocks for the prompt tokens and max output tokens.
+    # If the TKV constraints are about to be exceeded, requests are removed
+    # from the decode batch. At each iteration the set of running requests
+    # is rotated for fairness.
+    "SENDNN_INFERENCE_PAUSING_ENABLED": lambda: bool(
+        int(os.getenv("SENDNN_INFERENCE_PAUSING_ENABLED", "1"))
     ),
 }
 # --8<-- [end:env-vars-definition]

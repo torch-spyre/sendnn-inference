@@ -12,10 +12,13 @@ from vllm.multimodal.inputs import MultiModalFeatureSpec
 from vllm.pooling_params import PoolingParams
 from vllm.sampling_params import SamplingParams, SamplingType
 from vllm.v1.pool.metadata import PoolingMetadata
-from vllm.v1.sample.logits_processor import BatchUpdateBuilder, LogitsProcessors, MoveDirectionality
+from vllm.v1.sample.logits_processor import LogitsProcessors, MoveDirectionality
 from vllm.v1.sample.metadata import SamplingMetadata
 
-from sendnn_inference.v1.sample.spyre_logits_processor import LogitProcessorWrapper
+from sendnn_inference.v1.sample.spyre_logits_processor import (
+    LogitProcessorWrapper,
+    SpyreBatchUpdateBuilder,
+)
 
 
 class RequestState(Protocol):
@@ -291,7 +294,7 @@ class SamplingInputBatch(BaseInputBatch[SamplingRequestState]):
         # Internal representation of per-step batch state changes, used for
         # reordering persistent batch and generating logitsprocs batch state
         # updates. Should reset each step.
-        self.batch_update_builder = BatchUpdateBuilder()
+        self.batch_update_builder = SpyreBatchUpdateBuilder()
 
         self.logitsprocs = logitsprocs or LogitsProcessors()
         self.logitsprocs_wrappers = [
@@ -369,13 +372,12 @@ class SamplingInputBatch(BaseInputBatch[SamplingRequestState]):
         available_indices_list = available_indices.squeeze(dim=-1).tolist()
         return available_indices_list[0] if available_indices_list else None
 
-    def add_request(
+    def _setup_request_data(
         self,
         request: "SamplingRequestState",
         req_index: int | None = None,
-    ) -> int:
+    ) -> tuple[int, int]:
         req_index = super().add_request(request, req_index)
-        req_id = request.req_id
 
         # NOTE: differently from gpu input batch, self.req_output_token_ids
         # is not synced with self._req_ids, it should use
@@ -385,6 +387,23 @@ class SamplingInputBatch(BaseInputBatch[SamplingRequestState]):
         self.req_indices_mask[req_index] = True
         dense_index = self.req_idx_to_dense_index(req_index)
         self.req_output_token_ids.insert(dense_index, request.output_token_ids)
+
+        # Copy the output token ids.
+        start_idx = len(request.prompt_token_ids)
+        end_idx = start_idx + len(request.output_token_ids)
+        self.token_ids_cpu[req_index, start_idx:end_idx] = request.output_token_ids
+
+        return req_index, dense_index
+
+    def add_request(
+        self,
+        request: "SamplingRequestState",
+        req_index: int | None = None,
+    ) -> int:
+        req_index, dense_index = self._setup_request_data(request, req_index)
+        req_id = request.req_id
+
+        self._register_sampling_params(req_id, req_index, request)
 
         params = request.sampling_params  # TODO add pooling params
         tmp_dense = self.num_reqs - 1
@@ -398,14 +417,114 @@ class SamplingInputBatch(BaseInputBatch[SamplingRequestState]):
             )
             tmp_dense = tmp_dense - 1
 
-        # Copy the output token ids.
-        start_idx = len(request.prompt_token_ids)
-        end_idx = start_idx + len(request.output_token_ids)
-        self.token_ids_cpu[req_index, start_idx:end_idx] = request.output_token_ids
+        return req_index
 
+    def remove_request(self, req_id: str):
+        """
+        Free a slot of a request from the batch
+
+        It does the following:
+        - mask out the removed request.
+        - Remove reference from the sets that track the type of parameter
+          e.g. greeedy_reqs
+        - Update some containers by reference to update the sampling parameters
+          e.g. req_output_token_ids
+
+        For the continuous batching, the removed request indices can be
+        overwritten by new requests
+        """
+        req_index = self.req_id_to_index.get(req_id)
+        if req_index is None:
+            self.batch_update_builder.finished_paused_append(req_id)
+            return
+
+        req_index = super().remove_request(req_id)
+        if req_index is None:
+            return
+
+        # Remove the references
+
+        # Index corrected based on the padded/deactivated requests
+        dense_index = self.req_idx_to_dense_index(req_index)
+        # Mask out the request
+        self.req_indices_mask[req_index] = False
+
+        # Remove and move up
+        self.batch_update_builder.removed_append(dense_index)
+
+        end_dense_idx = min(self._num_requests, self.max_num_reqs - 1)
+        for tmp_dense in range(dense_index, end_dense_idx):
+            self.batch_update_builder.moved.append(
+                (tmp_dense, tmp_dense + 1, MoveDirectionality.UNIDIRECTIONAL)
+            )
+
+        self.req_output_token_ids.pop(dense_index)
+        self._unregister_sampling_params(req_id, req_index)
+
+    def pause_request(self, req_id: str) -> None:
+        """Temporarily remove a request from the active batch.
+
+        Unlike remove_request:
+        - No 'removed' batch-update event is emitted, so LogitProcessorWrapper
+          saves the exact logitproc state rather than destroying it.
+        - The slot is freed (cleared from _req_ids) so new requests can use it.
+        """
+        # Pop from id map and clear the slot
+        req_index = super().remove_request(req_id)
+        if req_index is None:
+            return
+
+        # Must compute dense_index before masking
+        dense_index = self.req_idx_to_dense_index(req_index)
+        self.req_indices_mask[req_index] = False
+
+        # Tell LogitProcessorWrapper to save state at this dense position.
+        self.batch_update_builder.pause_append(dense_index, req_id)
+
+        # Emit shift moves so every other processor (MinP, LogitBias, …) sees
+        # the correct dense-index after the gap is closed.
+        end_dense_idx = min(self._num_requests, self.max_num_reqs - 1)
+        for tmp_dense in range(dense_index, end_dense_idx):
+            self.batch_update_builder.moved.append(
+                (tmp_dense, tmp_dense + 1, MoveDirectionality.UNIDIRECTIONAL)
+            )
+
+        self.req_output_token_ids.pop(dense_index)
+        self._unregister_sampling_params(req_id, req_index)
+
+    def resume_request(self, request: "SamplingRequestState") -> None:
+        """Restore a previously paused request to the active batch.
+
+        Emits an 'added' event so builtin processors (MinP, LogitBias, …)
+        re-register the request's sampling params.  The accompanying 'resumed'
+        event then tells LogitProcessorWrapper to overwrite that freshly
+        initialised slot with the exact saved state, preserving history.
+        """
+        req_index, dense_index = self._setup_request_data(request)
+        req_id = request.req_id
+
+        self._register_sampling_params(req_id, req_index, request)
+
+        # Tell LogitProcessorWrapper to restore the saved state at dense_index.
+        # No 'added' event needed - the saved LogitsProcessor instance already
+        # contains all inner processor states with correct history.
+        tmp_dense = self._num_requests - 1
+        self.batch_update_builder.resume_append(tmp_dense, req_id)
+
+        # Bubble whatever is at the tail position to the correct dense position.
+        # This maintains correct indexing for all logits processors.
+        while tmp_dense > dense_index:
+            self.batch_update_builder.moved.append(
+                (tmp_dense, tmp_dense - 1, MoveDirectionality.SWAP)
+            )
+            tmp_dense -= 1
+
+    def _register_sampling_params(
+        self, req_id: str, req_index: int, request: "SamplingRequestState"
+    ) -> None:
+        """Write all sampling parameter fields for a newly-occupied slot."""
         sampling_params = request.sampling_params
         if sampling_params.sampling_type == SamplingType.GREEDY:
-            # Avoid later division by zero.
             self.temperature_cpu[req_index] = -1.0
             self.greedy_reqs.add(req_id)
         else:
@@ -431,8 +550,6 @@ class SamplingInputBatch(BaseInputBatch[SamplingRequestState]):
         if sampling_params.repetition_penalty != 1.0:
             self.repetition_penalties_reqs.add(req_id)
 
-        # NOTE(woosuk): self.generators should not include the requests that
-        # do not have their own generator.
         if request.generator is not None:
             self.generators[req_index] = request.generator
 
@@ -442,7 +559,6 @@ class SamplingInputBatch(BaseInputBatch[SamplingRequestState]):
         if sampling_params.allowed_token_ids:
             self.has_allowed_token_ids.add(req_id)
             if self.allowed_token_ids_mask is None:
-                # Lazy allocation for this tensor, which can be large.
                 self.allowed_token_ids_mask = torch.zeros(
                     self.max_num_reqs, self.vocab_size, dtype=torch.bool, device=self.device
                 )
@@ -450,7 +566,22 @@ class SamplingInputBatch(BaseInputBatch[SamplingRequestState]):
 
         if sampling_params.bad_words_token_ids:
             self.bad_words_token_ids[req_index] = sampling_params.bad_words_token_ids
-        return req_index
+
+    def _unregister_sampling_params(self, req_id: str, req_index: int) -> None:
+        """Clear all per-request fields when vacating a slot."""
+        self.greedy_reqs.discard(req_id)
+        self.random_reqs.discard(req_id)
+        self.top_p_reqs.discard(req_id)
+        self.top_k_reqs.discard(req_id)
+        self.frequency_penalties_reqs.discard(req_id)
+        self.presence_penalties_reqs.discard(req_id)
+        self.repetition_penalties_reqs.discard(req_id)
+        self.generators.pop(req_index, None)
+        self.num_logprobs.pop(req_id, None)
+        self.has_allowed_token_ids.discard(req_id)
+        if self.allowed_token_ids_mask is not None:
+            self.allowed_token_ids_mask[req_index].fill_(False)
+        self.bad_words_token_ids.pop(req_index, None)
 
     def clear_requests(self):
         """
@@ -475,62 +606,6 @@ class SamplingInputBatch(BaseInputBatch[SamplingRequestState]):
             self.allowed_token_ids_mask.fill_(False)
 
         self.batch_update_builder.get_and_reset(0)
-
-    def remove_request(self, req_id: str):
-        """
-        Free a slot of a request from the batch
-
-        It does the following:
-        - mask out the removed request.
-        - Remove reference from the sets that track the type of parameter
-          e.g. greeedy_reqs
-        - Update some containers by reference to update the sampling parameters
-          e.g. req_output_token_ids
-
-        For the continuous batching, the removed request indices can be
-        overwritten by new requests
-        """
-
-        req_index = super().remove_request(req_id)
-        if req_index is None:
-            return
-
-        # Remove the references
-
-        # Index corrected based on the padded/deactivated requests
-        dense_index = self.req_idx_to_dense_index(req_index)
-        # Mask out the request
-        self.req_indices_mask[req_index] = False
-
-        # Remove and move up
-        self.batch_update_builder.removed_append(dense_index)
-
-        end_dense_idx = min(self._num_requests + 1, self.max_num_reqs - 1)
-        for tmp_dense in range(dense_index, end_dense_idx):
-            self.batch_update_builder.moved.append(
-                (tmp_dense, tmp_dense + 1, MoveDirectionality.UNIDIRECTIONAL)
-            )
-
-        # Remove the references
-        self.req_output_token_ids.pop(dense_index)
-
-        self.greedy_reqs.discard(req_id)
-        self.random_reqs.discard(req_id)
-        self.top_p_reqs.discard(req_id)
-        self.top_k_reqs.discard(req_id)
-
-        self.frequency_penalties_reqs.discard(req_id)
-        self.presence_penalties_reqs.discard(req_id)
-        self.repetition_penalties_reqs.discard(req_id)
-        self.generators.pop(req_index, None)
-        self.num_logprobs.pop(req_id, None)
-
-        self.has_allowed_token_ids.discard(req_id)
-
-        if self.allowed_token_ids_mask is not None:
-            self.allowed_token_ids_mask[req_index].fill_(False)
-
-        self.bad_words_token_ids.pop(req_index, None)
 
     def refresh_metadata(self):
         """Apply batch updates, reset input batch at end of step

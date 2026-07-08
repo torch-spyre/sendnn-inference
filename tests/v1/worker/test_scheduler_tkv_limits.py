@@ -212,6 +212,7 @@ def test_chunked_prefill_make_stats_zeros_mm_cache_hits(
     fake_stats = SimpleNamespace(
         prefix_cache_stats=SimpleNamespace(queries=256, hits=128),
         mm_cache_stats=SimpleNamespace(hits=5),
+        kv_connector_stats=None,
     )
 
     monkeypatch.setattr(
@@ -250,6 +251,7 @@ def test_chunked_prefill_make_stats_without_mm_cache_stats(
 
     fake_stats = SimpleNamespace(
         prefix_cache_stats=SimpleNamespace(queries=256, hits=128),
+        kv_connector_stats=None,
     )
 
     monkeypatch.setattr(
