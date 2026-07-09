@@ -60,8 +60,10 @@ def mock_llm(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(ChunkedPrefillModelRunner, "load_model", patched_load_model)
     monkeypatch.setenv("VLLM_ENABLE_V1_MULTIPROCESSING", "0")
 
-    from spyre_util import REFERENCE_MODELS
+    from spyre_util import REFERENCE_MODELS, patch_environment
     from vllm import LLM
+
+    patch_environment(backend="eager", monkeypatch=monkeypatch)
 
     model = REFERENCE_MODELS["ibm-ai-platform/micro-g3.3-8b-instruct-1b"]
     llm = LLM(
