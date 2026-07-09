@@ -58,6 +58,7 @@ def mock_llm(monkeypatch: pytest.MonkeyPatch):
         self._model.mm_model_utils = None
 
     monkeypatch.setattr(ChunkedPrefillModelRunner, "load_model", patched_load_model)
+    monkeypatch.setenv("VLLM_ENABLE_V1_MULTIPROCESSING", "0")
 
     from spyre_util import REFERENCE_MODELS
     from vllm import LLM
