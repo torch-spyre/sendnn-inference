@@ -28,14 +28,6 @@ import types
 
 import pytest
 
-
-# Force eager CPU + single-process before any vllm imports.
-os.environ.setdefault("SENDNN_INFERENCE_DYNAMO_BACKEND", "eager")
-os.environ.setdefault("VLLM_ENABLE_V1_MULTIPROCESSING", "0")
-os.environ.setdefault("VLLM_USE_V1", "1")
-os.environ.setdefault("HF_HUB_OFFLINE", "1")
-
-
 pytestmark = [
     pytest.mark.cpu,
     pytest.mark.worker,
