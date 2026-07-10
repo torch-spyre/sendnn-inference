@@ -332,7 +332,7 @@ class SpyrePoolingModelRunner(
                 )
         elif task == "classify":
             class_model = AutoModelForSequenceClassification.from_pretrained(
-                self.model_config.model, dtype=torch.float16, attn_implementation="eager"
+                self.model_config.model, attn_implementation="eager"
             )
             if hasattr(class_model, "bert"):
                 self._model = class_model.bert
