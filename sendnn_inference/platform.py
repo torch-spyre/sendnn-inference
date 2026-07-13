@@ -849,7 +849,7 @@ def _compute_config_format(namespace: argparse.Namespace) -> str:
 
     This uses any_pattern_in_repo_files which correctly handles both local paths
     and HuggingFace cache, including offline mode support.
-    
+
     Note: params.json in the 'original/' subdirectory (found in some Llama models)
     is ignored as it doesn't indicate mistral format.
     """
