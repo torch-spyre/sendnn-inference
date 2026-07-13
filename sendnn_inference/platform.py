@@ -845,12 +845,15 @@ class SpyrePlatform(Platform):
 
 
 def _compute_config_format(namespace: argparse.Namespace) -> str:
-    """Check if a model is in mistral format.
+    """Check if a model is in mistral format by looking for params.json.
 
-    Uses vLLM's is_mistral_model_repo which checks for consolidated*.safetensors
-    files that are characteristic of Mistral-format models.
+    This uses any_pattern_in_repo_files which correctly handles both local paths
+    and HuggingFace cache, including offline mode support.
+    
+    Note: params.json in the 'original/' subdirectory (found in some Llama models)
+    is ignored as it doesn't indicate mistral format.
     """
-    from vllm.transformers_utils.repo_utils import is_mistral_model_repo, get_model_path
+    from vllm.transformers_utils.repo_utils import any_pattern_in_repo_files, get_model_path
 
     # Check both 'model' and 'model_tag' since vLLM uses different
     # attribute names in different contexts
@@ -867,12 +870,21 @@ def _compute_config_format(namespace: argparse.Namespace) -> str:
     if huggingface_hub.constants.HF_HUB_OFFLINE:
         model = get_model_path(model, revision)
 
-    # Use vLLM's built-in function to detect Mistral-format models
-    if is_mistral_model_repo(
-        model_name_or_path=model,
+    # Look for params.json which indicates a mistral-format model
+    if any_pattern_in_repo_files(
+        model,
+        allow_patterns=["params.json"],
         revision=revision,
         token=token,
     ):
+        # Check if params.json is in the 'original/' subdirectory
+        # If so, it's not a mistral model (e.g., Llama models with original/ directory)
+        if any_pattern_in_repo_files(
+            model,
+            allow_patterns=["original/params.json"],
+            revision=revision,
+            token=token,
+        ):
+            return "auto"
         return "mistral"
-
     return "auto"
