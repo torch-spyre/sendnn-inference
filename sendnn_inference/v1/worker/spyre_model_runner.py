@@ -328,11 +328,11 @@ class SpyrePoolingModelRunner(
                 self._model = self._model.base_model
             else:
                 self._model = AutoModel.from_pretrained(
-                    self.model_config.model, dtype=torch.float16
+                    self.model_config.model, dtype=torch.float16, attn_implementation="eager"
                 )
         elif task == "classify":
             class_model = AutoModelForSequenceClassification.from_pretrained(
-                self.model_config.model
+                self.model_config.model, attn_implementation="eager"
             )
             if hasattr(class_model, "bert"):
                 self._model = class_model.bert
