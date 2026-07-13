@@ -533,7 +533,10 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             # NB: self.kv_cache_manager comes from the parent class, and we are being super nosy.
             # This update ensures that we know when we're scheduling the last prefix chunk, in the
             # case where most of the prompt hits prefix cache and we only run a single chunk.
+            prev_log_stats = self.kv_cache_manager.log_stats
+            self.kv_cache_manager.log_stats = False
             _, num_computed_tokens = self.kv_cache_manager.get_computed_blocks(request)
+            self.kv_cache_manager.log_stats = prev_log_stats
 
         is_first_chunk = request.num_computed_tokens == 0
         is_last_chunk = (request.num_prompt_tokens - num_computed_tokens) <= self.chunk_size
