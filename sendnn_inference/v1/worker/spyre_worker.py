@@ -28,11 +28,7 @@ from vllm.v1.core.sched.output import CachedRequestData, NewRequestData, Schedul
 from vllm.v1.kv_cache_interface import KVCacheConfig, KVCacheSpec
 from vllm.v1.outputs import ModelRunnerOutput
 
-try:
-    from vllm.v1.worker.worker_base import CompilationTimes, WorkerBase
-except ImportError:
-    CompilationTimes = None  # type: ignore[assignment, misc]
-    from vllm.v1.worker.worker_base import WorkerBase
+from vllm.v1.worker.worker_base import CompilationTimes, WorkerBase
 
 import sendnn_inference.envs as envs_spyre
 import sendnn_inference.perf_metrics as perf_metrics
@@ -152,9 +148,7 @@ class SpyreWorker(WorkerBase):
 
         if self.is_decoder:
             t = self._warmup_spyre_dynamic_size(self.restricted_tokens)
-            if CompilationTimes is not None:
-                return CompilationTimes(language_model=t, encoder=0.0)
-            return t
+            return CompilationTimes(language_model=t, encoder=0.0)
         if self.model_runner.is_multimodal:
             raise NotImplementedError("[WARMUP] multimodal models are not supported yet.")
         num_shape_combinations = len(self.spyre_warmup_shapes)
@@ -188,9 +182,7 @@ class SpyreWorker(WorkerBase):
             num_shape_combinations,
             all_warmup_total_t,
         )
-        if CompilationTimes is not None:
-            return CompilationTimes(language_model=all_warmup_total_t, encoder=0.0)
-        return all_warmup_total_t
+        return CompilationTimes(language_model=all_warmup_total_t, encoder=0.0)
 
     def check_health(self) -> None:
         """Basic health check (override for device-specific checks)."""
@@ -810,6 +802,19 @@ class SpyreWorker(WorkerBase):
             self.profiler.step()
         output = self.model_runner.execute_model(scheduler_output)
         return output if self.is_driver_worker else None
+
+    def store_mm_embeddings(self, results: list[tuple]) -> None:
+        """Read completed MM embeddings from SHM and cache them for prefill.
+
+        Called on all TP ranks via collective_rpc by SpyreMultiprocExecutor
+        after the encoder subprocess has written embeddings to POSIX SHM.
+        Each worker reads independently — no rank-0 tensor broadcast needed.
+
+        ``results`` is a list of ``(req_id, shape, dtype)`` tuples identifying
+        the SHM blocks written by the encoder process.
+        """
+        if isinstance(self.model_runner, ChunkedPrefillModelRunner):
+            self.model_runner.store_mm_embeddings(results)
 
     def _get_num_tokens(self, r: NewRequestData) -> int:
         assert r.prompt_token_ids is not None, "requests should have tokens!"

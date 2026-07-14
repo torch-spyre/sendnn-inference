@@ -276,10 +276,6 @@ register_model_info(
     revision="cf74d8acd4f198de950bf004b262e6accfed5d2c",
 )
 register_model_info(
-    name="Qwen/Qwen3-Embedding-0.6B",
-    revision="97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
-)
-register_model_info(
     name="cross-encoder/stsb-roberta-large",
     revision="2b12c2c0088918e76151fd5937b7bba986ef1f98",
 )
@@ -301,9 +297,16 @@ register_model_info(
     revision="4b5990b8d402a75febe0086abbf1e490af494e3d",
 )
 ### Multimodal
+# nano-gv: random-init ~10 MB CI fixture built by tools/build_nano_gv.py,
+# a shape-compatible stand-in for granite-vision-3.2-2b. The full model
+# (~5.5 GB) is too large for the GHA cache and too slow for CPU eager
+# warmup, and none of our multimodal tests actually depend on its
+# trained weights — they only exercise config / wiring paths.
+# When rebuilding, bump the revision here AND in
+# .github/ci_model_cache.yaml so the CI cache stays in sync.
 register_model_info(
-    name="ibm-granite/granite-vision-3.2-2b",
-    revision="2818ae5b93cb750b099df1b65f7864e4a0401271",
+    name="joerunde/nano-gv",
+    revision="c9470d9e54b023dd9ab8a8a98057489fdb18ba03",
 )
 register_model_info(
     name="mistralai/Mistral-Small-3.1-24B-Instruct-2503",
@@ -324,10 +327,8 @@ def _default_test_models(
     """Return the default set of test models as pytest parameterizations"""
     if isEmbeddings:
         roberta = REFERENCE_MODELS["sentence-transformers/all-roberta-large-v1"]
-        qwen3 = REFERENCE_MODELS["Qwen/Qwen3-Embedding-0.6B"]
         params = [
             pytest.param(roberta, marks=[pytest.mark.embedding], id=roberta.name),
-            pytest.param(qwen3, marks=[pytest.mark.embedding], id=qwen3.name),
         ]
         return params
 
@@ -336,9 +337,7 @@ def _default_test_models(
         return [pytest.param(model, marks=[pytest.mark.scoring], id=model.name)]
 
     if isMultimodal:
-        # NOTE: use 3.2 instead of 3.3 here since it's minimal case currently
-        # has fewer image tokens (1 tile + base patch instead of 2).
-        model = REFERENCE_MODELS["ibm-granite/granite-vision-3.2-2b"]
+        model = REFERENCE_MODELS["joerunde/nano-gv"]
         return [pytest.param(model, marks=[pytest.mark.multimodal], id=model.name)]
 
     # Decoders

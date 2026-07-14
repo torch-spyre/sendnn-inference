@@ -2,7 +2,9 @@
 
 import math
 from collections import deque
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Iterable, Union
+from collections import defaultdict
 
 
 from vllm.logger import init_logger
@@ -20,6 +22,17 @@ else:
     SchedulerOutput = None
 
 logger = init_logger(__name__)
+
+
+@dataclass
+class MMEncodeRequest:
+    """Lightweight descriptor for a waiting MM request that should be
+    pre-encoded before its Spyre prefill step begins."""
+
+    request_id: str
+    prompt_token_ids: list[int]
+    mm_features: list = field(default_factory=list)
+
 
 # Ensure that block_size is 64
 # This ensures the rounding function is correct
@@ -55,7 +68,7 @@ class PoolingSpyreScheduler(SpyreScheduler):
             self.scheduler_config
         )
 
-    def schedule(self) -> SchedulerOutput:
+    def schedule(self, throttle_prefills: bool = False) -> SchedulerOutput:
         """This override adds constraints and then delegates most of the work
         to the base scheduler"""
         # First purge the full waiting queue into our holdback queue, preserving
@@ -117,7 +130,7 @@ class PoolingSpyreScheduler(SpyreScheduler):
             logger.debug("Scheduling a running batch of %d requests", len(self.running))
 
         # delegate to super of SpyreScheduler: base V1 Scheduler
-        outputs = super(SpyreScheduler, self).schedule()
+        outputs = super(SpyreScheduler, self).schedule(throttle_prefills=throttle_prefills)
 
         # first move skipped and then unscheduled requests back
         # to the waiting queue, preserving priority
@@ -140,6 +153,14 @@ class PoolingSpyreScheduler(SpyreScheduler):
             if request.num_prompt_tokens <= shape["prompt_length"]
             and current_batch_size < shape["batch_size"]
         ]
+
+
+@dataclass
+class ChunkedPrefillSpyreSchedulerStats:
+    decode_batch_size: int = 0
+    num_paused_reqs: int = 0
+    pause_events: int = 0
+    resume_events: int = 0
 
 
 class ChunkedPrefillSpyreScheduler(SpyreScheduler):
@@ -171,17 +192,13 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         Note: all the remaining constraints need to be satisfied at the time
             of scheduling the last chunk of a chunked prefill
 
-        - Max model length constraint: the number of requested tokens must fit
-            between the maximum TKV of all the running requests and the end of
-            the model's context
+        - Volumetric constraint: the product of batch_size and current TKV
+            must not exceed `VLLM_DT_MAX_BATCH_TKV_LIMIT` when adding a new
+            request. See `_can_decode_all_requests()` method for details.
 
-        - Volumetric constraint: the total "surface" defined by the running
-            requests should never exceed `VLLM_DT_MAX_BATCH_TKV_LIMIT`. See
-            `check_batch_tkv_limit()` method for details.
-
-        - The surface defined by the maximum TKV of
-            all the running requests and the number of running requests must
-            not exceed the limit defined by `VLLM_DT_MAX_BATCH_TKV_LIMIT`
+        - Decode pausing: requests may be temporarily paused from decoding
+            when the batch TKV limit would be exceeded in the next decode step.
+            Paused requests are resumed when capacity becomes available.
     """
 
     def __init__(self, *args, **kwargs) -> None:
@@ -194,14 +211,28 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         # keep a list to be able to batch prefills in the future.
         self.ongoing_prefills: list[Request] = []
 
+        # Track requests that were temporarily paused from decoding due to
+        # batch TKV constraint and moved back to waiting queue
+        self.paused_decoding_requests: list[Request] = []
+
         # Prefills interleaving: if the feature flag is set, prefill operations
         # are interleaved with a decode step. This allows to minimize currently
         # decoding requests
         self.do_interleaving: bool = envs_spyre.SENDNN_INFERENCE_CP_INTERLEAVE_STEPS
-        self.previous_step_was_prefill: bool = False
+        self.step_is_prefill: bool = False
 
         self.tkv = 0
         self.block_size = SpyrePlatform.get_block_size()
+
+        # Async MM encoding state.
+        # _mm_encoding_submitted: requests whose encode job has been dispatched to
+        #   the encoder subprocess but whose result has not yet been received.
+        # _mm_encoding_ready: requests whose embeddings are ready in
+        #   pending_mm_embeddings (confirmed via _spyre_newly_encoded_req_ids in
+        #   the model runner output).  Only MM requests in this set are eligible
+        #   for prefill scheduling.
+        self._mm_encoding_submitted: set[str] = set()
+        self._mm_encoding_ready: set[str] = set()
         self.max_batch_tkv_limit = SpyrePlatform.get_max_batch_tkv_limit()
 
         assert self.max_batch_tkv_limit != -1, (
@@ -210,11 +241,34 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
 
         self.total_reserved_blocks = 0
         self.reserved_blocks = dict[str, int]()
+        self.pause_events = 0
+        self.resume_events = 0
+
+        self.request_last_decode_step = defaultdict(int)
+        self.long_output_prio = envs_spyre.SENDNN_INFERENCE_LONG_OUT_PRIO
 
     def update_from_output(self, scheduler_output, model_runner_output):
         assert isinstance(model_runner_output, SpyreModelRunnerOutput), (
             "Expecting an instance of CPSpyreModelRunnerOutput when doing chunked prefill."
         )
+
+        # Update async MM encoding state: move newly encoded requests from
+        # "submitted" to "ready" so they become eligible for prefill.
+        # Read from scheduler_output (set by SpyreMultiprocExecutor.execute_model)
+        # rather than model_runner_output — the executor uses non_block=True which
+        # returns a Future, so attributes set on the Future never reach the resolved
+        # ModelRunnerOutput.  scheduler_output is the same object in both places.
+        for req_id in getattr(scheduler_output, "_spyre_newly_encoded_req_ids", []):
+            self._mm_encoding_submitted.discard(req_id)
+            # Only promote to ready if the request is still known to the scheduler.
+            # If it was aborted while encoding was in-flight, finish_requests already
+            # removed it — skip to avoid a stale _mm_encoding_ready entry.
+            if req_id in self.requests:
+                self._mm_encoding_ready.add(req_id)
+        # Abort any request whose encode job failed — no retries.
+        for req_id in getattr(scheduler_output, "_spyre_failed_encode_req_ids", []):
+            logger.error("MM encode failed for req '%s' — aborting request", req_id)
+            self.finish_requests([req_id], RequestStatus.FINISHED_ABORTED)
 
         # Remove completed prefills
         self.ongoing_prefills = [
@@ -230,6 +284,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             blocks = self.reserved_blocks.pop(finished_request, 0)
             self.total_reserved_blocks -= blocks
             assert self.total_reserved_blocks >= 0
+            self.request_last_decode_step.pop(finished_request, None)
 
         return result
 
@@ -311,7 +366,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
     def _get_free_blocks(self) -> int:
         return self.kv_cache_manager.block_pool.get_num_free_blocks()
 
-    def schedule(self) -> "SchedulerOutput":
+    def schedule(self, throttle_prefills: bool = False) -> "SchedulerOutput":
         """
         The chunked prefill scheduling policy is enforced in this method, then
         delegates the final scheduling decision to the base scheduler
@@ -334,16 +389,23 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         # req_id -> cached_blocks, new_blocks
         required_blocks = dict[str, tuple[int, int]]()
 
-        # Check if new requests can be scheduled for prefill
+        # Check if new requests can be scheduled for prefill.
+        # Per-request ineligibility (MM encoding not ready, shape mismatch, …)
+        # is collected in skipped_requests and restored to holdback_queue after
+        # the loop so they remain available for future schedule() calls.
+        # Block-count capacity is the only FIFO-correct reason to stop early:
+        # if the front request exceeds available blocks, later requests are
+        # unlikely to fit either.
         available_blocks = self._get_free_blocks() - self.total_reserved_blocks
+        skipped_requests: list[Request] = []
         while holdback_queue:
-            new_request = holdback_queue[0]
+            new_request = holdback_queue.popleft()
             cached, blocks = self._get_required_blocks(new_request, True)
             if blocks > available_blocks:
+                holdback_queue.appendleft(new_request)
                 break
 
             if self.can_schedule_prefill(new_request):
-                holdback_queue.popleft()
                 required_blocks[new_request.request_id] = (cached, blocks)
                 available_blocks -= blocks
 
@@ -356,9 +418,14 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
                 # Add request to the waiting queue
                 self.waiting.append(new_request)
             else:
-                # Otherwise, we simply stop here so that the scheduler
-                # can work with the batch we have
-                break
+                # Per-request reason (e.g. MM encoding still in-flight): skip
+                # this request and keep checking later ones.
+                skipped_requests.append(new_request)
+
+        # Restore skipped requests at the front of holdback_queue so they
+        # are returned to self.waiting (line below) in their original order.
+        for req in reversed(skipped_requests):
+            holdback_queue.appendleft(req)
 
         assert len(self.ongoing_prefills) <= 1, (
             "Only one request can be prefilled at a time, but got %d" % len(self.ongoing_prefills)
@@ -386,11 +453,11 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             if schedule_prefill:
                 running_holdback = [r for r in self.running if r not in self.ongoing_prefills]
                 self.running = self.ongoing_prefills
-                self.previous_step_was_prefill = True
+                self.step_is_prefill = True
             else:
                 self.running = [r for r in self.running if r not in self.ongoing_prefills]
                 running_holdback = self.ongoing_prefills
-                self.previous_step_was_prefill = False
+                self.step_is_prefill = False
 
         # Check new requests to prefill
         elif len(self.waiting) > 0:
@@ -412,7 +479,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
                 # Hide current decodes from the scheduler
                 running_holdback = self.running
                 self.running = []
-                self.previous_step_was_prefill = True
+                self.step_is_prefill = True
             else:
                 # Grammar not yet initialized for any waiting request.
                 # Return them to holdback so the base scheduler doesn't
@@ -420,10 +487,37 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
                 while self.waiting:
                     holdback_queue.appendleft(self.waiting.pop())
                 running_holdback = []
-                self.previous_step_was_prefill = False
+                self.step_is_prefill = False
         else:
-            self.previous_step_was_prefill = False
+            self.step_is_prefill = False
             running_holdback = []
+
+        if not self.step_is_prefill:
+            self._handle_decode_requests_pausing()
+
+        # Collect MM encode requests for ALL waiting multimodal requests that
+        # have not yet been submitted to the encoder subprocess.  Emitted on
+        # every schedule() call (prefill AND decode steps) so the encoder can
+        # stay ahead of the prefill queue.  The executor submits each request
+        # exactly once (tracked here via _mm_encoding_submitted).
+        mm_encode_requests: list[MMEncodeRequest] = []
+        for req in holdback_queue:
+            if not getattr(req, "mm_features", None):
+                continue
+            if req.request_id in self._mm_encoding_submitted:
+                continue
+            if req.request_id in self._mm_encoding_ready:
+                continue
+            mm_encode_requests.append(
+                MMEncodeRequest(
+                    request_id=req.request_id,
+                    prompt_token_ids=list(req.prompt_token_ids or []),
+                    mm_features=req.mm_features,
+                )
+            )
+            self._mm_encoding_submitted.add(req.request_id)
+            if len(mm_encode_requests) >= self.max_num_running_reqs:
+                break
 
         # Cap chunk-0 token count to chunk_size - left_padding so the upstream KV
         # cache manager doesn't allocate a real blocks for the left-padding region.
@@ -435,7 +529,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         )
 
         # delegate to super of SpyreScheduler: base V1 Scheduler
-        outputs = super(SpyreScheduler, self).schedule()
+        outputs = super(SpyreScheduler, self).schedule(throttle_prefills=throttle_prefills)
 
         # Track as ongoing prefills only the requests that were actually
         # scheduled (i.e., moved from waiting to running by the base
@@ -454,6 +548,8 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             r.num_computed_tokens <= r.num_prompt_tokens + 1 for r in self.running
         ):
             logger.debug("Scheduled tokens in this step: %s", outputs.num_scheduled_tokens)
+
+        outputs._spyre_mm_encode_requests = mm_encode_requests  # type: ignore[attr-defined]
 
         # Collect grammar bitmask synchronously for structured outputs.
         # NOTE: This is done here because vllm-spyre currently combines token sampling
@@ -489,14 +585,27 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
             assert self.reserved_blocks[req_id] >= 0
 
         assert 0 <= self.total_reserved_blocks <= free_blocks
-
         return outputs
 
     def can_schedule_prefill(self, request: Request) -> bool:
+        # MM requests must wait until their vision embedding is ready.
+        # Only applies in async encoder mode; in non-async mode nothing ever
+        # populates _mm_encoding_ready so the gate would block all MM requests.
+        # Text-only requests are completely unaffected by this check.
+        if getattr(request, "mm_features", None) and (
+            envs_spyre.SENDNN_INFERENCE_ASYNC_MM_ENCODER
+            and request.request_id not in self._mm_encoding_ready
+        ):
+            return False
+
         # running and waiting queues are both empty, we can start a new batch
         # which can always be scheduled
         if len(self.running) + len(self.waiting) == 0:
             return True
+
+        # Paused request have the priority and will be resumed if the tkv_batch limit allows it
+        if self.paused_decoding_requests:
+            return False
 
         if not self._has_scheduling_priority(request):
             return False
@@ -540,9 +649,9 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         """First chunked prefill can be scheduled only if there is space in the
         input batch (cond1) and in the prefill batch (cond2)."""
 
-        # TODO theoretically we could already do a chunked prefill even
-        # if the decode batch is full, but the current implementation of input
-        # batch doesn't allow to do so.
+        # NOTE: We could already do a chunked prefill even if the decode batch
+        # is full, this could potentially increase the ITL of the request
+        # if it then request doesn't satisfy the volumetric constraint
         num_running = len(self.running)
         cond1 = num_running + len(self.waiting) < self.max_num_running_reqs
 
@@ -561,6 +670,9 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         # check that there is space in the current decode batch
         num_running = len(decoding_requests)
         cond1 = num_running + len(self.waiting) < self.max_num_running_reqs
+
+        if cond1 and envs_spyre.SENDNN_INFERENCE_PAUSING_ENABLED:
+            return True
 
         # calculate new max tkv of the batch given the new sequence joins
         # considers all possible cases:
@@ -587,7 +699,7 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
 
         # If we do interleaving, then two consecutive prefill steps are
         # forbidden when there are decoding requests
-        if self.do_interleaving and self.previous_step_was_prefill and len(decoding_requests) > 0:
+        if self.do_interleaving and self.step_is_prefill and len(decoding_requests) > 0:
             return False
 
         # Requests that are already prefilling are prioritized over new requests
@@ -672,12 +784,123 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
 
         return max_batch_tkv <= self.max_batch_tkv_limit
 
+    def _can_decode_all_requests(self, decoding_requests: list[Request]) -> bool:
+        """
+        Check if all decoding requests can be decoded in the next step without
+        violating the max batch TKV limit.
+        """
+        if not decoding_requests:
+            return True
+
+        next_predicted_tkv = self.predict_next_decode_tkv(decoding_requests)
+
+        # the tkv should never get beyond max_model_len
+        assert next_predicted_tkv <= self.max_model_len
+
+        # check batch tkv limit: batch_size * predicted_tkv must not exceed limit
+        batch_size = len(decoding_requests)
+        predicted_batch_tkv = batch_size * next_predicted_tkv
+
+        return predicted_batch_tkv <= self.max_batch_tkv_limit
+
+    def _handle_decode_requests_pausing(self) -> None:
+        decoding_requests = [r for r in self.running if r not in self.ongoing_prefills]
+        requests_by_step = list[tuple[Request, int]]()
+
+        was_paused = set[str]()
+        was_running = set[str]()
+
+        for req in self.paused_decoding_requests:
+            requests_by_step.append((req, self.request_last_decode_step[req.request_id]))
+            was_paused.add(req.request_id)
+
+        for req in decoding_requests:
+            requests_by_step.append((req, self.request_last_decode_step[req.request_id]))
+            was_running.add(req.request_id)
+
+        # Sort is stable, so requests with the same last
+        # step will be sorted by how many tokens they have already generated
+        request_order = sorted(
+            requests_by_step,
+            key=lambda x: x[0].num_computed_tokens - x[0].num_prompt_tokens,
+            reverse=self.long_output_prio,
+        )
+        request_order.sort(key=lambda x: x[1], reverse=True)
+
+        self.paused_decoding_requests.clear()
+        decoding_requests.clear()
+
+        for req, _ in request_order:
+            if self._can_decode_all_requests(decoding_requests + [req]):
+                decoding_requests.append(req)
+                self.request_last_decode_step[req.request_id] = 0
+                if req.request_id in was_paused:
+                    self.running.append(req)
+            else:
+                self.paused_decoding_requests.append(req)
+                self.request_last_decode_step[req.request_id] += 1
+                if req.request_id in was_running:
+                    self.running.remove(req)
+
+        pause_inc = len(self.paused_decoding_requests) - len(was_paused)
+        if pause_inc >= 0:
+            self.pause_events += pause_inc
+        else:
+            self.resume_events -= pause_inc
+
+    def predict_next_decode_tkv(self, running_requests: list[Request]) -> int:
+        """
+        Predicts the TKV after the next decode step for a given batch of running
+        requests.
+
+        This method replicates the TKV calculation logic from the model runner's
+        _prepare_decode method, accounting for:
+        - Block alignment (left-padding to make batch rectangular)
+        - The next token that will be generated (+1)
+        - Maximum TKV across all requests in the batch
+
+        Args:
+            running_requests: List of Request objects currently in the decode batch
+
+        Returns:
+            The predicted TKV value after the next decode step
+        """
+        if not running_requests:
+            return 0
+
+        # Step 1: Find the maximum number of blocks across all requests
+        # Account for requests that will need a new block after the next token
+        max_n_blocks = 0
+        num_blocks_per_req: list[int] = []
+        for request in running_requests:
+            num_blocks = math.ceil((request.num_computed_tokens + 1) / self.block_size)
+            num_blocks_per_req.append(num_blocks)
+            max_n_blocks = max(max_n_blocks, num_blocks)
+
+        # Step 2: Calculate TKV for each request and find the maximum
+        max_tkv = 0
+        for request, num_blocks in zip(running_requests, num_blocks_per_req):
+            # Calculate left padding blocks needed for alignment
+            left_pad_blocks_count = max_n_blocks - num_blocks
+            left_padding = left_pad_blocks_count * self.block_size
+
+            # Calculate TKV for this request (including the next token)
+            req_tkv = left_padding + request.num_computed_tokens + 1
+
+            # Track the maximum TKV
+            max_tkv = max(max_tkv, req_tkv)
+
+        return max_tkv
+
     def finish_requests(
         self,
         request_ids: Union[str, Iterable[str], None],
         finished_status: RequestStatus,
     ) -> list[tuple[str, int]]:
-        """Handles removing finished requests from ongoing_prefills"""
+        """
+        Handles removing finished requests from ongoing_prefills and
+        paused_decoding_requests
+        """
         if isinstance(request_ids, str):
             request_ids = (request_ids,)
 
@@ -688,10 +911,39 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         )
 
         # request_ids None means all requests are finished
-        self.ongoing_prefills = (
+        if request_ids is None:
+            self.ongoing_prefills = []
+            self._mm_encoding_submitted.clear()
+            self._mm_encoding_ready.clear()
+        else:
+            self.ongoing_prefills = [
+                r for r in self.ongoing_prefills if r.request_id not in request_ids
+            ]
+            for rid in request_ids:
+                # If the encode job is queued but not yet started, send a cancel
+                # token so the encoder subprocess skips it rather than running a
+                # full (expensive) vision-tower forward for a dead request.
+                if rid in self._mm_encoding_submitted:
+                    from sendnn_inference.v1.executor.spyre_executor import SpyreMultiprocExecutor
+
+                    cq = SpyreMultiprocExecutor.get_mm_cancel_queue()
+                    if cq is not None:
+                        try:
+                            cq.put_nowait(rid)
+                        except Exception as exc:
+                            logger.debug(
+                                "scheduler: failed to send cancel for req '%s': %s",
+                                rid,
+                                exc,
+                            )
+                self._mm_encoding_submitted.discard(rid)
+                self._mm_encoding_ready.discard(rid)
+
+        # Also remove from paused_decoding_requests
+        self.paused_decoding_requests = (
             []
             if request_ids is None
-            else [r for r in self.ongoing_prefills if r.request_id not in request_ids]
+            else [r for r in self.paused_decoding_requests if r.request_id not in request_ids]
         )
 
         return aborted_requests
@@ -727,14 +979,31 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         """
         base_stats = super().make_stats(*args, **kwargs)
 
-        if base_stats is not None and base_stats.prefix_cache_stats is not None:
-            base_stats.prefix_cache_stats.hits = self.adjust_hit(
-                base_stats.prefix_cache_stats.queries, base_stats.prefix_cache_stats.hits
-            )
-
         if base_stats is not None:
-            mm_cache_stats = getattr(base_stats, "mm_cache_stats", None)
-            if mm_cache_stats is not None:
-                mm_cache_stats.hits = 0
+            if base_stats.prefix_cache_stats is not None:
+                base_stats.prefix_cache_stats.hits = self.adjust_hit(
+                    base_stats.prefix_cache_stats.queries, base_stats.prefix_cache_stats.hits
+                )
+
+                mm_cache_stats = getattr(base_stats, "mm_cache_stats", None)
+                if mm_cache_stats is not None:
+                    mm_cache_stats.hits = 0
+
+            decode_batch_size = sum(1 for r in self.running if r not in self.ongoing_prefills)
+            num_paused_reqs = len(self.paused_decoding_requests)
+
+            if base_stats.kv_connector_stats is None:
+                base_stats.kv_connector_stats = {}
+
+            # Abuse the kv_connector_stats field to store the spyre stats.
+            # We can open an upstream PR to add another extensible field.
+            base_stats.kv_connector_stats["sendnn-stats"] = ChunkedPrefillSpyreSchedulerStats(
+                decode_batch_size=decode_batch_size,
+                num_paused_reqs=num_paused_reqs,
+                pause_events=self.pause_events,
+                resume_events=self.resume_events,
+            )
+            self.pause_events = 0
+            self.resume_events = 0
 
         return base_stats

@@ -326,3 +326,89 @@ class TestDataIntegrity:
         _cleanup_if_exists(req_id)
 
         assert torch.equal(result, t)
+
+
+# ---------------------------------------------------------------------------
+# store_mm_embeddings: aborted-request guard
+# ---------------------------------------------------------------------------
+
+
+class TestStoreMmEmbeddings:
+    """Tests for ChunkedPrefillModelRunner.store_mm_embeddings."""
+
+    def _make_runner(self):
+        """Build a ChunkedPrefillModelRunner instance bypassing __init__."""
+        from sendnn_inference.v1.worker.spyre_model_runner import ChunkedPrefillModelRunner
+
+        runner = ChunkedPrefillModelRunner.__new__(ChunkedPrefillModelRunner)
+        runner.rank = 0
+        runner.requests = {}
+        runner.pending_mm_embeddings = {}
+        runner._finished_encode_req_ids = set()
+        return runner
+
+    def test_stores_embedding_for_waiting_request(self):
+        """Embedding for a request not yet in self.requests (still waiting in
+        scheduler queue) must be written to pending_mm_embeddings so that
+        add_new_request can consume it when the request begins prefill.
+
+        self.requests only contains requests currently in prefill/decode.
+        A request waiting in the scheduler has not called add_new_request yet
+        and must not be treated as aborted.
+        """
+        runner = self._make_runner()
+        runner.requests = {}  # not yet scheduled — waiting in scheduler queue
+
+        req_id = "waiting-req"
+        shape = (1, 4, 8)
+        dtype = torch.float16
+        t = torch.zeros(shape, dtype=dtype)
+        shm = write_embeddings(t, req_id)
+        try:
+            runner.store_mm_embeddings([(req_id, shape, dtype)])
+        finally:
+            cleanup_embeddings(shm)
+            _cleanup_if_exists(req_id)
+
+        assert req_id in runner.pending_mm_embeddings
+
+    def test_stores_embedding_for_active_request(self):
+        """Embedding for an active request must be written to pending_mm_embeddings."""
+        from unittest.mock import MagicMock
+
+        runner = self._make_runner()
+        runner.requests = {"active-req": MagicMock()}
+
+        req_id = "active-req"
+        shape = (1, 4, 8)
+        dtype = torch.float16
+        t = torch.ones(shape, dtype=dtype)
+        shm = write_embeddings(t, req_id)
+        try:
+            runner.store_mm_embeddings([(req_id, shape, dtype)])
+        finally:
+            cleanup_embeddings(shm)
+            _cleanup_if_exists(req_id)
+
+        assert req_id in runner.pending_mm_embeddings
+        assert runner.pending_mm_embeddings[req_id].shape == torch.Size(shape)
+
+    def test_discards_late_result_for_finished_request(self):
+        """If a request finishes while its encode is in-flight, the late-arriving
+        result must be discarded and the tombstone entry removed."""
+        runner = self._make_runner()
+        runner._finished_encode_req_ids = {"late-req"}  # marked finished by _update_batch
+
+        req_id = "late-req"
+        shape = (1, 4, 8)
+        dtype = torch.float16
+        t = torch.zeros(shape, dtype=dtype)
+        shm = write_embeddings(t, req_id)
+        try:
+            runner.store_mm_embeddings([(req_id, shape, dtype)])
+        finally:
+            cleanup_embeddings(shm)
+            _cleanup_if_exists(req_id)
+
+        assert req_id not in runner.pending_mm_embeddings
+        assert req_id not in runner._finished_encode_req_ids  # self-cleaned

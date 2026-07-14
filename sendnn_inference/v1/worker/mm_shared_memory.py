@@ -6,6 +6,7 @@ This avoids running the (CPU-bound) vision encoder world_size times per request.
 """
 
 import hashlib
+import math
 from multiprocessing.shared_memory import SharedMemory
 
 import torch
@@ -76,7 +77,15 @@ def write_embeddings(tensor: torch.Tensor, req_id: str) -> SharedMemory:
     assert tensor.dtype in _DTYPE_TO_IDX, f"Unsupported dtype for SHM transfer: {tensor.dtype}"
 
     data_shm = SharedMemory(create=True, size=tensor.nbytes, name=_shm_name(req_id))
-    torch.frombuffer(data_shm.buf, dtype=tensor.dtype).reshape(tensor.shape).copy_(tensor)
+    assert data_shm.buf is not None
+    # POSIX shared memory rounds the segment up to a page boundary (16 KiB
+    # on macOS ARM64, 4 KiB on Linux x86_64), so data_shm.buf is generally
+    # larger than tensor.nbytes. Slice to the exact byte count before
+    # reshaping, otherwise the trailing padding produces an off-by-page-size
+    # reshape error.
+    torch.frombuffer(data_shm.buf[: tensor.nbytes], dtype=tensor.dtype).reshape(tensor.shape).copy_(
+        tensor
+    )
 
     logger.debug(
         "Wrote MM embeddings to SHM for req '%s': shape=%s dtype=%s bytes=%d",
@@ -101,8 +110,12 @@ def read_embeddings(
     Opens and closes the shared-memory handle internally.
     """
     data_shm = SharedMemory(name=_shm_name(req_id))
+    assert data_shm.buf is not None
+    # Match the byte count slice from write_embeddings — the SHM buf is
+    # page-padded, so passing the full buf would fail .reshape(shape).
+    nbytes = math.prod(shape) * torch.empty((), dtype=dtype).element_size()
     # .clone() detaches the tensor from the SHM buffer so the handle can be closed.
-    result = torch.frombuffer(data_shm.buf, dtype=dtype).reshape(shape).clone()
+    result = torch.frombuffer(data_shm.buf[:nbytes], dtype=dtype).reshape(shape).clone()
     data_shm.close()
 
     logger.debug(
@@ -128,3 +141,19 @@ def cleanup_embeddings(data_shm: SharedMemory) -> None:
         data_shm.close()
     except Exception as exc:
         logger.debug("SHM close skipped (%s): %s", data_shm.name, exc)
+
+
+def cleanup_embeddings_by_name(req_id: str) -> None:
+    """Unlink the shared-memory block for *req_id* by name.
+
+    Used when the caller does not hold the original ``SharedMemory`` handle
+    (e.g. after all TP ranks have independently read the block and rank 0
+    needs to unlink it).  Safe to call even if the block was already removed.
+    """
+    name = _shm_name(req_id)
+    try:
+        shm = SharedMemory(name=name)
+        shm.unlink()
+        shm.close()
+    except Exception as exc:
+        logger.debug("SHM cleanup_by_name skipped (%s): %s", name, exc)

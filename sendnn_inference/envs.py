@@ -26,7 +26,10 @@ if TYPE_CHECKING:
     SENDNN_INFERENCE_MODEL_CONFIG_FILE: str | None = None
     SENDNN_INFERENCE_CPU_MM_DTYPE: torch.dtype = torch.float16
     SENDNN_INFERENCE_MM_DEVICE: str = "auto"
+    SENDNN_INFERENCE_ASYNC_MM_ENCODER: bool = True
     SENDNN_INFERENCE_TP_MM_SHARING: bool = True
+    SENDNN_INFERENCE_LONG_OUT_PRIO: bool = False
+    SENDNN_INFERENCE_PAUSING_ENABLED: bool = True
 
 logger = init_logger(__name__)
 
@@ -52,12 +55,12 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # for, formatted as comma separated list. Only applicable in pooling.
     "SENDNN_INFERENCE_WARMUP_PROMPT_LENS": lambda: [
         int(p)
-        for p in os.getenv(key="SENDNN_INFERENCE_WARMUP_PROMPT_LENS", default="64").split(",")
+        for p in os.getenv(key="SENDNN_INFERENCE_WARMUP_PROMPT_LENS", default="512").split(",")
     ],
     # Defines the batch sizes the Spyre accelerator should be prepared
     # for, formatted as comma separated list. Only applicable in pooling.
     "SENDNN_INFERENCE_WARMUP_BATCH_SIZES": lambda: [
-        int(b) for b in os.getenv(key="SENDNN_INFERENCE_WARMUP_BATCH_SIZES", default="1").split(",")
+        int(b) for b in os.getenv(key="SENDNN_INFERENCE_WARMUP_BATCH_SIZES", default="8").split(",")
     ],
     # Defines the backend that torch.compile will use when using Spyre
     # Available options:
@@ -173,6 +176,21 @@ environment_variables: dict[str, Callable[[], Any]] = {
     "SENDNN_INFERENCE_MM_DEVICE": lambda: parse_mm_device(
         os.getenv("SENDNN_INFERENCE_MM_DEVICE", "auto")
     ),
+    # Enable the async vision encoder subprocess.
+    # When set to 1, SpyreMultiprocExecutor spawns a separate process that loads
+    # only the vision model via get_model(..., vision_only=True) and pre-encodes
+    # MM requests in parallel with AIU prefill/decode.  The scheduler gates MM
+    # request prefill on encoding readiness so a request only starts prefill once
+    # its embedding is available.  Only effective for decoder models with TP > 1.
+    # Defaults to 0 (disabled) — uses the Phase 1 blocking encode path.
+    "SENDNN_INFERENCE_ASYNC_MM_ENCODER": lambda: bool(
+        int(
+            os.getenv(
+                "SENDNN_INFERENCE_ASYNC_MM_ENCODER",
+                "0" if platform.machine() == "ppc64le" else "1",
+            )
+        )
+    ),
     # When "1" (default), rank 0 runs the vision encoder and shares the result
     # with other TP ranks via POSIX shared memory (one encoder call instead of
     # world_size calls).  Set to "0" to fall back to every TP rank running the
@@ -180,6 +198,22 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # SHM-related failure modes at the cost of redundant CPU work.
     "SENDNN_INFERENCE_TP_MM_SHARING": lambda: bool(
         int(os.getenv("SENDNN_INFERENCE_TP_MM_SHARING", "1"))
+    ),
+    # When "0" (default) and when there are paused requests, the request with
+    # the shortest current output is prioritized when both request have been
+    # paused for the same amount of time. Setting this to 0 will prevent a few
+    # requests from having a very high E2E latency, but at the cost of other
+    # metrics like throughput, mean TTFT and mean ITL.
+    "SENDNN_INFERENCE_LONG_OUT_PRIO": lambda: bool(
+        int(os.getenv("SENDNN_INFERENCE_LONG_OUT_PRIO", "0"))
+    ),
+    # When "1" (default), all requests can be scheduled as long as there are
+    # enough KV-cache blocks for the prompt tokens and max output tokens.
+    # If the TKV constraints are about to be exceeded, requests are removed
+    # from the decode batch. At each iteration the set of running requests
+    # is rotated for fairness.
+    "SENDNN_INFERENCE_PAUSING_ENABLED": lambda: bool(
+        int(os.getenv("SENDNN_INFERENCE_PAUSING_ENABLED", "1"))
     ),
 }
 # --8<-- [end:env-vars-definition]

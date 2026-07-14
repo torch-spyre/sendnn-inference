@@ -142,6 +142,19 @@ The time-per-output-token (TPOT) is the mean time to generate the next decoded t
 
 The end-to-end latency (E2EL) is the time from submitting a request to the server until the last output token is received. This metric is not reported by default; use `--percentile-metrics ttft,tpot,itl,e2el` to enable it.
 
+## Production metrics
+
+vLLM exposes a number of metrics that can be used to monitor the health of the system. These metrics are exposed via the /metrics endpoint on the vLLM OpenAI compatible API server. Refer to the [vLLM documentation](https://docs.vllm.ai/en/latest/usage/metrics/) for a list of the exposed metrics.
+
+`sendnn-inference` adds a couple of metrics to vLLM, mainly related to request pausing:
+
+| Metric Name | Type | Description |
+|-------------|------|-------------|
+| `sendnn_inference:decode_batch` | Gauge | Number of requests in decode batch. |
+| `sendnn_inference:paused` | Gauge | Number of paused requests. |
+| `sendnn_inference:pause_events` | Counter | Count of times a request was paused. |
+| `sendnn_inference:resume_events` | Counter | Count of times a request was resumed. |
+
 ## Visualization – Results Interpretation
 
 For the run described in the [Scheduler Constraints visualization](../contributing/scheduler.md#visualization-scheduler-constraints), we show the corresponding timeline that would be obtained using `--plot-timeline`. The timeline is reconstructed for educational purposes (since request arrival steps cannot be precisely controlled with vllm bench serve), but it matches the expected shape. We assume a decode takes 1 unit of time and a chunked prefill takes 8 units.

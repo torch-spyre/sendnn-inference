@@ -97,9 +97,8 @@ def test_prefill_tkv_too_big(
         },
         {
             # Prefill sequence 1
-            # Due to left-padding of sequence 0, we now have tkv = 64 + 61
             "step": 3,
-            "tkv": 125,
+            "tkv": 111,  # tkv of the prefilling sequence 1
             "waiting": [],
             "running": ["1", "0"],
             "request_outputs": ["1"],
@@ -109,7 +108,7 @@ def test_prefill_tkv_too_big(
         {
             # Decode sequences 0 and 1
             "step": 4,
-            "tkv": 126,
+            "tkv": 126,  # left-padding of sequence 0: 64 + 62 = 126
             "waiting": [],
             "running": ["1", "0"],
             "request_outputs": ["1", "0"],
@@ -515,7 +514,7 @@ def test_cp_prefill_interleave1(
         {
             # Chunk 0 of request 1 prefill
             "step": 3,
-            "tkv": 11,
+            "tkv": 512,  # prompt len of req1
             "waiting": [],
             "running": ["1", "0"],
             "request_outputs": [],
@@ -534,9 +533,8 @@ def test_cp_prefill_interleave1(
         },
         {
             # Chunk 1 of request 1 prefill
-            # tkv of decode batch (tkv not updated until last chunk)
             "step": 5,
-            "tkv": 12,
+            "tkv": 512,  # prompt len of request
             "waiting": [],
             "running": ["1", "0"],
             "request_outputs": [],
@@ -555,9 +553,8 @@ def test_cp_prefill_interleave1(
         },
         {
             # Chunk 2 of request 1 prefill
-            # tkv of decode batch (tkv not updated until last chunk)
             "step": 7,
-            "tkv": 13,
+            "tkv": 512,  # prompt len of request
             "waiting": [],
             "running": ["1", "0"],
             "request_outputs": [],
@@ -577,9 +574,8 @@ def test_cp_prefill_interleave1(
         {
             # Chunk 3 of request 1 prefill.
             # First token is generated
-            # tkv updated for last chunk
             "step": 9,
-            "tkv": 512,
+            "tkv": 512,  # prompt len of request
             "waiting": [],
             "running": ["1", "0"],
             "request_outputs": ["1"],
@@ -705,7 +701,7 @@ def test_cp_prefill_no_interleave(
             # Chunk 0 of request 1 prefill
             # tkv of decode batch (tkv not updated until last chunk)
             "step": 2,
-            "tkv": 10,
+            "tkv": 512,
             "waiting": [],
             "running": ["1", "0"],
             "request_outputs": [],
@@ -716,7 +712,7 @@ def test_cp_prefill_no_interleave(
             # Chunk 1 of request 1 prefill
             # tkv of decode batch (tkv not updated until last chunk)
             "step": 3,
-            "tkv": 10,
+            "tkv": 512,
             "waiting": [],
             "running": ["1", "0"],
             "request_outputs": [],
@@ -727,7 +723,7 @@ def test_cp_prefill_no_interleave(
             # Chunk 2 of request 1 prefill
             # tkv of decode batch (tkv not updated until last chunk)
             "step": 4,
-            "tkv": 10,
+            "tkv": 512,
             "waiting": [],
             "running": ["1", "0"],
             "request_outputs": [],
@@ -921,7 +917,7 @@ def test_cp_prefill_interleave2(
             # Chunk 0 of request 1 prefill
             # tkv of decode batch (tkv not updated until last chunk)
             "step": 4,
-            "tkv": 12,
+            "tkv": 512,
             "waiting": [],
             "running": ["1", "0"],
             "request_outputs": [],
@@ -942,7 +938,7 @@ def test_cp_prefill_interleave2(
             # Chunk 1 of request 1 prefill
             # tkv of decode batch (tkv not updated until last chunk)
             "step": 6,
-            "tkv": 13,
+            "tkv": 512,
             "waiting": [],
             "running": ["1", "0"],
             "request_outputs": [],
@@ -963,7 +959,7 @@ def test_cp_prefill_interleave2(
             # Chunk 2 of request 1 prefill
             # tkv of decode batch (tkv not updated until last chunk)
             "step": 8,
-            "tkv": 14,
+            "tkv": 512,
             "waiting": [],
             "running": ["1", "0"],
             "request_outputs": [],

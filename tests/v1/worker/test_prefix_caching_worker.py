@@ -202,17 +202,17 @@ def test_multi_chunk_partial_match_misaligned(
     # Schedule decodes of requests 0 and 1
     model_runner_output_6 = pc_model_runner.execute_running_requests()
     pc_model_runner.assert_block_tables_and_slot_mappings(
-        block_tables=[[1, 2, 3, 4, 5, 6, 11], [1, 2, 3, 7, 8, 9, 10]],
-        slot_mappings=[[11], [10]],
+        block_tables=[[1, 2, 3, 7, 8, 9, 10], [1, 2, 3, 4, 5, 6, 11]],
+        slot_mappings=[[10], [11]],
         slot_slice=slice(0, 1),
     )
     pc_model_runner.verify_model_runner_output(
         model_runner_output_6,
-        req_ids=["0", "1"],
+        req_ids=["1", "0"],
         num_sampled_token_ids=2,
         tkv=385,
         n_free_blocks=17,
-        left_padding={"0": 0, "1": 0},
+        left_padding={"1": 0, "0": 0},
     )
 
 
@@ -313,17 +313,17 @@ def test_first_chunk_recomputation(
     # Schedule decodes of requests 0 and 1
     model_runner_output_3 = pc_model_runner.execute_running_requests()
     pc_model_runner.assert_block_tables_and_slot_mappings(
-        block_tables=[[1, 2, 5], [1, 3, 4]],
-        slot_mappings=[[5], [4]],
+        block_tables=[[1, 3, 4], [1, 2, 5]],
+        slot_mappings=[[4], [5]],
         slot_slice=slice(0, 1),
     )
     pc_model_runner.verify_model_runner_output(
         model_runner_output_3,
-        req_ids=["0", "1"],
+        req_ids=["1", "0"],
         num_sampled_token_ids=2,
         tkv=129,
         n_free_blocks=17,
-        left_padding={"0": 0, "1": 0},
+        left_padding={"1": 0, "0": 0},
     )
 
 
@@ -442,16 +442,16 @@ def test_middle_chunk_recomputation_with_padding(
     # Schedule decodes of requests 0 and 1
     model_runner_output_4 = pc_model_runner.execute_running_requests()
     pc_model_runner.assert_block_tables_and_slot_mappings(
-        block_tables=[[0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 12], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]],
-        slot_mappings=[[12], [11]],
+        block_tables=[[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], [0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 12]],
+        slot_mappings=[[11], [12]],
         slot_slice=slice(0, 1),
     )
 
     pc_model_runner.verify_model_runner_output(
         model_runner_output_4,
-        req_ids=["0", "1"],
+        req_ids=["1", "0"],
         num_sampled_token_ids=2,
         tkv=641,
         n_free_blocks=33,
-        left_padding={"0": 128, "1": 0},
+        left_padding={"1": 0, "0": 128},
     )

@@ -53,13 +53,30 @@ class LlavaNextMMUtils(MMUtilsBase):
     @staticmethod
     def get_mm_specific_load_overrides(hf_config: PretrainedConfig):
         """Get any overrides needed for initializing the FMS model from the
-        transformers config. For this model, we need to fix the head_dim, which
-        currently surfaces as a problem for all 2b variants of granite 3.x LLMs
-        when running through FMS.
+        transformers config. For granite-vision-3.2-2b in HF format, the
+        text_config doesn't declare `head_dim` explicitly, and the default
+        fallback (`hidden_size / num_attention_heads` = 2048/32 = 64) is
+        wrong for the FMS Granite implementation, which expects 128. We
+        patch it in here.
 
-        TODO: If additional variants of granite vision are added, or broader
-        llava next support is added in FMS, handle it properly here.
+        A config that already sets `head_dim` correctly (whether to 128 or
+        any other legal value) needs no override — returning a partial
+        `text_config` dict here with `override_hf_pretrained_config=True`
+        would obliterate every other field FMS built from the HF config
+        (emb_dim, nheads, etc.) because FMS's override merges are
+        whole-key replacements, not deep merges.
         """
+        text_cfg = hf_config.text_config
+        explicit_head_dim = getattr(text_cfg, "head_dim", None)
+        if explicit_head_dim is not None:
+            # HF config knows its own head_dim — trust it.
+            return {}
+
+        implicit_head_dim = text_cfg.hidden_size // text_cfg.num_attention_heads
+        if implicit_head_dim == 128:
+            # Implicit head_dim already matches what FMS wants; no override.
+            return {}
+
         return {
             "override_hf_pretrained_config": True,
             "text_config": {"head_dim": 128},

@@ -46,9 +46,10 @@ def mocked_scheduler():
     scheduler.skipped_waiting = FCFSRequestQueue()
     scheduler.running = []
     scheduler.ongoing_prefills = []
+    scheduler.paused_decoding_requests = []
     scheduler.chunk_size = 128
     scheduler.do_interleaving = False
-    scheduler.previous_step_was_prefill = False
+    scheduler.step_is_prefill = False
     scheduler.max_num_running_reqs = 4
     scheduler.tkv = 0
     scheduler.block_size = 64
@@ -59,6 +60,9 @@ def mocked_scheduler():
     scheduler.reserved_blocks = dict[str, int]()
     scheduler._get_required_blocks = lambda x, *args, **kwargs: (0, 0)
     scheduler._get_free_blocks = lambda *args, **kwargs: 1
+    scheduler.pause_events = 0
+    scheduler.resume_events = 0
+    scheduler.long_output_prio = False
 
     # Stub kv_cache_manager.get_computed_blocks → (None, 0) so
     # _current_chunk_token_threshold treats every candidate as a fresh prefill
@@ -425,7 +429,9 @@ def test_sparse_index_grammar_crash(
             sampling_params
         )
         sampling_params._validate_structured_outputs(
-            pc_model_runner.vllm_config.structured_outputs_config, tokenizer
+            model_config=pc_model_runner.vllm_config.model_config,
+            structured_outputs_config=pc_model_runner.vllm_config.structured_outputs_config,
+            tokenizer=tokenizer,
         )
         pc_model_runner.scheduler.structured_output_manager.grammar_init(request.request)
 
