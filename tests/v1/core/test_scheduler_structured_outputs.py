@@ -1,10 +1,12 @@
 """Unit tests for scheduler handling of structured outputs.
 
-Tests the structured output support in sendnn_inference/v1/core/scheduler.py that
-preserves structured_output_request on Request objects and attaches grammar
-output via _spyre_grammar_output attribute in the chunked prefill scheduler.
+Tests the structured output support in sendnn_inference/v1/core/scheduler.py
+that promotes the grammar status (WAITING_FOR_STRUCTURED_OUTPUT_GRAMMAR →
+WAITING) when a grammar becomes ready during schedule(), and that requests
+with a still-pending grammar remain blocked.
 
-These unit tests mock the scheduler dependencies and call the actual schedule() method.
+These unit tests mock the scheduler dependencies and call the actual
+schedule() method.
 """
 
 import pytest
@@ -13,7 +15,7 @@ from vllm import SamplingParams
 from vllm.sampling_params import StructuredOutputsParams
 from vllm.v1.core.sched.request_queue import FCFSRequestQueue
 from vllm.v1.request import Request, RequestStatus
-from vllm.v1.core.sched.output import CachedRequestData
+from vllm.v1.core.sched.output import SchedulerOutput
 from sendnn_inference.v1.core.scheduler import ChunkedPrefillSpyreScheduler
 from scheduling_utils import create_request_for_scheduler_test, random_prompt
 
@@ -25,20 +27,46 @@ from spyre_util import REFERENCE_MODELS
 pytestmark = pytest.mark.skip_global_cleanup
 
 
+def _make_structured_request(request_id: str, arrival_time: float = 0) -> Request:
+    """Build a grammar-pending structured-output request."""
+    return Request(
+        request_id=request_id,
+        sampling_params=SamplingParams(
+            max_tokens=20,
+            temperature=0.0,
+            structured_outputs=StructuredOutputsParams(json_object=True),
+        ),
+        prompt_token_ids=list(range(30)),
+        arrival_time=arrival_time,
+        lora_request=None,
+        pooling_params=None,
+    )
+
+
+def _make_regular_request(request_id: str, arrival_time: float = 0) -> Request:
+    """Build a plain (non-structured-output) request."""
+    return Request(
+        request_id=request_id,
+        sampling_params=SamplingParams(max_tokens=20, temperature=0.0),
+        prompt_token_ids=list(range(30)),
+        arrival_time=arrival_time,
+        lora_request=None,
+        pooling_params=None,
+    )
+
+
 @pytest.fixture
 def mocked_scheduler():
-    """Create a mock scheduler with minimal dependencies."""
-    # Create a mock vllm_config
+    """Minimal ChunkedPrefillSpyreScheduler with real schedule() but mocked
+    infrastructure (kv-cache, base Scheduler.schedule, etc.)."""
     mock_vllm_config = Mock()
     mock_vllm_config.model_config.max_model_len = 2048
     mock_vllm_config.scheduler_config.max_num_batched_tokens = 128
     mock_vllm_config.scheduler_config.max_num_seqs = 4
 
-    # Create scheduler instance with mocked dependencies
     with patch.object(ChunkedPrefillSpyreScheduler, "__init__", lambda x, *args, **kwargs: None):
         scheduler = ChunkedPrefillSpyreScheduler()
 
-    # Set required attributes
     scheduler.vllm_config = mock_vllm_config
     scheduler.model_config = mock_vllm_config.model_config
     scheduler.scheduler_config = mock_vllm_config.scheduler_config
@@ -64,323 +92,90 @@ def mocked_scheduler():
     scheduler.resume_events = 0
     scheduler.long_output_prio = False
 
-    # Stub kv_cache_manager.get_computed_blocks → (None, 0) so
-    # _current_chunk_token_threshold treats every candidate as a fresh prefill
-    # with no prefix-cache hit.
     scheduler.kv_cache_manager = Mock()
     scheduler.kv_cache_manager.get_computed_blocks.return_value = (None, 0)
 
-    # Mock the base scheduler's schedule method and can_schedule_prefill,
-    # but ChunkedPrefillSpyreScheduler.schedule uses the code implementation
-    mock_output = Mock()
-    mock_output.has_structured_output_requests = False
-    mock_output.num_scheduled_tokens = {}
-    mock_output.scheduled_new_reqs = []
-    mock_output.scheduled_cached_reqs = CachedRequestData.make_empty()
-    # mock_output.total_num_scheduled_tokens = 0
-    # mock_output.finished_req_ids = set()
+    real_output = SchedulerOutput.make_empty()
 
     with (
         patch.object(ChunkedPrefillSpyreScheduler, "can_schedule_prefill", return_value=True),
-        patch("vllm.v1.core.sched.scheduler.Scheduler.schedule", return_value=mock_output),
+        patch("vllm.v1.core.sched.scheduler.Scheduler.schedule", return_value=real_output),
     ):
         yield scheduler
 
 
-class TestSchedulerStructuredOutputHandling:
-    """Test that the scheduler preserves structured_output_request on requests."""
+def test_grammar_ready_request_promoted_to_waiting(mocked_scheduler):
+    """A structured-output request whose grammar becomes ready between
+    schedule() calls must be promoted WAITING_FOR_STRUCTURED_OUTPUT_GRAMMAR →
+    WAITING so the scheduler can prefill it.
 
-    def test_scheduler_preserves_structured_output_request(self, mocked_scheduler):
-        """Test that the scheduler preserves structured_output_request on requests."""
+    """
+    request = _make_structured_request("struct_req")
+    assert request.status == RequestStatus.WAITING_FOR_STRUCTURED_OUTPUT_GRAMMAR
+    assert request.structured_output_request.grammar is None
 
-        # Create a request with structured outputs
-        sampling_params = SamplingParams(
-            max_tokens=20,
-            temperature=0.0,
-            structured_outputs=StructuredOutputsParams(json_object=True),
-        )
+    request.structured_output_request.grammar = Mock()
 
-        request = Request(
-            request_id="test_req",
-            sampling_params=sampling_params,
-            prompt_token_ids=list(range(50)),
-            arrival_time=0,
-            lora_request=None,
-            pooling_params=None,
-        )
+    mocked_scheduler.waiting.append(request)
+    mocked_scheduler.schedule()
 
-        # Verify structured_output_request is set
-        assert request.structured_output_request is not None
-        assert request.status == RequestStatus.WAITING_FOR_STRUCTURED_OUTPUT_GRAMMAR
-
-        # Add request to waiting queue
-        mocked_scheduler.waiting.append(request)
-        # Call the actual schedule method
-        mocked_scheduler.schedule()
-
-        # Verify structured_output_request is preserved
-        assert request.structured_output_request is not None
-
-    def test_scheduler_handles_request_without_structured_output(self, mocked_scheduler):
-        """Test that requests without structured_output_request are unaffected."""
-
-        # Create a request without structured outputs
-        sampling_params = SamplingParams(
-            max_tokens=20,
-            temperature=0.0,
-        )
-
-        request = Request(
-            request_id="test_req",
-            sampling_params=sampling_params,
-            prompt_token_ids=list(range(50)),
-            arrival_time=0,
-            lora_request=None,
-            pooling_params=None,
-        )
-
-        # Verify structured_output_request is None
-        assert request.structured_output_request is None
-
-        # Add request to waiting queue
-        mocked_scheduler.waiting.append(request)
-        # Call the actual schedule method
-        mocked_scheduler.schedule()
-
-        # Verify request is unchanged
-        assert request.structured_output_request is None
-        # Status may have changed due to base scheduler, but that's OK
-
-    def test_scheduler_handles_multiple_requests_with_structured_outputs(self, mocked_scheduler):
-        """Test that multiple requests with structured outputs are all preserved."""
-
-        # Create multiple requests with structured outputs
-        requests = []
-        for i in range(3):
-            sampling_params = SamplingParams(
-                max_tokens=20,
-                temperature=0.0,
-                structured_outputs=StructuredOutputsParams(json_object=True),
-            )
-
-            request = Request(
-                request_id=f"test_req_{i}",
-                sampling_params=sampling_params,
-                prompt_token_ids=list(range(50)),
-                arrival_time=i,
-                lora_request=None,
-                pooling_params=None,
-            )
-            requests.append(request)
-            mocked_scheduler.waiting.append(request)
-
-        # Verify all have structured_output_request set
-        for request in requests:
-            assert request.structured_output_request is not None
-            assert request.status == RequestStatus.WAITING_FOR_STRUCTURED_OUTPUT_GRAMMAR
-
-        # Call the actual schedule method
-        mocked_scheduler.schedule()
-
-        # Verify all are preserved
-        for request in requests:
-            assert request.structured_output_request is not None
-
-    def test_scheduler_preserves_other_request_attributes(self, mocked_scheduler):
-        """Test that other request attributes are not affected by scheduling."""
-
-        sampling_params = SamplingParams(
-            max_tokens=20,
-            temperature=0.5,
-            top_p=0.9,
-            structured_outputs=StructuredOutputsParams(json_object=True),
-        )
-
-        request = Request(
-            request_id="test_req",
-            sampling_params=sampling_params,
-            prompt_token_ids=list(range(50)),
-            arrival_time=1.5,
-            lora_request=None,
-            pooling_params=None,
-        )
-
-        # Store original values
-        original_request_id = request.request_id
-        original_prompt_tokens = list(request.prompt_token_ids) if request.prompt_token_ids else []
-        original_arrival_time = request.arrival_time
-        original_sampling_params = request.sampling_params
-
-        # Add request to waiting queue
-        mocked_scheduler.waiting.append(request)
-        # Call the actual schedule method
-        mocked_scheduler.schedule()
-
-        # Verify other attributes are unchanged
-        assert request.request_id == original_request_id
-        assert request.prompt_token_ids == original_prompt_tokens
-        assert request.arrival_time == original_arrival_time
-        assert request.sampling_params is original_sampling_params
-        # structured_output_request is preserved
-        assert request.structured_output_request is not None
-        assert request.status == RequestStatus.WAITING_FOR_STRUCTURED_OUTPUT_GRAMMAR
+    assert request.status == RequestStatus.WAITING, (
+        "Request with a ready grammar was not promoted from "
+        "WAITING_FOR_STRUCTURED_OUTPUT_GRAMMAR to WAITING"
+    )
 
 
-class TestSchedulerSimultaneousRequests:
-    """Test that the scheduler handles simultaneous structured and regular requests."""
+def test_mixed_batch_only_ready_grammar_requests_promoted(mocked_scheduler):
+    """In a mixed waiting queue only the request whose grammar is ready must
+    be promoted; the one still compiling must remain blocked.
+    """
+    ready_req = _make_structured_request("ready", arrival_time=0)
+    pending_req = _make_structured_request("pending", arrival_time=1)
+    ready_req.structured_output_request.grammar = Mock()
 
-    def test_simultaneous_structured_and_regular_requests(self, mocked_scheduler):
-        """Simulate a mixed batch: some requests use json_object, others don't.
-        All structured_output_request values should be preserved correctly."""
+    mocked_scheduler.waiting.append(ready_req)
+    mocked_scheduler.waiting.append(pending_req)
+    mocked_scheduler.schedule()
 
-        structured_params = SamplingParams(
-            max_tokens=20,
-            temperature=0.0,
-            structured_outputs=StructuredOutputsParams(json_object=True),
-        )
-        regular_params = SamplingParams(
-            max_tokens=20,
-            temperature=0.0,
-        )
+    assert ready_req.status == RequestStatus.WAITING, (
+        "ready_req with compiled grammar was not promoted to WAITING"
+    )
+    assert pending_req.status == RequestStatus.WAITING_FOR_STRUCTURED_OUTPUT_GRAMMAR, (
+        "pending_req was promoted despite its grammar not being ready"
+    )
 
-        structured_req_1 = Request(
-            request_id="struct_1",
-            sampling_params=structured_params,
-            prompt_token_ids=list(range(50)),
-            arrival_time=0,
-            lora_request=None,
-            pooling_params=None,
-        )
-        regular_req = Request(
-            request_id="regular_1",
-            sampling_params=regular_params,
-            prompt_token_ids=list(range(40)),
-            arrival_time=1,
-            lora_request=None,
-            pooling_params=None,
-        )
-        structured_req_2 = Request(
-            request_id="struct_2",
-            sampling_params=structured_params,
-            prompt_token_ids=list(range(60)),
-            arrival_time=2,
-            lora_request=None,
-            pooling_params=None,
-        )
+def test_grammar_not_ready_request_stays_blocked(mocked_scheduler):
+    """A structured-output request whose grammar is still compiling must NOT
+    be promoted — it must remain WAITING_FOR_STRUCTURED_OUTPUT_GRAMMAR.
+    """
+    request = _make_structured_request("struct_req_pending")
+    assert request.structured_output_request.grammar is None
 
-        # Verify initial state
-        assert structured_req_1.structured_output_request is not None
-        assert regular_req.structured_output_request is None
-        assert structured_req_2.structured_output_request is not None
+    mocked_scheduler.waiting.append(request)
+    mocked_scheduler.schedule()
 
-        # Add all three to the waiting queue simultaneously
-        mocked_scheduler.waiting.append(structured_req_1)
-        mocked_scheduler.waiting.append(regular_req)
-        mocked_scheduler.waiting.append(structured_req_2)
+    assert request.status == RequestStatus.WAITING_FOR_STRUCTURED_OUTPUT_GRAMMAR, (
+        "Request was prematurely promoted while its grammar was still compiling"
+    )
 
-        mocked_scheduler.schedule()
 
-        # Structured requests should still have their structured_output_request
-        assert structured_req_1.structured_output_request is not None
-        assert structured_req_2.structured_output_request is not None
-        # Regular request should still have None
-        assert regular_req.structured_output_request is None
+def test_regular_request_not_blocked_alongside_pending_grammar(mocked_scheduler):
+    """A regular (non-structured-output) request in the same waiting queue as
+    a grammar-pending request must be picked up for prefill (step_is_prefill=True).
+    """
+    structured_req = _make_structured_request("struct", arrival_time=0)
+    regular_req = _make_regular_request("regular", arrival_time=1)
 
-    def test_simultaneous_structured_requests_all_preserved(self, mocked_scheduler):
-        """Multiple structured output requests arriving at the same time
-        should all be preserved after scheduling."""
+    mocked_scheduler.waiting.append(structured_req)
+    mocked_scheduler.waiting.append(regular_req)
+    mocked_scheduler.schedule()
 
-        requests = []
-        for i in range(4):
-            params = SamplingParams(
-                max_tokens=20,
-                temperature=0.0,
-                structured_outputs=StructuredOutputsParams(json_object=True),
-            )
-            req = Request(
-                request_id=f"concurrent_struct_{i}",
-                sampling_params=params,
-                prompt_token_ids=list(range(30 + i * 10)),
-                arrival_time=i * 0.1,
-                lora_request=None,
-                pooling_params=None,
-            )
-            requests.append(req)
-            mocked_scheduler.waiting.append(req)
-
-        mocked_scheduler.schedule()
-
-        for req in requests:
-            assert req.structured_output_request is not None, (
-                f"Request {req.request_id} lost its structured_output_request"
-            )
-
-    def test_grammar_output_attached_for_mixed_batch(self, mocked_scheduler):
-        """Verify _spyre_grammar_output is attached to scheduler output
-        when the batch contains a mix of structured and regular requests."""
-
-        structured_params = SamplingParams(
-            max_tokens=20,
-            temperature=0.0,
-            structured_outputs=StructuredOutputsParams(json_object=True),
-        )
-        regular_params = SamplingParams(
-            max_tokens=20,
-            temperature=0.0,
-        )
-
-        mocked_scheduler.waiting.append(
-            Request(
-                request_id="struct_req",
-                sampling_params=structured_params,
-                prompt_token_ids=list(range(50)),
-                arrival_time=0,
-                lora_request=None,
-                pooling_params=None,
-            )
-        )
-        mocked_scheduler.waiting.append(
-            Request(
-                request_id="regular_req",
-                sampling_params=regular_params,
-                prompt_token_ids=list(range(40)),
-                arrival_time=1,
-                lora_request=None,
-                pooling_params=None,
-            )
-        )
-
-        output = mocked_scheduler.schedule()
-
-        # _spyre_grammar_output should be set on the output
-        assert hasattr(output, "_spyre_grammar_output")
-
-    def test_grammar_output_attached_for_all_regular_batch(self, mocked_scheduler):
-        """When all requests are regular (no structured output),
-        _spyre_grammar_output should still be set (may be None)."""
-
-        regular_params = SamplingParams(
-            max_tokens=20,
-            temperature=0.0,
-        )
-
-        for i in range(3):
-            mocked_scheduler.waiting.append(
-                Request(
-                    request_id=f"regular_{i}",
-                    sampling_params=regular_params,
-                    prompt_token_ids=list(range(50)),
-                    arrival_time=i,
-                    lora_request=None,
-                    pooling_params=None,
-                )
-            )
-
-        output = mocked_scheduler.schedule()
-
-        # _spyre_grammar_output should still be attached (even if None)
-        assert hasattr(output, "_spyre_grammar_output")
-
+    # The regular request has no grammar constraint, so the scheduler must
+    # have selected it for prefill — step_is_prefill must be True.
+    assert mocked_scheduler.step_is_prefill is True, (
+        "Scheduler failed to schedule the regular request for prefill; "
+        "the ready_to_prefill filter likely excluded it incorrectly"
+    )
 
 def test_sparse_index_grammar_crash(
     monkeypatch: pytest.MonkeyPatch,
