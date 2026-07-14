@@ -48,7 +48,7 @@ def test_env_vars_override_for_invalid_config():
     "machine,expected",
     [
         ("s390x", torch.float32),
-        ("ppc64le", torch.bfloat16),
+        ("ppc64le", torch.float32),
         ("x86_64", torch.float16),
         ("aarch64", torch.float16),
     ],
