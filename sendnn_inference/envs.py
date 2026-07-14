@@ -35,7 +35,7 @@ logger = init_logger(__name__)
 
 _cache: dict[str, Any] = {}
 
-_CPU_MM_DTYPE_PLATFORM_DEFAULTS = {"s390x": "float32", "ppc64le": "bfloat16"}
+_CPU_MM_DTYPE_PLATFORM_DEFAULTS = {"s390x": "float32", "ppc64le": "float32"}
 
 
 def override(name: str, value: str) -> None:
