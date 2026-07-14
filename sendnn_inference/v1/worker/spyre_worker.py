@@ -803,6 +803,7 @@ class SpyreWorker(WorkerBase):
         grammar_output: "GrammarOutput",
     ) -> ModelRunnerOutput | None:
         return self.model_runner.sample_tokens(grammar_output)
+
     def store_mm_embeddings(self, results: list[tuple]) -> None:
         """Read completed MM embeddings from SHM and cache them for prefill.
 
