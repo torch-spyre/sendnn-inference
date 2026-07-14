@@ -144,6 +144,7 @@ def test_mixed_batch_only_ready_grammar_requests_promoted(mocked_scheduler):
         "pending_req was promoted despite its grammar not being ready"
     )
 
+
 def test_grammar_not_ready_request_stays_blocked(mocked_scheduler):
     """A structured-output request whose grammar is still compiling must NOT
     be promoted — it must remain WAITING_FOR_STRUCTURED_OUTPUT_GRAMMAR.
@@ -176,6 +177,7 @@ def test_regular_request_not_blocked_alongside_pending_grammar(mocked_scheduler)
         "Scheduler failed to schedule the regular request for prefill; "
         "the ready_to_prefill filter likely excluded it incorrectly"
     )
+
 
 def test_sparse_index_grammar_crash(
     monkeypatch: pytest.MonkeyPatch,
