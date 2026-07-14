@@ -341,11 +341,11 @@ class SpyrePoolingModelRunner(
                 self._model = self._model.base_model
             else:
                 self._model = AutoModel.from_pretrained(
-                    self.model_config.model, dtype=torch.float16
+                    self.model_config.model, dtype=torch.float16, attn_implementation="eager"
                 )
         elif task == "classify":
             class_model = AutoModelForSequenceClassification.from_pretrained(
-                self.model_config.model
+                self.model_config.model, attn_implementation="eager"
             )
             if hasattr(class_model, "bert"):
                 self._model = class_model.bert
@@ -417,10 +417,10 @@ class SpyrePoolingModelRunner(
         # self.model here is probably a transformers model class
         if self.model_config.architecture in FMS_POOLING_MODEL_LIST:
             assert isinstance(self.model.config.src_vocab_size, int)
-            return self.model.config.src_vocab_size  # ty: ignore[invalid-return-type]
+            return self.model.config.src_vocab_size
         else:
             assert isinstance(self.model.config.vocab_size, int)
-            return self.model.config.vocab_size  # ty: ignore[invalid-return-type]
+            return self.model.config.vocab_size
 
     def _prepare_pad_input_ids(
         self,
@@ -791,6 +791,17 @@ class ChunkedPrefillModelRunner(
         # Initialize performance metric logger for tracking embedding times
         self.perf_logger = create_perf_metric_logger(rank=rank)
 
+        # Pre-computed MM embeddings for waiting requests (keyed by request_id).
+        # Populated by store_mm_embeddings() (async path via executor).
+        # Consumed and removed by add_new_request() when the request begins prefill.
+        self.pending_mm_embeddings: dict[str, torch.Tensor] = {}
+
+        # Request IDs that finished (aborted/completed) while their encode job
+        # was still in-flight.  store_mm_embeddings() checks this set and discards
+        # late-arriving results rather than letting them leak in pending_mm_embeddings.
+        # Entries are removed once the late result arrives (self-cleaning).
+        self._finished_encode_req_ids: set[str] = set()
+
     def load_model(self) -> None:
         self._model = SpyreCausalLM(
             vllm_config=self.vllm_config,
@@ -812,6 +823,33 @@ class ChunkedPrefillModelRunner(
     def prompt_len(request: NewRequestData | Request) -> int:
         assert request.prompt_token_ids is not None, "prompt token ids are required"
         return len(request.prompt_token_ids)
+
+    def store_mm_embeddings(self, results: list[tuple]) -> None:
+        """Read completed async MM embeddings from POSIX SHM and cache them.
+
+        Called on all TP ranks via collective_rpc by SpyreMultiprocExecutor
+        after the encoder subprocess has written embeddings to SHM.  Each rank
+        reads independently — no rank-0 tensor broadcast is needed.
+
+        ``results`` is a list of ``(req_id, shape, dtype)`` tuples.  The SHM
+        blocks are kept alive by the executor until this call returns.
+        """
+        for req_id, shape, dtype in results:
+            if req_id in self._finished_encode_req_ids:
+                # Request finished while its encode was in-flight; discard the
+                # late result and clean up the tombstone entry.
+                self._finished_encode_req_ids.discard(req_id)
+                logger.debug("Discarding late async MM embeddings for finished req '%s'", req_id)
+                continue
+            embeds = read_embeddings(req_id, shape, dtype)
+            self.pending_mm_embeddings[req_id] = embeds
+            logger.debug(
+                "Stored async MM embeddings for req '%s' (rank %d): shape=%s dtype=%s",
+                req_id,
+                self.rank,
+                shape,
+                dtype,
+            )
 
     def get_supported_tasks(self) -> tuple[SupportedTask, ...]:
         tasks = list[SupportedTask]()
@@ -1038,6 +1076,11 @@ class ChunkedPrefillModelRunner(
                     mm_features=mm_features,
                     is_decode=False,
                 )
+            # Ensure embeddings are on CPU before passing to the Spyre decoder.
+            # When the vision tower runs on NNPA, get_maybe_mm_embeddings returns
+            # an NNPA tensor; slicing it into a CPU input_embeds in
+            # _prepare_chunked_prefill would fail without this explicit move.
+            full_embeds = full_embeds.cpu().contiguous()
             t_elapsed = time.time() - t0
             logger.info("maybe_mm_embedding processing time: %.2fms", (t_elapsed * 1000))
             self.perf_logger.log(
@@ -1255,6 +1298,7 @@ class ChunkedPrefillModelRunner(
             full_input_tokens = torch.tensor(
                 prompt_token_ids, dtype=torch.int64, device=self.device
             ).unsqueeze(0)
+
             self._compute_and_cache_mm_embeddings(request, req_id, full_input_tokens, mm_features)
 
         # Slice the cached embeddings for this chunk
@@ -1520,6 +1564,17 @@ class ChunkedPrefillModelRunner(
 
         self.requests[req_id] = req_state
 
+        # Consume pre-computed embeddings if they were encoded in advance by
+        # pre_encode_mm_requests().  With cached_mm_embeddings already set,
+        # _prepare_chunked_prefill skips its encoding block entirely.
+        if req_id in self.pending_mm_embeddings:
+            req_state.cached_mm_embeddings = self.pending_mm_embeddings.pop(req_id)
+            logger.debug(
+                "Consumed pre-encoded MM embeddings for request '%s' (rank %d)",
+                req_id,
+                self.rank,
+            )
+
         # Add only to prefill batch, it will be added later to the input batch
         # once if is fully prefilled
         self.prefill_batch.add_request(req_state)
@@ -1680,6 +1735,11 @@ class ChunkedPrefillModelRunner(
         if scheduler_output.finished_req_ids:
             for req_id in scheduler_output.finished_req_ids:
                 self.input_batch.remove_request(req_id)
+                # If the embedding was already delivered, discard it now.
+                # If the encode is still in-flight, mark the req_id so that
+                # store_mm_embeddings() discards the late result when it arrives.
+                if self.pending_mm_embeddings.pop(req_id, None) is None:
+                    self._finished_encode_req_ids.add(req_id)
                 self.requests.pop(req_id, None)
                 # Clean up paused tracking for finished requests
                 self.paused_req_ids.discard(req_id)
@@ -1798,7 +1858,7 @@ class ChunkedPrefillModelRunner(
         if not scheduler_output.total_num_scheduled_tokens:
             return self.get_empty_output()
 
-        # Initialize internal request states if this is the first chunk of a very new prefill
+        # Initialize internal request states if this is the first chunk of a new prefill
         self.maybe_setup_new_prefill(scheduler_output)
 
         # Forward pass

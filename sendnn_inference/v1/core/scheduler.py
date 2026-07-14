@@ -2,8 +2,8 @@
 
 import math
 from collections import deque
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Iterable, Union
-from dataclasses import dataclass
 from collections import defaultdict
 
 
@@ -22,6 +22,17 @@ else:
     SchedulerOutput = None
 
 logger = init_logger(__name__)
+
+
+@dataclass
+class MMEncodeRequest:
+    """Lightweight descriptor for a waiting MM request that should be
+    pre-encoded before its Spyre prefill step begins."""
+
+    request_id: str
+    prompt_token_ids: list[int]
+    mm_features: list = field(default_factory=list)
+
 
 # Ensure that block_size is 64
 # This ensures the rounding function is correct
@@ -211,6 +222,16 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
 
         self.tkv = 0
         self.block_size = SpyrePlatform.get_block_size()
+
+        # Async MM encoding state.
+        # _mm_encoding_submitted: requests whose encode job has been dispatched to
+        #   the encoder subprocess but whose result has not yet been received.
+        # _mm_encoding_ready: requests whose embeddings are ready in
+        #   pending_mm_embeddings (confirmed via _spyre_newly_encoded_req_ids in
+        #   the model runner output).  Only MM requests in this set are eligible
+        #   for prefill scheduling.
+        self._mm_encoding_submitted: set[str] = set()
+        self._mm_encoding_ready: set[str] = set()
         self.max_batch_tkv_limit = SpyrePlatform.get_max_batch_tkv_limit()
 
         assert self.max_batch_tkv_limit != -1, (
@@ -229,6 +250,24 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         assert isinstance(model_runner_output, SpyreModelRunnerOutput), (
             "Expecting an instance of CPSpyreModelRunnerOutput when doing chunked prefill."
         )
+
+        # Update async MM encoding state: move newly encoded requests from
+        # "submitted" to "ready" so they become eligible for prefill.
+        # Read from scheduler_output (set by SpyreMultiprocExecutor.execute_model)
+        # rather than model_runner_output — the executor uses non_block=True which
+        # returns a Future, so attributes set on the Future never reach the resolved
+        # ModelRunnerOutput.  scheduler_output is the same object in both places.
+        for req_id in getattr(scheduler_output, "_spyre_newly_encoded_req_ids", []):
+            self._mm_encoding_submitted.discard(req_id)
+            # Only promote to ready if the request is still known to the scheduler.
+            # If it was aborted while encoding was in-flight, finish_requests already
+            # removed it — skip to avoid a stale _mm_encoding_ready entry.
+            if req_id in self.requests:
+                self._mm_encoding_ready.add(req_id)
+        # Abort any request whose encode job failed — no retries.
+        for req_id in getattr(scheduler_output, "_spyre_failed_encode_req_ids", []):
+            logger.error("MM encode failed for req '%s' — aborting request", req_id)
+            self.finish_requests([req_id], RequestStatus.FINISHED_ABORTED)
 
         # Remove completed prefills
         self.ongoing_prefills = [
@@ -349,16 +388,23 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         # req_id -> cached_blocks, new_blocks
         required_blocks = dict[str, tuple[int, int]]()
 
-        # Check if new requests can be scheduled for prefill
+        # Check if new requests can be scheduled for prefill.
+        # Per-request ineligibility (MM encoding not ready, shape mismatch, …)
+        # is collected in skipped_requests and restored to holdback_queue after
+        # the loop so they remain available for future schedule() calls.
+        # Block-count capacity is the only FIFO-correct reason to stop early:
+        # if the front request exceeds available blocks, later requests are
+        # unlikely to fit either.
         available_blocks = self._get_free_blocks() - self.total_reserved_blocks
+        skipped_requests: list[Request] = []
         while holdback_queue:
-            new_request = holdback_queue[0]
+            new_request = holdback_queue.popleft()
             cached, blocks = self._get_required_blocks(new_request, True)
             if blocks > available_blocks:
+                holdback_queue.appendleft(new_request)
                 break
 
             if self.can_schedule_prefill(new_request):
-                holdback_queue.popleft()
                 required_blocks[new_request.request_id] = (cached, blocks)
                 available_blocks -= blocks
 
@@ -371,9 +417,14 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
                 # Add request to the waiting queue
                 self.waiting.append(new_request)
             else:
-                # Otherwise, we simply stop here so that the scheduler
-                # can work with the batch we have
-                break
+                # Per-request reason (e.g. MM encoding still in-flight): skip
+                # this request and keep checking later ones.
+                skipped_requests.append(new_request)
+
+        # Restore skipped requests at the front of holdback_queue so they
+        # are returned to self.waiting (line below) in their original order.
+        for req in reversed(skipped_requests):
+            holdback_queue.appendleft(req)
 
         assert len(self.ongoing_prefills) <= 1, (
             "Only one request can be prefilled at a time, but got %d" % len(self.ongoing_prefills)
@@ -443,6 +494,30 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         if not self.step_is_prefill:
             self._handle_decode_requests_pausing()
 
+        # Collect MM encode requests for ALL waiting multimodal requests that
+        # have not yet been submitted to the encoder subprocess.  Emitted on
+        # every schedule() call (prefill AND decode steps) so the encoder can
+        # stay ahead of the prefill queue.  The executor submits each request
+        # exactly once (tracked here via _mm_encoding_submitted).
+        mm_encode_requests: list[MMEncodeRequest] = []
+        for req in holdback_queue:
+            if not getattr(req, "mm_features", None):
+                continue
+            if req.request_id in self._mm_encoding_submitted:
+                continue
+            if req.request_id in self._mm_encoding_ready:
+                continue
+            mm_encode_requests.append(
+                MMEncodeRequest(
+                    request_id=req.request_id,
+                    prompt_token_ids=list(req.prompt_token_ids or []),
+                    mm_features=req.mm_features,
+                )
+            )
+            self._mm_encoding_submitted.add(req.request_id)
+            if len(mm_encode_requests) >= self.max_num_running_reqs:
+                break
+
         # Cap chunk-0 token count to chunk_size - left_padding so the upstream KV
         # cache manager doesn't allocate a real blocks for the left-padding region.
         # Only matters at chunk 0; later chunks land on natural chunk boundaries.
@@ -473,6 +548,17 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         ):
             logger.debug("Scheduled tokens in this step: %s", outputs.num_scheduled_tokens)
 
+        outputs._spyre_mm_encode_requests = mm_encode_requests  # type: ignore[attr-defined]
+
+        # Collect grammar bitmask synchronously for structured outputs.
+        # NOTE: This is done here because vllm-spyre currently combines token sampling
+        # in model_executor.execute_model() rather than implementing sample_tokens()
+        # in the model runner. This means we cannot collect the grammar bitmask
+        # asynchronously while the model is running (as done in vLLM core).
+        # TODO: Implement sample_tokens() in SpyreModelRunner to enable async grammar
+        # collection for better performance.
+        outputs._spyre_grammar_output = self.get_grammar_bitmask(outputs)  # type: ignore[attr-defined]
+
         # As blocks are allocated, we discount them from the reserved blocks.
         # For prefill blocks we must first subtract the cached blocks.
         free_blocks = self._get_free_blocks()
@@ -501,6 +587,16 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         return outputs
 
     def can_schedule_prefill(self, request: Request) -> bool:
+        # MM requests must wait until their vision embedding is ready.
+        # Only applies in async encoder mode; in non-async mode nothing ever
+        # populates _mm_encoding_ready so the gate would block all MM requests.
+        # Text-only requests are completely unaffected by this check.
+        if getattr(request, "mm_features", None) and (
+            envs_spyre.SENDNN_INFERENCE_ASYNC_MM_ENCODER
+            and request.request_id not in self._mm_encoding_ready
+        ):
+            return False
+
         # running and waiting queues are both empty, we can start a new batch
         # which can always be scheduled
         if len(self.running) + len(self.waiting) == 0:
@@ -814,11 +910,33 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         )
 
         # request_ids None means all requests are finished
-        self.ongoing_prefills = (
-            []
-            if request_ids is None
-            else [r for r in self.ongoing_prefills if r.request_id not in request_ids]
-        )
+        if request_ids is None:
+            self.ongoing_prefills = []
+            self._mm_encoding_submitted.clear()
+            self._mm_encoding_ready.clear()
+        else:
+            self.ongoing_prefills = [
+                r for r in self.ongoing_prefills if r.request_id not in request_ids
+            ]
+            for rid in request_ids:
+                # If the encode job is queued but not yet started, send a cancel
+                # token so the encoder subprocess skips it rather than running a
+                # full (expensive) vision-tower forward for a dead request.
+                if rid in self._mm_encoding_submitted:
+                    from sendnn_inference.v1.executor.spyre_executor import SpyreMultiprocExecutor
+
+                    cq = SpyreMultiprocExecutor.get_mm_cancel_queue()
+                    if cq is not None:
+                        try:
+                            cq.put_nowait(rid)
+                        except Exception as exc:
+                            logger.debug(
+                                "scheduler: failed to send cancel for req '%s': %s",
+                                rid,
+                                exc,
+                            )
+                self._mm_encoding_submitted.discard(rid)
+                self._mm_encoding_ready.discard(rid)
 
         # Also remove from paused_decoding_requests
         self.paused_decoding_requests = (

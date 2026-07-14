@@ -803,6 +803,18 @@ class SpyreWorker(WorkerBase):
         grammar_output: "GrammarOutput",
     ) -> ModelRunnerOutput | None:
         return self.model_runner.sample_tokens(grammar_output)
+    def store_mm_embeddings(self, results: list[tuple]) -> None:
+        """Read completed MM embeddings from SHM and cache them for prefill.
+
+        Called on all TP ranks via collective_rpc by SpyreMultiprocExecutor
+        after the encoder subprocess has written embeddings to POSIX SHM.
+        Each worker reads independently — no rank-0 tensor broadcast needed.
+
+        ``results`` is a list of ``(req_id, shape, dtype)`` tuples identifying
+        the SHM blocks written by the encoder process.
+        """
+        if isinstance(self.model_runner, ChunkedPrefillModelRunner):
+            self.model_runner.store_mm_embeddings(results)
 
     def _get_num_tokens(self, r: NewRequestData) -> int:
         assert r.prompt_token_ids is not None, "requests should have tokens!"
