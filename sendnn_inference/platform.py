@@ -20,6 +20,7 @@ import operator
 import os
 from typing import TYPE_CHECKING, cast, Literal
 
+import huggingface_hub
 import torch
 from vllm.logger import init_logger
 from vllm.utils.argparse_utils import FlexibleArgumentParser
@@ -897,7 +898,6 @@ def _compute_config_format(namespace: argparse.Namespace) -> str:
     avoids the os.path.basename stripping done by any_pattern_in_repo_files,
     which made the original subdirectory guard inoperable.
     """
-    import huggingface_hub
     from vllm.transformers_utils.repo_utils import get_model_path, list_repo_files
 
     # Check both 'model' and 'model_tag' since vLLM uses different
