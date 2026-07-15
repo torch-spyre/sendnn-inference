@@ -319,6 +319,33 @@ class TestPreRegisterAndUpdate:
         assert args.config_format == "mistral"
         assert args.tokenizer_mode == "mistral"
 
+    def test_config_format_defaults_to_auto_for_llama_with_only_original_params_json(
+        self, arg_parsers
+    ):
+        """Test that a Llama HF checkpoint whose params.json lives only inside the
+        'original/' subdirectory is not misidentified as a mistral-format model.
+
+        Uses the tests/fixtures/model_configs/meta-llama/llama-dummy fixture which
+        contains original/params.json but no root-level params.json.
+        """
+        main_parser, serve_parser = arg_parsers
+
+        from pathlib import Path
+
+        llama_dummy_dir = str(
+            Path(__file__).parent.parent
+            / "fixtures"
+            / "model_configs"
+            / "meta-llama"
+            / "llama-dummy"
+        )
+
+        SpyrePlatform.pre_register_and_update(serve_parser)
+        args = main_parser.parse_args(["serve", llama_dummy_dir])
+
+        assert args.config_format == "auto"
+        assert args.tokenizer_mode == "auto"
+
     def test_config_format_defaults_to_auto_for_models_without_params_json(
         self, tmp_path, arg_parsers
     ):
