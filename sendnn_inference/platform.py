@@ -892,11 +892,11 @@ def _compute_config_format(namespace: argparse.Namespace) -> str:
     params.json found only inside the 'original/' subdirectory (as seen in
     some Llama HF checkpoints) does NOT indicate mistral format and is ignored.
 
-    To avoid ambiguity with glob/fnmatch pattern matching across local and remote
-    repos, the model path is always resolved to a local directory first, then
-    checked with os.path.isfile for exact root-level presence.
+    Uses list_repo_files which handles both local paths and remote HF repos,
+    then checks for an exact path match of "params.json" to avoid the
+    os.path.basename stripping done by any_pattern_in_repo_files/fnmatch.
     """
-    from vllm.transformers_utils.repo_utils import get_model_path
+    from vllm.transformers_utils.repo_utils import list_repo_files
 
     # Check both 'model' and 'model_tag' since vLLM uses different
     # attribute names in different contexts
@@ -907,12 +907,13 @@ def _compute_config_format(namespace: argparse.Namespace) -> str:
 
     # Get optional HF arguments
     revision = getattr(namespace, "revision", None)
+    token = getattr(namespace, "hf_token", None)
 
-    # Resolve to a local path (works for both explicit local paths and HF cache)
-    model_path = get_model_path(model, revision)
-
-    # A root-level params.json (and only root-level) indicates mistral format.
-    # os.path.isfile gives an unambiguous exact check — no glob/fnmatch involved.
-    if os.path.isfile(os.path.join(model_path, "params.json")):
+    # list_repo_files returns full relative paths (e.g. "params.json",
+    # "original/params.json") for both local directories and remote HF repos.
+    # An exact match on "params.json" unambiguously detects a root-level file,
+    # avoiding the os.path.basename stripping that any_pattern_in_repo_files uses.
+    files = list_repo_files(model, revision=revision, token=token)
+    if "params.json" in files:
         return "mistral"
     return "auto"
