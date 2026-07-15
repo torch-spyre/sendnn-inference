@@ -21,7 +21,6 @@ import os
 from typing import TYPE_CHECKING, cast, Literal
 
 import torch
-import huggingface_hub
 from vllm.logger import init_logger
 from vllm.utils.argparse_utils import FlexibleArgumentParser
 
@@ -886,15 +885,18 @@ class SpyrePlatform(Platform):
 
 
 def _compute_config_format(namespace: argparse.Namespace) -> str:
-    """Check if a model is in mistral format by looking for params.json.
+    """Check if a model is in mistral format by looking for params.json
+    at the root of the model directory.
 
-    This uses any_pattern_in_repo_files which correctly handles both local paths
-    and HuggingFace cache, including offline mode support.
+    A root-level params.json indicates a mistral-format model.
+    params.json found only inside the 'original/' subdirectory (as seen in
+    some Llama HF checkpoints) does NOT indicate mistral format and is ignored.
 
-    Note: params.json in the 'original/' subdirectory (found in some Llama models)
-    is ignored as it doesn't indicate mistral format.
+    To avoid ambiguity with glob/fnmatch pattern matching across local and remote
+    repos, the model path is always resolved to a local directory first, then
+    checked with os.path.isfile for exact root-level presence.
     """
-    from vllm.transformers_utils.repo_utils import any_pattern_in_repo_files, get_model_path
+    from vllm.transformers_utils.repo_utils import get_model_path
 
     # Check both 'model' and 'model_tag' since vLLM uses different
     # attribute names in different contexts
@@ -905,27 +907,12 @@ def _compute_config_format(namespace: argparse.Namespace) -> str:
 
     # Get optional HF arguments
     revision = getattr(namespace, "revision", None)
-    token = getattr(namespace, "hf_token", None)
 
-    # Resolve local path in offline mode (if not already a local path)
-    if huggingface_hub.constants.HF_HUB_OFFLINE:
-        model = get_model_path(model, revision)
+    # Resolve to a local path (works for both explicit local paths and HF cache)
+    model_path = get_model_path(model, revision)
 
-    # Look for params.json which indicates a mistral-format model
-    if any_pattern_in_repo_files(
-        model,
-        allow_patterns=["params.json"],
-        revision=revision,
-        token=token,
-    ):
-        # Check if params.json is in the 'original/' subdirectory
-        # If so, it's not a mistral model (e.g., Llama models with original/ directory)
-        if any_pattern_in_repo_files(
-            model,
-            allow_patterns=["original/params.json"],
-            revision=revision,
-            token=token,
-        ):
-            return "auto"
+    # A root-level params.json (and only root-level) indicates mistral format.
+    # os.path.isfile gives an unambiguous exact check — no glob/fnmatch involved.
+    if os.path.isfile(os.path.join(model_path, "params.json")):
         return "mistral"
     return "auto"
