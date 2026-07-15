@@ -892,11 +892,13 @@ def _compute_config_format(namespace: argparse.Namespace) -> str:
     params.json found only inside the 'original/' subdirectory (as seen in
     some Llama HF checkpoints) does NOT indicate mistral format and is ignored.
 
-    Uses list_repo_files which handles both local paths and remote HF repos,
-    then checks for an exact path match of "params.json" to avoid the
-    os.path.basename stripping done by any_pattern_in_repo_files/fnmatch.
+    Uses list_repo_files which returns full relative paths for both local
+    directories and remote HF repos. An exact membership check on "params.json"
+    avoids the os.path.basename stripping done by any_pattern_in_repo_files,
+    which made the original subdirectory guard inoperable.
     """
-    from vllm.transformers_utils.repo_utils import list_repo_files
+    import huggingface_hub
+    from vllm.transformers_utils.repo_utils import get_model_path, list_repo_files
 
     # Check both 'model' and 'model_tag' since vLLM uses different
     # attribute names in different contexts
@@ -908,6 +910,12 @@ def _compute_config_format(namespace: argparse.Namespace) -> str:
     # Get optional HF arguments
     revision = getattr(namespace, "revision", None)
     token = getattr(namespace, "hf_token", None)
+
+    # In offline mode, list_repo_files raises OfflineModeIsEnabled and returns []
+    # for non-local repo IDs. Resolve to the local cache path first so that
+    # list_repo_files takes the local directory branch instead.
+    if huggingface_hub.constants.HF_HUB_OFFLINE:
+        model = get_model_path(model, revision)
 
     # list_repo_files returns full relative paths (e.g. "params.json",
     # "original/params.json") for both local directories and remote HF repos.
