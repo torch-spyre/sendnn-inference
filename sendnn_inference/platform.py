@@ -890,6 +890,9 @@ def _compute_config_format(namespace: argparse.Namespace) -> str:
 
     This uses any_pattern_in_repo_files which correctly handles both local paths
     and HuggingFace cache, including offline mode support.
+
+    Note: params.json in the 'original/' subdirectory (found in some Llama models)
+    is ignored as it doesn't indicate mistral format.
     """
     from vllm.transformers_utils.repo_utils import any_pattern_in_repo_files, get_model_path
 
@@ -915,5 +918,14 @@ def _compute_config_format(namespace: argparse.Namespace) -> str:
         revision=revision,
         token=token,
     ):
+        # Check if params.json is in the 'original/' subdirectory
+        # If so, it's not a mistral model (e.g., Llama models with original/ directory)
+        if any_pattern_in_repo_files(
+            model,
+            allow_patterns=["original/params.json"],
+            revision=revision,
+            token=token,
+        ):
+            return "auto"
         return "mistral"
     return "auto"
