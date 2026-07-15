@@ -19,9 +19,16 @@ that code and this test will be removed.
 from pathlib import Path
 
 import pytest
-from vllm import LLM, ModelRegistry
 
-from sendnn_inference import envs as envs_spyre
+# granite_swa ships only in FMS builds with fms/models/granite_swa.py, not in
+# released ibm-fms (<=1.12.1, which CI pins via uv.lock). Without it,
+# `import fms.models.hf` can't register granite_swa with AutoConfig and the load
+# fails. Skip cleanly where it's absent so CI stays green until FMS ships it.
+pytest.importorskip("fms.models.granite_swa")
+
+from vllm import LLM, ModelRegistry  # noqa: E402
+
+from sendnn_inference import envs as envs_spyre  # noqa: E402
 
 TINY_GRANITE_SWA_DIR = str(
     Path(__file__).parent.parent / "fixtures" / "model_configs" / "ibm-granite" / "tiny-granite-swa"
