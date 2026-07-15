@@ -462,17 +462,15 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         elif len(self.waiting) > 0:
             # Promote any requests whose structured-output grammar has become
             # ready, so we correctly classify ready vs not-ready requests.
+            ready_to_prefill = []
             for r in list(self.waiting):
                 if r.status == RequestStatus.WAITING_FOR_STRUCTURED_OUTPUT_GRAMMAR:
                     so_req = r.structured_output_request
                     if so_req and so_req.grammar:
                         r.status = RequestStatus.WAITING
-
-            ready_to_prefill = [
-                r
-                for r in self.waiting
-                if r.status != RequestStatus.WAITING_FOR_STRUCTURED_OUTPUT_GRAMMAR
-            ]
+                        ready_to_prefill.append(r)
+                else:
+                    ready_to_prefill.append(r)
             if ready_to_prefill:
                 new_prefill_candidates = ready_to_prefill
                 # Hide current decodes from the scheduler
