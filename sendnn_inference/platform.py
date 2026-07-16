@@ -20,8 +20,8 @@ import operator
 import os
 from typing import TYPE_CHECKING, cast, Literal
 
-import torch
 import huggingface_hub
+import torch
 from vllm.logger import init_logger
 from vllm.utils.argparse_utils import FlexibleArgumentParser
 
@@ -886,15 +886,19 @@ class SpyrePlatform(Platform):
 
 
 def _compute_config_format(namespace: argparse.Namespace) -> str:
-    """Check if a model is in mistral format by looking for params.json.
+    """Check if a model is in mistral format by looking for params.json
+    at the root of the model directory.
 
-    This uses any_pattern_in_repo_files which correctly handles both local paths
-    and HuggingFace cache, including offline mode support.
+    A root-level params.json indicates a mistral-format model.
+    params.json found only inside the 'original/' subdirectory (as seen in
+    some Llama HF checkpoints) does NOT indicate mistral format and is ignored.
 
-    Note: params.json in the 'original/' subdirectory (found in some Llama models)
-    is ignored as it doesn't indicate mistral format.
+    Uses list_repo_files which returns full relative paths for both local
+    directories and remote HF repos. An exact membership check on "params.json"
+    avoids the os.path.basename stripping done by any_pattern_in_repo_files,
+    which made the original subdirectory guard inoperable.
     """
-    from vllm.transformers_utils.repo_utils import any_pattern_in_repo_files, get_model_path
+    from vllm.transformers_utils.repo_utils import get_model_path, list_repo_files
 
     # Check both 'model' and 'model_tag' since vLLM uses different
     # attribute names in different contexts
@@ -907,25 +911,17 @@ def _compute_config_format(namespace: argparse.Namespace) -> str:
     revision = getattr(namespace, "revision", None)
     token = getattr(namespace, "hf_token", None)
 
-    # Resolve local path in offline mode (if not already a local path)
+    # In offline mode, list_repo_files raises OfflineModeIsEnabled and returns []
+    # for non-local repo IDs. Resolve to the local cache path first so that
+    # list_repo_files takes the local directory branch instead.
     if huggingface_hub.constants.HF_HUB_OFFLINE:
         model = get_model_path(model, revision)
 
-    # Look for params.json which indicates a mistral-format model
-    if any_pattern_in_repo_files(
-        model,
-        allow_patterns=["params.json"],
-        revision=revision,
-        token=token,
-    ):
-        # Check if params.json is in the 'original/' subdirectory
-        # If so, it's not a mistral model (e.g., Llama models with original/ directory)
-        if any_pattern_in_repo_files(
-            model,
-            allow_patterns=["original/params.json"],
-            revision=revision,
-            token=token,
-        ):
-            return "auto"
+    # list_repo_files returns full relative paths (e.g. "params.json",
+    # "original/params.json") for both local directories and remote HF repos.
+    # An exact match on "params.json" unambiguously detects a root-level file,
+    # avoiding the os.path.basename stripping that any_pattern_in_repo_files uses.
+    files = list_repo_files(model, revision=revision, token=token)
+    if "params.json" in files:
         return "mistral"
     return "auto"
