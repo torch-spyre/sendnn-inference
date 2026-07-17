@@ -15,7 +15,7 @@ dependencies = [
     "ibm-fms>=1.11.1,<2",
     # NB: use strict < with the next patch version to not exclude versions with
     # build metadata suffixes
-    "vllm>=0.24.0,<0.24.1",
+    "vllm>=0.24.0,<0.25.2",
     # transformers 5.12.1 includes fixes required for our mistral and granite-4.1-8b models.
     "transformers>=5.12.1",
 
@@ -92,7 +92,7 @@ build-constraint-dependencies = []
 extra-build-variables = { vllm = { VLLM_TARGET_DEVICE = "empty" } }
 
 [tool.uv.sources]
-vllm = { git = "https://github.com/vllm-project/vllm", rev = "v0.24.0" }
+vllm = { git = "https://github.com/vllm-project/vllm", rev = "v0.25.1" }
 torch = [
   { index = "pytorch-cpu" },
 ]
