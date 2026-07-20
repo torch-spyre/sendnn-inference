@@ -7,6 +7,8 @@ This procedure has produced clean upgrades for past patch releases (0.20.1, 0.20
 !!! note "AI Assistant Skills"
     This procedure is referenced by both Claude Code's `/update-vllm` skill and IBM Bob's `update-vllm` skill. When using these assistants, they will automatically follow this procedure and replace `{VERSION}` with the actual version number you specify.
 
+!!! note Do not attempt to upgrade vLLM on Mac systems. Upstream vLLM forcefully overrides VLLM_TARGET_DEVICE to cpu on Macs which results in an incorrect vLLM resolution and the addition of unneeded dependencies to the generated lockfile.
+
 The companion doc at [`maintaining.md`](./maintaining.md) provides the high-level workflow context. This document is the operational checklist: exact commands, ordered tests, and the compat-shim playbook.
 
 ## Phase 0 — Preflight
@@ -111,7 +113,7 @@ When in doubt, check past upgrade PRs for precedent: `gh pr list --search "vllm"
 
 ## Phase 4 — Extend the CI matrix
 
-In `.github/workflows/test.yml`, add a new entry under `include:` for the **previous** version (the old default). Mirror the format of the existing `vLLM:0.20.x` entries — only `name` and `repo` change. Keep `vLLM:lowest`, `vLLM:main`, and existing intermediates.
+In `.github/workflows/test.yml`, add a new entry under `include:` for **every released version between `vLLM:lowest` and the new target version** that does not already have an entry. The goal is that every supported version (i.e. every version satisfying the `>=lower,<upper` constraint in `pyproject.toml`) has a backwards-compat test job. Mirror the format of the existing intermediate entries — only `name` and `repo` change. Keep `vLLM:lowest`, `vLLM:main`, and any existing intermediates unchanged.
 
 ## Phase 5 — Verify and audit
 
