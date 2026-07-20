@@ -7,6 +7,8 @@ This procedure has produced clean upgrades for past patch releases (0.20.1, 0.20
 !!! note "AI Assistant Skills"
     This procedure is referenced by both Claude Code's `/update-vllm` skill and IBM Bob's `update-vllm` skill. When using these assistants, they will automatically follow this procedure and replace `{VERSION}` with the actual version number you specify.
 
+!!! note Do not attempt to upgrade vLLM on Mac systems. Upstream vLLM forcefully overrides VLLM_TARGET_DEVICE to cpu on Macs which results in an incorrect vLLM resolution and the addition of uneeded dependencies to the generated lockfile.
+
 The companion doc at [`maintaining.md`](./maintaining.md) provides the high-level workflow context. This document is the operational checklist: exact commands, ordered tests, and the compat-shim playbook.
 
 ## Phase 0 — Preflight
@@ -116,17 +118,11 @@ In `.github/workflows/test.yml`, add a new entry under `include:` for **every re
 ## Phase 5 — Verify and audit
 
 1. Re-run `bash format.sh`. (ruff, typos, ty, actionlint should all pass.)
-2. Verify the vLLM lockfile entry resolved to the `+empty` build (not `+cpu`):
-
-   ```bash
-   grep -A3 '^name = "vllm"' uv.lock | grep version
-   # Expected: version = "0.X.Y+empty"
-   ```
-3. Audit `git diff --stat uv.lock`:
+2. Audit `git diff --stat uv.lock`:
    - **Tiny** (~10 lines) → patch bump, only the vLLM rev moved. Expected.
    - **Huge** (~3000+ lines) → vLLM minor release reshuffled transitives. Expected.
    - **Medium** (50–500 lines) → look closely. Make sure unrelated packages didn't drift in surprising ways.
-4. Verify only expected files changed:
+3. Verify only expected files changed:
 
    ```bash
    git status
