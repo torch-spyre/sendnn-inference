@@ -213,6 +213,9 @@ async def test_chunked_prefill_kv_cache_stats(
     # Prefix cache rate won't be 100% because of chunking, but we should still
     # hit _some_ cache
     assert hit_tokens / total_tokens > 0.1
+    # Prefix cache rate shouldn't be over theoretical max.
+    # First order math - 1st prompt all chunks miss, subsequent prompts all chunks hit
+    assert hit_tokens / total_tokens < (requests_finished - 1) / requests_finished
 
 
 async def get_metrics(client: openai.AsyncOpenAI) -> list[str]:
