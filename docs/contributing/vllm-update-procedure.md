@@ -111,16 +111,22 @@ When in doubt, check past upgrade PRs for precedent: `gh pr list --search "vllm"
 
 ## Phase 4 — Extend the CI matrix
 
-In `.github/workflows/test.yml`, add a new entry under `include:` for the **previous** version (the old default). Mirror the format of the existing `vLLM:0.20.x` entries — only `name` and `repo` change. Keep `vLLM:lowest`, `vLLM:main`, and existing intermediates.
+In `.github/workflows/test.yml`, add a new entry under `include:` for **every released version between `vLLM:lowest` and the new target version** that does not already have an entry. The goal is that every supported version (i.e. every version satisfying the `>=lower,<upper` constraint in `pyproject.toml`) has a backwards-compat test job. Mirror the format of the existing intermediate entries — only `name` and `repo` change. Keep `vLLM:lowest`, `vLLM:main`, and any existing intermediates unchanged.
 
 ## Phase 5 — Verify and audit
 
 1. Re-run `bash format.sh`. (ruff, typos, ty, actionlint should all pass.)
-2. Audit `git diff --stat uv.lock`:
+2. Verify the vLLM lockfile entry resolved to the `+empty` build (not `+cpu`):
+
+   ```bash
+   grep -A3 '^name = "vllm"' uv.lock | grep version
+   # Expected: version = "0.X.Y+empty"
+   ```
+3. Audit `git diff --stat uv.lock`:
    - **Tiny** (~10 lines) → patch bump, only the vLLM rev moved. Expected.
    - **Huge** (~3000+ lines) → vLLM minor release reshuffled transitives. Expected.
    - **Medium** (50–500 lines) → look closely. Make sure unrelated packages didn't drift in surprising ways.
-3. Verify only expected files changed:
+4. Verify only expected files changed:
 
    ```bash
    git status
