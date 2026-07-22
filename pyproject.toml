@@ -247,6 +247,6 @@ dev = [
     "pytest-timeout==2.3.1",
     "requests==2.32.3",
     "sentence-transformers>=3.4.1",
-    "aiu-fms-testing-utils>=0.8.2",
+    "aiu-fms-testing-utils>=0.9.0",
     "pytest-mock>=3.15.0",
 ]
