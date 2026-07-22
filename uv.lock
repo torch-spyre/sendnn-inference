@@ -31,7 +31,7 @@ overrides = [
     { name = "torch", specifier = "==2.11.0", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torchvision", specifier = "==0.26.0", index = "https://download.pytorch.org/whl/cpu" },
     { name = "triton", marker = "sys_platform == 'never'" },
-    { name = "vllm", marker = "platform_machine not in 's390x, ppc64le'", git = "https://github.com/vllm-project/vllm?rev=v0.24.0" },
+    { name = "vllm", marker = "platform_machine not in 's390x, ppc64le'", git = "https://github.com/vllm-project/vllm?rev=v0.25.1" },
 ]
 
 [[package]]
@@ -1812,7 +1812,7 @@ wheels = [
 
 [[package]]
 name = "mistral-common"
-version = "1.11.3"
+version = "1.11.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jsonschema" },
@@ -1824,9 +1824,9 @@ dependencies = [
     { name = "tiktoken" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/2e/03/3c5d4c9430da406f8444f9a7b058a6aa89c525fb068a57fe2ab8b04a6d08/mistral_common-1.11.3.tar.gz", hash = "sha256:6437e128fc8a307318440839ca14ddf2e8060056b062233ec0db10352651374c", size = 6360629, upload-time = "2026-06-04T09:01:11.131Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/14/b9/0d7edcc6ff8502e89621a006758a2a36d4972688f521ce584535c5f701ca/mistral_common-1.11.6.tar.gz", hash = "sha256:35ed428e0e886808f0c048adac56843ce77d6cee13c1b54a045ad8d11e77c756", size = 6384808, upload-time = "2026-07-17T13:55:49.173Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7b/76/dbfdf9c59e2a4b0116587626a3768c2a3b2ba1758b5756743918c2337fdc/mistral_common-1.11.3-py3-none-any.whl", hash = "sha256:dbfcef9d0c892727ee08a080f0c1039baed5430b291f5425ffd88892bf09e52c", size = 6533154, upload-time = "2026-06-04T09:01:14.186Z" },
+    { url = "https://files.pythonhosted.org/packages/b1/9c/ec225d35ae66f212208f78f2b2b48de1bb9597f010363eba66439a934316/mistral_common-1.11.6-py3-none-any.whl", hash = "sha256:d719534ae1079070bc3a37ffb4976862f85db7a6c6549085832357b46ff89f4b", size = 6551801, upload-time = "2026-07-17T13:55:51.556Z" },
 ]
 
 [package.optional-dependencies]
@@ -3940,7 +3940,7 @@ requires-dist = [
     { name = "torch", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torchvision", index = "https://download.pytorch.org/whl/cpu" },
     { name = "transformers", specifier = ">=5.12.1" },
-    { name = "vllm", git = "https://github.com/vllm-project/vllm?rev=v0.24.0" },
+    { name = "vllm", git = "https://github.com/vllm-project/vllm?rev=v0.25.1" },
 ]
 
 [package.metadata.requires-dev]
@@ -4597,8 +4597,8 @@ wheels = [
 
 [[package]]
 name = "vllm"
-version = "0.24.0+empty"
-source = { git = "https://github.com/vllm-project/vllm?rev=v0.24.0#ee0da84ab9e04ac7610e28580af62c365e898389" }
+version = "0.25.1+empty"
+source = { git = "https://github.com/vllm-project/vllm?rev=v0.25.1#752a3a504485790a2e8491cacbb35c137339ad34" }
 dependencies = [
     { name = "aiohttp" },
     { name = "anthropic" },
