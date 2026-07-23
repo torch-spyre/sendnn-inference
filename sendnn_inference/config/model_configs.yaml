@@ -26,6 +26,23 @@ _templates:
       FLEX_HDMA_COLLSIZE: 33554432  # 32MB
     num_gpu_blocks_override: 2080
 
+  granite_swa_20b_architecture: &granite_swa_20b_architecture
+    model_type: granite_swa
+    num_hidden_layers: 44
+    max_position_embeddings: 131072
+    hidden_size: 4096
+    vocab_size: 100352
+    num_key_value_heads: 8
+    num_attention_heads: 32
+
+  # device config for TP=4 Granite SWA 20b
+  granite_swa_20b_tp4_device_config: &granite_swa_20b_tp4_device_config
+    env_vars:
+      VLLM_DT_MAX_BATCH_TKV_LIMIT: 131072  # 128k
+      FLEX_HDMA_P2PSIZE: 268435456  # 256MB
+      FLEX_HDMA_COLLSIZE: 33554432  # 32MB
+    num_gpu_blocks_override: 8192
+
   granite_4_8b_architecture: &granite_4_8b_architecture
     model_type: granite
     num_hidden_layers: 40
@@ -271,6 +288,16 @@ models:
         max_model_len: 32768
         max_num_seqs: 32
         device_config: *granite_41_30b_tp4_device_config
+
+  # Granite SWA 20B (prerelease)
+  # TODO (ysc) update with real hf id once the model is public
+  ibm-granite/swa-20b:
+    architecture: *granite_swa_20b_architecture
+    continuous_batching_configs:
+      - tp_size: 4
+        max_model_len: 32768
+        max_num_seqs: 32
+        device_config: *granite_swa_20b_tp4_device_config
 
   # Granite Vision 3.3 2B
   ibm-granite/granite-vision-3.3-2b:
