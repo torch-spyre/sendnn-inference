@@ -12,7 +12,7 @@ readme = "README.md"
 license = {text = "Apache 2"}
 dependencies = [
     "fms-model-optimizer[fp8-infer]>=0.8.3,<0.9",
-    "ibm-fms>=1.11.1,<2",
+    "ibm-fms>=1.13.0,<2",
     # NB: use strict < with the next patch version to not exclude versions with
     # build metadata suffixes
     "vllm>=0.24.0,<0.25.2",
@@ -247,6 +247,6 @@ dev = [
     "pytest-timeout==2.3.1",
     "requests==2.32.3",
     "sentence-transformers>=3.4.1",
-    "aiu-fms-testing-utils>=0.8.2",
+    "aiu-fms-testing-utils>=0.9.0",
     "pytest-mock>=3.15.0",
 ]

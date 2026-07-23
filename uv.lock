@@ -195,7 +195,7 @@ wheels = [
 
 [[package]]
 name = "aiu-fms-testing-utils"
-version = "0.8.4"
+version = "0.9.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fms-model-optimizer", extra = ["fp8-infer"] },
@@ -207,7 +207,7 @@ dependencies = [
     { name = "transformers" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a0/21/2b1c3e796ba90bf13e7a8b9a143ba072a584d7def4f6be704598943bfa34/aiu_fms_testing_utils-0.8.4-py3-none-any.whl", hash = "sha256:98e6c6e7cd34ac8c239d36363ce51358af254afea9d34d731f7909699510e64f", size = 102152, upload-time = "2026-06-08T20:20:32.162Z" },
+    { url = "https://files.pythonhosted.org/packages/a5/73/00766d5a0cbeb63a820e5babccb56a66c3558f40361b51a49ef3412fc823/aiu_fms_testing_utils-0.9.0-py3-none-any.whl", hash = "sha256:42b59a2758d6e0288066dfb41285ac5441f8ba2fc91d2b2e8be442a1b7ae60e2", size = 110782, upload-time = "2026-07-17T16:21:41.706Z" },
 ]
 
 [[package]]
@@ -1365,7 +1365,7 @@ wheels = [
 
 [[package]]
 name = "ibm-fms"
-version = "1.12.1"
+version = "1.13.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "torch", version = "2.11.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "platform_machine != 'aarch64' and sys_platform == 'darwin'" },
@@ -1373,7 +1373,7 @@ dependencies = [
     { name = "transformers" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/37/d8/d15d4280780c236499dc9e991c8f0b65d5be5811659cbac1bcb98ddf0520/ibm_fms-1.12.1-py3-none-any.whl", hash = "sha256:fc9214c98b245703f9fa828988c617c5eb16a3afa16fbbf4b7b34a5a8c5fe927", size = 258422, upload-time = "2026-07-01T16:52:31.722Z" },
+    { url = "https://files.pythonhosted.org/packages/4f/cb/d3a0869c90cdf9d4f60b196c3ad5e77cfa03c86dccbf3f589aa2c0341c46/ibm_fms-1.13.0-py3-none-any.whl", hash = "sha256:e99022faf7f7185e82769d0f17df2561af91bc6bdcf1ff558d543b7bba9c9936", size = 268217, upload-time = "2026-07-16T20:01:34.898Z" },
 ]
 
 [[package]]
@@ -3936,7 +3936,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fms-model-optimizer", extras = ["fp8-infer"], specifier = ">=0.8.3,<0.9" },
-    { name = "ibm-fms", specifier = ">=1.11.1,<2" },
+    { name = "ibm-fms", specifier = ">=1.13.0,<2" },
     { name = "torch", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torchvision", index = "https://download.pytorch.org/whl/cpu" },
     { name = "transformers", specifier = ">=5.12.1" },
@@ -3945,7 +3945,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "aiu-fms-testing-utils", specifier = ">=0.8.2" },
+    { name = "aiu-fms-testing-utils", specifier = ">=0.9.0" },
     { name = "pytest", specifier = ">=8.4.0" },
     { name = "pytest-asyncio", specifier = ">=1.0.0" },
     { name = "pytest-forked", specifier = ">=1.6.0" },
