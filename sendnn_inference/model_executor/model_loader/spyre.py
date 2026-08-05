@@ -579,6 +579,22 @@ class SpyreCausalLM(nn.Module):
             self.mm_device,
         )
 
+    def encode_images(self, mm_features):
+        """Run the vision encoder for the request's image(s), returning packed
+        image features [num_image_tokens, emb_dim]. See MMUtilsBase.encode_images."""
+        return self.mm_model_utils.encode_images(self.fms_model, mm_features, self.mm_device)
+
+    def embed_text(self, input_ids):
+        """Token-embedding lookup only (no vision tower)."""
+        return self.mm_model_utils.embed_text(self.fms_model, input_ids)
+
+    def merge_embeddings(self, input_ids, text_embeds, image_features):
+        """Scatter precomputed image features into text embeddings at the image
+        placeholder positions."""
+        return self.mm_model_utils.merge_embeddings(
+            self.fms_model, input_ids, text_embeds, image_features
+        )
+
     def sample(
         self,
         logits: torch.Tensor,

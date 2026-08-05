@@ -18,6 +18,7 @@ from vllm import SamplingParams
 # the FMS serialization utilities are patched at import time,
 # and the patching is currently NOT idempotent.
 import sendnn_inference.multimodal.mm_mappings.llava_next  # noqa: F401
+from sendnn_inference.multimodal.mm_mappings.llava_next import LlavaNextMMUtils
 
 # We should not use a very large value here, because
 # we do not have tiny multimodal models at the moment.
@@ -75,6 +76,49 @@ def generate_fms_results(processor, model_path, prompts):
 @pytest.mark.skip("Multimodal E2E tests are currently disabled; no tiny model")
 @pytest.mark.cpu
 @pytest.mark.parametrize("model", get_spyre_model_list(isMultimodal=True))
+def test_mm_embedding_decomposition_equivalence(model, monkeypatch):
+    """Gate for the vision-encoder cache: the decomposed embedding path
+    (encode images + embed text + merge) must reproduce the fused
+    ``get_maybe_mm_embeddings`` output bit-for-bit. This is what lets the encoder
+    subprocess cache and reuse pure image features independently of the prompt text.
+    """
+    processor = AutoProcessor.from_pretrained(model.name)
+    hf_config = AutoConfig.from_pretrained(model.name)
+    image_token = processor.decode(hf_config.image_token_index)
+
+    prompts = get_single_image_prompts(1, image_token, tile_size=hf_config.vision_config.image_size)
+    proc_res = processor(
+        text=prompts[0]["prompt"],
+        images=prompts[0]["multi_modal_data"]["image"],
+        return_tensors="pt",
+    )
+    input_ids = proc_res.input_ids
+    mm_features = LlavaNextMMUtils._build_multimodal_spec(proc_res)
+
+    fms_model = get_model(
+        "hf_pretrained",
+        model.name,
+        data_type=torch.bfloat16,
+        fused_weights=False,
+        override_hf_pretrained_config=True,
+        text_config={"head_dim": 128},
+    )
+
+    fused = LlavaNextMMUtils.get_maybe_mm_embeddings(
+        fms_model, input_ids, mm_features, is_decode=False, mm_device="cpu"
+    )
+    text_embeds = LlavaNextMMUtils.embed_text(fms_model, input_ids)
+    image_features = LlavaNextMMUtils.encode_images(fms_model, mm_features, "cpu")
+    decomposed = LlavaNextMMUtils.merge_embeddings(
+        fms_model, input_ids, text_embeds, image_features
+    )
+
+    assert torch.equal(fused, decomposed)
+
+
+@pytest.mark.skip("Multimodal E2E tests are currently disabled; no tiny model")
+@pytest.mark.cpu
+@pytest.mark.parametrize("model", get_spyre_model_list(isMultimodal=True))
 def test_alignment_with_fms(model, mode, monkeypatch):
     # Only run continuous batching with chunked prefill for now (slow tests)
     if mode != "cp":
@@ -119,3 +163,54 @@ def test_alignment_with_fms(model, mode, monkeypatch):
     # and sendnn_inference running with the eager backend.
     for fms_text, vllm_result in zip(fms_texts, vllm_results):
         assert vllm_result["text"] == fms_text
+
+
+@pytest.mark.skip("Multimodal E2E tests are currently disabled; no tiny model")
+@pytest.mark.cpu
+@pytest.mark.parametrize("model", get_spyre_model_list(isMultimodal=True))
+def test_mm_encoder_cache_repeat_consistency(model, monkeypatch):
+    """E2E coverage for prefix caching for MM.
+
+    Repeating the same (image + prompt) must yield an identical result: the
+    vision-encoder cache hit path and the KV-block prefix reuse must produce the
+    same output as the freshly-computed path (no corruption / stale features).
+    The encoder cache is on by default (SENDNN_INFERENCE_MM_ENCODER_CACHE_MB > 0),
+    so the second occurrence is a cache hit.
+    """
+    processor = AutoProcessor.from_pretrained(model.name)
+    hf_config = AutoConfig.from_pretrained(model.name)
+    image_token = processor.decode(hf_config.image_token_index)
+
+    single = list(
+        get_single_image_prompts(
+            1,
+            image_token,
+            tile_size=hf_config.vision_config.image_size,
+        )
+    )
+    # Same image + prompt twice → the 2nd request is a vision-encoder cache hit.
+    prompts = single + single
+
+    sampling_params = SamplingParams(
+        max_tokens=MAX_TOKENS,
+        temperature=0.0,
+        ignore_eos=True,
+        logprobs=0,
+    )
+
+    results = generate_spyre_vllm_output(
+        model=model,
+        prompts=prompts,
+        sampling_params=sampling_params,
+        tensor_parallel_size=1,
+        backend="eager",
+        max_num_seqs=2,
+        monkeypatch=monkeypatch,
+        max_model_len=2048,
+        max_num_batched_tokens=1024,
+    )
+
+    assert results[0]["text"] == results[1]["text"], (
+        "Repeated identical image+prompt produced different output — the MM "
+        "encoder/prefix cache changed the result"
+    )

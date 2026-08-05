@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     SENDNN_INFERENCE_TP_MM_SHARING: bool = True
     SENDNN_INFERENCE_LONG_OUT_PRIO: bool = False
     SENDNN_INFERENCE_PAUSING_ENABLED: bool = True
+    SENDNN_INFERENCE_MM_ENCODER_CACHE_MB: int = 512
 
 logger = init_logger(__name__)
 
@@ -209,6 +210,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # is rotated for fairness.
     "SENDNN_INFERENCE_PAUSING_ENABLED": lambda: bool(
         int(os.getenv("SENDNN_INFERENCE_PAUSING_ENABLED", "1"))
+    ),
+    # Byte budget (in MiB) for the cross-request vision encoder-output cache in the
+    # MM encoder subprocess (and the inline fallback path), keyed by multimodal
+    # content hash (mm_hash). When an image is already cached, the vision tower is
+    # skipped: only the (cheap) text embeddings are recomputed and the cached image
+    # features are merged back in. Set to 0 to disable the cache entirely.
+    "SENDNN_INFERENCE_MM_ENCODER_CACHE_MB": lambda: int(
+        os.getenv("SENDNN_INFERENCE_MM_ENCODER_CACHE_MB", "512")
     ),
 }
 # --8<-- [end:env-vars-definition]

@@ -55,59 +55,98 @@ class Mistral3MMUtils(MMUtilsBase):
 
         # Only merge multimodal features in prefill; nothing mm in decode
         if mm_features:
-            # Looks for ["pixel_values", "image_sizes"] in mm_features
-            if len(mm_features) != 1:
-                raise ValueError("Currently we assume we only embed one mm request at a time")
-            mm_spec = mm_features[0].data
-
-            # when using config and tokenizer are set to `mistral` we don't get
-            # pixel_values in mm_spec. So we are mapping these back here
-            if isinstance(mm_spec, MultiModalKwargsItem) and "images" in mm_spec:
-                mm_spec["pixel_values"] = mm_spec.pop("images")
-
-            if mm_spec is not None:
-                if "pixel_values" not in mm_spec:
-                    raise KeyError("Mistral3 requires pixel_values")
-
-                pixel_values = mm_spec["pixel_values"].data
-                # FMS vision tower expects pixel_values with batch dimension
-                # If squeezed during spec building, add it back
-                if pixel_values.ndim == 3:
-                    pixel_values = pixel_values.unsqueeze(0)
-                # Move pixel_values onto the same device/dtype as the
-                # vision_tower params so the encoder forward can run there
-                # (NNPA / privateuse1 backend, or CPU). mm_device is the device
-                # the vision_tower weights actually ended up on. The merge with
-                # text_embeds happens later inside FMS, where the merged
-                # output ends up on text_embeds.device (CPU) automatically.
-                mm_dtype = envs_spyre.SENDNN_INFERENCE_CPU_MM_DTYPE
-                if pixel_values.device.type != mm_device or pixel_values.dtype != mm_dtype:
-                    pixel_values = pixel_values.to(device=mm_device, dtype=mm_dtype)
-                fms_kwargs["pixel_values"] = pixel_values
-
-                if "image_sizes" in mm_spec:
-                    # Use the processor's image_sizes which tracks the logical image dimensions
-                    # This is used by the projector to correctly split/merge patches
-                    image_sizes_tensor = mm_spec["image_sizes"].data
-                    if image_sizes_tensor.ndim == 1:
-                        # Single image: convert to list of tuples
-                        image_sizes = [(image_sizes_tensor[0].item(), image_sizes_tensor[1].item())]
-                    else:
-                        # Multiple images
-                        image_sizes = [(h.item(), w.item()) for h, w in image_sizes_tensor]
-                else:
-                    # Mistral image input in vLLM doesn't contain image_sizes as attribute, so we
-                    # are calculating based on pixel_values
-                    # Ref: https://github.com/vllm-project/vllm/blob/f97ca671766c5201404e9fc812e35bf2c4e95a01/vllm/model_executor/models/mistral3.py#L516C9-L518C10
-                    image_sizes = [(img.shape[-2], img.shape[-1]) for img in pixel_values]
-
-                fms_kwargs["image_sizes"] = image_sizes
+            # Shared prep with encode_images (keeps the fused and decomposed
+            # paths from drifting). The merge with text_embeds happens later
+            # inside FMS, where the merged output lands on text_embeds.device.
+            pixel_values, image_sizes = Mistral3MMUtils._prepare_vision_inputs(
+                mm_features, mm_device
+            )
+            fms_kwargs["pixel_values"] = pixel_values
+            fms_kwargs["image_sizes"] = image_sizes
 
         # The value of iteration does not matter for decode as long as it's > 0
         input_embeds, _ = fms_model.prepare_inputs_for_generation(
             iteration=0 if not is_decode else 1, input_ids=input_ids, kwargs=fms_kwargs
         )  # ty: ignore[call-non-callable]
         return input_embeds
+
+    @staticmethod
+    def _prepare_vision_inputs(
+        mm_features: list[MultiModalFeatureSpec], mm_device: str
+    ) -> tuple[torch.Tensor, list[tuple[int, int]]]:
+        """Extract and prepare ``(pixel_values, image_sizes)`` for the vision tower.
+
+        Shared by ``get_maybe_mm_embeddings`` and ``encode_images`` so the two
+        paths cannot drift. Handles the mistral tokenizer emitting ``images``
+        instead of ``pixel_values``, restores the batch dim, places pixel_values
+        on the vision_tower's device/dtype, and derives logical ``image_sizes``
+        (falling back to the pixel_values shape when absent).
+        """
+        if len(mm_features) != 1:
+            raise ValueError("Currently we assume we only embed one mm request at a time")
+        mm_spec = mm_features[0].data
+
+        # when config and tokenizer are set to `mistral` we don't get
+        # pixel_values in mm_spec, so map them back here.
+        if isinstance(mm_spec, MultiModalKwargsItem) and "images" in mm_spec:
+            mm_spec["pixel_values"] = mm_spec.pop("images")
+        if mm_spec is None or "pixel_values" not in mm_spec:
+            raise KeyError("Mistral3 requires pixel_values")
+
+        pixel_values = mm_spec["pixel_values"].data
+        # FMS vision tower expects pixel_values with a batch dimension; if it was
+        # squeezed during spec building, add it back.
+        if pixel_values.ndim == 3:
+            pixel_values = pixel_values.unsqueeze(0)
+        # Move pixel_values onto the same device/dtype as the vision_tower params
+        # so the encoder forward can run there (NNPA / privateuse1, or CPU).
+        mm_dtype = envs_spyre.SENDNN_INFERENCE_CPU_MM_DTYPE
+        if pixel_values.device.type != mm_device or pixel_values.dtype != mm_dtype:
+            pixel_values = pixel_values.to(device=mm_device, dtype=mm_dtype)
+
+        if "image_sizes" in mm_spec:
+            # Use the processor's image_sizes (logical image dimensions); the
+            # projector uses these to correctly split/merge patches.
+            image_sizes_tensor = mm_spec["image_sizes"].data
+            if image_sizes_tensor.ndim == 1:
+                image_sizes = [(image_sizes_tensor[0].item(), image_sizes_tensor[1].item())]
+            else:
+                image_sizes = [(h.item(), w.item()) for h, w in image_sizes_tensor]
+        else:
+            # Mistral image input in vLLM has no image_sizes attribute, so derive
+            # it from pixel_values.
+            image_sizes = [(img.shape[-2], img.shape[-1]) for img in pixel_values]
+        return pixel_values, image_sizes  # ty: ignore[invalid-return-type]
+
+    @staticmethod
+    def encode_images(
+        fms_model: torch.nn.Module,
+        mm_features: list[MultiModalFeatureSpec],
+        mm_device: str,
+    ) -> torch.Tensor:
+        """Run the PixtralVision tower + projector for mistral3 and return the
+        packed image features [num_image_tokens, emb_dim]."""
+        pixel_values, image_sizes = Mistral3MMUtils._prepare_vision_inputs(mm_features, mm_device)
+        return fms_model._get_image_features(pixel_values, image_sizes)  # ty: ignore[call-non-callable]
+
+    @staticmethod
+    def embed_text(fms_model: torch.nn.Module, input_ids: torch.Tensor) -> torch.Tensor:
+        return fms_model._get_text_embeddings(input_ids, None)  # ty: ignore[call-non-callable]
+
+    @staticmethod
+    def merge_embeddings(
+        fms_model: torch.nn.Module,
+        input_ids: torch.Tensor,
+        text_embeds: torch.Tensor,
+        image_features: torch.Tensor,
+    ) -> torch.Tensor:
+        return fms_model._merge_multimodal_embeddings(  # ty: ignore[call-non-callable]
+            input_ids,
+            text_embeds,
+            image_features,
+            device=text_embeds.device,
+            dtype=text_embeds.dtype,
+        )
 
     def get_warmup_inputs(self, req_count: int) -> MMWarmupInputs:
         """Generate input for warmup using using dummy image."""

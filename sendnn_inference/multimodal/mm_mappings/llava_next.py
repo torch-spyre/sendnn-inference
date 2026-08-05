@@ -94,47 +94,83 @@ class LlavaNextMMUtils(MMUtilsBase):
         the (potentially compiled) FMS model.
         """
         fms_kwargs = {"use_cache": True}
-        mm_spec_keys = ["pixel_values", "image_sizes"]
 
         # Only merge multimodal features in prefill; nothing mm in decode
         if mm_features:
             assert not is_decode  # We never pass features in decode
-            if len(mm_features) != 1:
-                raise ValueError("Currently we assume we only embed one mm request at a time")
-            mm_spec = mm_features[0].data
-            if mm_spec is not None:
-                # NOTE: This should be pretty safe as it's dependent on the
-                # vLLM/HF processor objects, but we check it anyway to be safe
-                # for now, since transformers 5.0 is just around the corner.
-                if any(k not in mm_spec for k in mm_spec_keys):
-                    raise KeyError(f"Llava Next requires kwargs: {mm_spec_keys}")
-
-                pixel_values = mm_spec["pixel_values"].data
-                # Place pixel_values on the same device/dtype as the
-                # vision_tower so the encoder forward can run on NNPA when the
-                # vision_tower weights ended up on nnpa (CPU otherwise).
-                mm_dtype = envs_spyre.SENDNN_INFERENCE_CPU_MM_DTYPE
-                if pixel_values.device.type != mm_device or pixel_values.dtype != mm_dtype:
-                    pixel_values = pixel_values.to(device=mm_device, dtype=mm_dtype)
-                fms_kwargs["pixel_values"] = pixel_values
-
-                image_sizes = mm_spec["image_sizes"].data
-
-                # Careful about this; if it's 1D, we'll a tensor of shape
-                # [x, y], which will break in a weird way in image packing,
-                # since it assumes it's 2D and will get sad about getting
-                # an int instead of an iterable
-                if image_sizes.ndim == 1:
-                    image_sizes = image_sizes.unsqueeze(0)
-                # image_sizes is an integer index tensor; keep it on CPU
-                # (NNPA dispatch for int tensors would just fall back anyway).
-                fms_kwargs["image_sizes"] = image_sizes
+            # Shared prep with encode_images (keeps the fused and decomposed
+            # paths from drifting). image_sizes stays on CPU (integer index tensor).
+            pixel_values, image_sizes = LlavaNextMMUtils._prepare_vision_inputs(
+                mm_features, mm_device
+            )
+            fms_kwargs["pixel_values"] = pixel_values
+            fms_kwargs["image_sizes"] = image_sizes
 
         # The value of iteration does not matter for decode as long as it's > 0
         input_embeds, _ = fms_model.prepare_inputs_for_generation(
             iteration=0 if not is_decode else 1, input_ids=input_ids, kwargs=fms_kwargs
         )  # ty: ignore[call-non-callable]
         return input_embeds
+
+    @staticmethod
+    def _prepare_vision_inputs(
+        mm_features: list[MultiModalFeatureSpec], mm_device: str
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Extract and prepare ``(pixel_values, image_sizes)`` for the vision tower.
+
+        Shared by ``get_maybe_mm_embeddings`` and ``encode_images`` so the two
+        paths cannot drift. ``pixel_values`` is placed on the vision_tower's
+        device/dtype; ``image_sizes`` is promoted to 2D (kept on CPU — it is an
+        integer index tensor).
+        """
+        if len(mm_features) != 1:
+            raise ValueError("Currently we assume we only embed one mm request at a time")
+        mm_spec = mm_features[0].data
+        mm_spec_keys = ["pixel_values", "image_sizes"]
+        if mm_spec is None or any(k not in mm_spec for k in mm_spec_keys):
+            raise KeyError(f"Llava Next requires kwargs: {mm_spec_keys}")
+
+        pixel_values = mm_spec["pixel_values"].data
+        mm_dtype = envs_spyre.SENDNN_INFERENCE_CPU_MM_DTYPE
+        if pixel_values.device.type != mm_device or pixel_values.dtype != mm_dtype:
+            pixel_values = pixel_values.to(device=mm_device, dtype=mm_dtype)
+
+        image_sizes = mm_spec["image_sizes"].data
+        if image_sizes.ndim == 1:
+            image_sizes = image_sizes.unsqueeze(0)
+        return pixel_values, image_sizes  # ty: ignore[invalid-return-type]
+
+    @staticmethod
+    def encode_images(
+        fms_model: torch.nn.Module,
+        mm_features: list[MultiModalFeatureSpec],
+        mm_device: str,
+    ) -> torch.Tensor:
+        """Run the SiglipVision tower + projector for Llava Next and return the
+        packed image features [num_image_tokens, emb_dim]."""
+        pixel_values, image_sizes = LlavaNextMMUtils._prepare_vision_inputs(mm_features, mm_device)
+        image_features = fms_model.get_image_features(pixel_values, image_sizes)  # ty: ignore[call-non-callable]
+        return fms_model.pack_image_features(  # ty: ignore[call-non-callable]
+            image_features, image_sizes, image_newline=fms_model.image_newline
+        )
+
+    @staticmethod
+    def embed_text(fms_model: torch.nn.Module, input_ids: torch.Tensor) -> torch.Tensor:
+        return fms_model._get_text_embeddings(input_ids)  # ty: ignore[call-non-callable]
+
+    @staticmethod
+    def merge_embeddings(
+        fms_model: torch.nn.Module,
+        input_ids: torch.Tensor,
+        text_embeds: torch.Tensor,
+        image_features: torch.Tensor,
+    ) -> torch.Tensor:
+        image_features = image_features.to(text_embeds.device, text_embeds.dtype)
+        image_positions = (input_ids[0] == fms_model.config.image_token_index).nonzero(
+            as_tuple=True
+        )[0]
+        text_embeds[0, image_positions] = image_features
+        return text_embeds
 
     def get_warmup_inputs(self, req_count: int) -> MMWarmupInputs:
         """Get the inputs to the huggingface processor to create the warmup

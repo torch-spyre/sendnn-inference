@@ -109,6 +109,45 @@ class MMUtilsBase(ABC):
         """
         pass
 
+    # The three methods below decompose ``get_maybe_mm_embeddings`` into its
+    # independently-reusable stages so the (expensive) image encoding can be cached
+    # by mm_hash separately from the text embeddings. Composing
+    # merge(embed_text, encode_images) must reproduce the merged output of
+    # ``get_maybe_mm_embeddings`` (verified by a decomposition-equivalence test).
+
+    @staticmethod
+    @abstractmethod
+    def encode_images(
+        fms_model: torch.nn.Module,
+        mm_features: list[MultiModalFeatureSpec],
+        mm_device: str,
+    ) -> torch.Tensor:
+        """Run the vision tower + projector on the request's image(s).
+
+        Returns the packed image features, shape [num_image_tokens, emb_dim].
+        Depends only on the image content (not the prompt text), so the result is
+        cacheable by mm_hash. ``mm_device`` is where the vision_tower weights live.
+        """
+        pass
+
+    @staticmethod
+    @abstractmethod
+    def embed_text(fms_model: torch.nn.Module, input_ids: torch.Tensor) -> torch.Tensor:
+        """Token-embedding lookup only (no vision tower). Shape [bsz, seq_len, emb_dim]."""
+        pass
+
+    @staticmethod
+    @abstractmethod
+    def merge_embeddings(
+        fms_model: torch.nn.Module,
+        input_ids: torch.Tensor,
+        text_embeds: torch.Tensor,
+        image_features: torch.Tensor,
+    ) -> torch.Tensor:
+        """Scatter ``image_features`` into ``text_embeds`` at the image placeholder
+        positions (``input_ids == image_token_index``) and return the merged tensor."""
+        pass
+
     @abstractmethod
     def get_warmup_inputs(self, req_count: int) -> MMWarmupInputs:
         pass
