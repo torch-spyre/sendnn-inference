@@ -17,9 +17,9 @@ from vllm.logger import init_logger
 from vllm.model_executor.model_loader.weight_utils import download_weights_from_hf
 from vllm.v1.outputs import SamplerOutput
 from vllm.v1.sample.metadata import SamplingMetadata
-from vllm.v1.sample.sampler import Sampler
 
 import sendnn_inference.envs as envs_spyre
+from sendnn_inference.v1.sample.spyre_sampler import ExponentialNoisePool, SpyreSampler
 import sendnn_inference.multimodal as spyre_mm
 import sendnn_inference.utils as utils_spyre
 from sendnn_inference.platform import SpyrePlatform
@@ -113,7 +113,7 @@ class SpyreCausalLM(nn.Module):
     ) -> None:
         super().__init__()
 
-        self.sampler = Sampler()
+        self.sampler = self._build_sampler(vllm_config)
 
         # boolean tensor of length batch size with indices:
         # True for unfinished sequences and
@@ -578,6 +578,33 @@ class SpyreCausalLM(nn.Module):
             is_decode,
             self.mm_device,
         )
+
+    @staticmethod
+    def _build_sampler(vllm_config: VllmConfig) -> SpyreSampler:
+        """Build the sampler, optionally backed by a pre-generated noise pool.
+
+        When SENDNN_INFERENCE_USE_NOISE_POOL is disabled, the returned
+        SpyreSampler behaves identically to upstream vllm's Sampler.
+        """
+        noise_pool: ExponentialNoisePool | None = None
+        if envs_spyre.SENDNN_INFERENCE_USE_NOISE_POOL:
+            vocab_size = vllm_config.model_config.get_vocab_size()
+            max_num_seqs = vllm_config.scheduler_config.max_num_seqs
+            multiplier = envs_spyre.SENDNN_INFERENCE_NOISE_POOL_MULTIPLIER
+            numel = multiplier * max_num_seqs * vocab_size
+            dtype = envs_spyre.get_noise_pool_dtype()
+            logger.info(
+                "Building exponential-noise pool: %d elements "
+                "(%d x max_num_seqs=%d x vocab_size=%d), dtype=%s (~%.2f GiB)",
+                numel,
+                multiplier,
+                max_num_seqs,
+                vocab_size,
+                dtype,
+                numel * torch.empty(0, dtype=dtype).element_size() / (1024**3),
+            )
+            noise_pool = ExponentialNoisePool(numel=numel, dtype=dtype, device="cpu")
+        return SpyreSampler(noise_pool=noise_pool)
 
     def sample(
         self,

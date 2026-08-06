@@ -30,12 +30,25 @@ if TYPE_CHECKING:
     SENDNN_INFERENCE_TP_MM_SHARING: bool = True
     SENDNN_INFERENCE_LONG_OUT_PRIO: bool = False
     SENDNN_INFERENCE_PAUSING_ENABLED: bool = True
+    SENDNN_INFERENCE_USE_NOISE_POOL: bool = False
+    SENDNN_INFERENCE_NOISE_POOL_MULTIPLIER: int = 32
+    SENDNN_INFERENCE_SAMPLER_TIMING: int = 0
 
 logger = init_logger(__name__)
 
 _cache: dict[str, Any] = {}
 
 _CPU_MM_DTYPE_PLATFORM_DEFAULTS = {"s390x": "float32", "ppc64le": "float32"}
+
+
+def get_noise_pool_dtype() -> torch.dtype:
+    """Resolve the dtype for the sampler's exponential-noise pool.
+
+    Follows the same platform defaults as SENDNN_INFERENCE_CPU_MM_DTYPE:
+    float32 on s390x/ppc64le (where reduced-precision RNG is undesirable),
+    float16 elsewhere.
+    """
+    return parse_cpu_mm_dtype(_CPU_MM_DTYPE_PLATFORM_DEFAULTS.get(platform.machine(), "float16"))
 
 
 def override(name: str, value: str) -> None:
@@ -209,6 +222,28 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # is rotated for fairness.
     "SENDNN_INFERENCE_PAUSING_ENABLED": lambda: bool(
         int(os.getenv("SENDNN_INFERENCE_PAUSING_ENABLED", "1"))
+    ),
+    # When "1", the Spyre sampler draws its Gumbel-max exponential noise from a
+    # large pool of random values generated once at model load, instead of
+    # calling Tensor.exponential_() on every decode step. This avoids the slow
+    # per-step random number generation observed on s390x. Defaults to "0"
+    # (disabled), which uses upstream vLLM's on-the-fly random_sample.
+    "SENDNN_INFERENCE_USE_NOISE_POOL": lambda: bool(
+        int(os.getenv("SENDNN_INFERENCE_USE_NOISE_POOL", "0"))
+    ),
+    # Size of the pre-generated exponential-noise pool, expressed as a multiple
+    # of (max_num_seqs * vocab_size). A larger multiplier lengthens the reuse
+    # period (better statistical variety) at the cost of memory. Only used when
+    # SENDNN_INFERENCE_USE_NOISE_POOL is enabled.
+    "SENDNN_INFERENCE_NOISE_POOL_MULTIPLIER": lambda: int(
+        os.getenv("SENDNN_INFERENCE_NOISE_POOL_MULTIPLIER", "32")
+    ),
+    # When > 0, the Spyre sampler times the noise-generation + weighted-sampling
+    # step and logs the average latency every this many sampling calls. Set to
+    # 0 (default) to disable. Useful for comparing the noise pool against
+    # upstream's on-the-fly exponential_().
+    "SENDNN_INFERENCE_SAMPLER_TIMING": lambda: int(
+        os.getenv("SENDNN_INFERENCE_SAMPLER_TIMING", "0")
     ),
 }
 # --8<-- [end:env-vars-definition]
