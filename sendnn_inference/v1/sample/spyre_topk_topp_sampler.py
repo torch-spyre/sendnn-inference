@@ -1,13 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the sendnn-inference project
 
-import warnings
-
 import torch
+from vllm.logger import init_logger
 from vllm.config.model import LogprobsMode
 from vllm.v1.sample.ops.topk_topp_sampler import apply_top_k_top_p, TopKTopPSampler
 
 from sendnn_inference.v1.sample.async_ring_buffer import AsyncExponential_RingBuffer
+
+logger = init_logger(__name__)
 
 
 class SpyreTopKTopPSampler(TopKTopPSampler):
@@ -52,9 +53,8 @@ class SpyreTopKTopPSampler(TopKTopPSampler):
         """Apply top-k/top-p filtering and sample tokens using pre-drawn noise."""
 
         if generators:
-            warnings.warn(
+            logger.warning_once(
                 "Generators are not supported by SpyreTopKTopPSampler. Falling back to base class.",
-                stacklevel=2,
             )
             return super().forward_native(logits, generators, k, p)
 
