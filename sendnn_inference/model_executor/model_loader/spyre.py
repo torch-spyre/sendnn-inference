@@ -105,6 +105,7 @@ def cast_params_for_spyre(
 
     return mm_device
 
+
 class _Fp32LogitsWrapper(nn.Module):
     """Wraps a causal LM so its primary logits output is cast to fp32 as
     part of the traced/compiled graph.
@@ -129,6 +130,7 @@ class _Fp32LogitsWrapper(nn.Module):
     def forward(self, *args, **kwargs):
         logits, past_key_value_states = self.model(*args, **kwargs)
         return logits.float(), past_key_value_states
+
 
 class SpyreCausalLM(nn.Module):
     def __init__(
@@ -161,7 +163,7 @@ class SpyreCausalLM(nn.Module):
         # fp32 inside the traced graph (see _Fp32LogitsWrapper). Only set
         # when running on Spyre (see load_weights); otherwise forward()
         # calls self.fms_model directly.
-        self._compiled_forward: nn.Module | None = None
+        self._compiled_forward = None
 
         self.on_spyre = SpyrePlatform.is_backend_sendnn_enabled()
         self._mask_dtype = torch.float16 if self.on_spyre else torch.float32
