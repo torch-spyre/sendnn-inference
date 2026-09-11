@@ -105,6 +105,30 @@ def cast_params_for_spyre(
 
     return mm_device
 
+class _Fp32LogitsWrapper(nn.Module):
+    """Wraps a causal LM so its primary logits output is cast to fp32 as
+    part of the traced/compiled graph.
+
+    Spyre represents on-device tensors as DLFLOAT16. The sendnn
+    PrimaryOutput node's dtype follows whatever dtype the *compiled*
+    forward() returns, so casting only after calling the compiled model
+    (in eager Python) is too late: the host transfer already happened
+    using the graph's declared dtype, which deeptools would otherwise
+    downcast to IEEE_FP16 on the way back (see
+    Dsm::constructDCIDataConvertNodes in host_node_senops.cpp). Casting
+    here, inside the traced function, makes the compiler target
+    IEEE_FP32 directly, using the existing single-step
+    SEN169_FP16 (DLFLOAT16) -> IEEE_FP32 converter kernel instead of a
+    lossy fp16 intermediate.
+    """
+
+    def __init__(self, model: nn.Module):
+        super().__init__()
+        self.model = model
+
+    def forward(self, *args, **kwargs):
+        logits, past_key_value_states = self.model(*args, **kwargs)
+        return logits.float(), past_key_value_states
 
 class SpyreCausalLM(nn.Module):
     def __init__(
@@ -132,6 +156,12 @@ class SpyreCausalLM(nn.Module):
 
         # number of right pads
         self.n_pads_right = 0
+
+        # Compiled forward that also casts the primary logits output to
+        # fp32 inside the traced graph (see _Fp32LogitsWrapper). Only set
+        # when running on Spyre (see load_weights); otherwise forward()
+        # calls self.fms_model directly.
+        self._compiled_forward: nn.Module | None = None
 
         self.on_spyre = SpyrePlatform.is_backend_sendnn_enabled()
         self._mask_dtype = torch.float16 if self.on_spyre else torch.float32
@@ -351,8 +381,8 @@ class SpyreCausalLM(nn.Module):
             # of caching even though the test run in isolated subprocesses.
             SpyrePlatform.maybe_ensure_sendnn_configured(self.model_config)
 
-            self.fms_model = torch.compile(
-                self.fms_model,
+            self._compiled_forward = torch.compile(
+                _Fp32LogitsWrapper(self.fms_model),
                 backend=envs_spyre.SENDNN_INFERENCE_DYNAMO_BACKEND,
                 options=options,
             )
@@ -514,8 +544,11 @@ class SpyreCausalLM(nn.Module):
                 input_ids=input_ids_or_embeds, position_ids=positions, attn_metadata=attn_metadata
             )
 
-        # Run the model
-        output = self.fms_model(
+        # Run the model. When compiled for Spyre, _compiled_forward also
+        # casts the logits to fp32 inside the traced graph (see
+        # _Fp32LogitsWrapper); on CPU, self.fms_model already runs in fp32.
+        model_fn = self._compiled_forward if self._compiled_forward is not None else self.fms_model
+        output = model_fn(
             input_ids_or_embeds,
             position_ids=positions,
             mask=masks,
