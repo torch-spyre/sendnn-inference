@@ -15,7 +15,7 @@ dependencies = [
     "ibm-fms>=1.13.0,<2",
     # NB: use strict < with the next patch version to not exclude versions with
     # build metadata suffixes
-    "vllm>=0.26.0,<0.27.2",
+    "vllm>=0.26.0,<0.28.1",
     # transformers 5.12.1 includes fixes required for our mistral and granite-4.1-8b models.
     "transformers>=5.12.1",
 
@@ -58,8 +58,8 @@ git_describe_command = "git describe --dirty --tags --long --match 'v*'"
 # So we set to 'never' to prevent installing it or eventually any other
 # by accident
 override-dependencies = [
-    "torch==2.11.0",
-    "torchvision==0.26.0",
+    "torch==2.13.0",
+    "torchvision==0.28.0",
     "triton; sys_platform == 'never'",
     "intel-extension-for-pytorch; sys_platform == 'never'",
 
@@ -95,7 +95,7 @@ build-constraint-dependencies = []
 extra-build-variables = { vllm = { VLLM_TARGET_DEVICE = "empty" } }
 
 [tool.uv.sources]
-vllm = { git = "https://github.com/vllm-project/vllm", rev = "v0.27.1" }
+vllm = { git = "https://github.com/vllm-project/vllm", rev = "v0.28.0" }
 torch = [
   { index = "pytorch-cpu" },
 ]
