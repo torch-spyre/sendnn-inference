@@ -42,6 +42,10 @@ from sendnn_inference.perf_metrics import create_perf_metric_logger
 from sendnn_inference.platform import SpyrePlatform
 from sendnn_inference.utils import exact_div
 from sendnn_inference.v1.sample.spyre_logits_processor import build_logitsprocs_for_cb
+from sendnn_inference.v1.worker.mm_encoder_cache import (
+    MMEncoderCache,
+    cacheable_identifiers,
+)
 from sendnn_inference.v1.worker.mm_shared_memory import (
     cleanup_embeddings,
     dtype_to_idx,
@@ -113,6 +117,11 @@ class SpyreModelRunnerOutput(ModelRunnerOutput):
     # available than the number of scheduled tokens. In that case, the scheduler
     # needs to update its state to reflect the correct number of computed tokens
     prefix_cache_hit_len: dict[str, int] = field(default_factory=dict)
+    # Cumulative MM encoder-cache counters from the inline encode path
+    # (TP=1 / async encoder off / warmup). Used by the scheduler to report the
+    # real MM cache hit rate. Zero when the async encoder subprocess owns encoding.
+    mm_cache_hits: int = 0
+    mm_cache_queries: int = 0
 
 
 @dataclass
@@ -791,6 +800,14 @@ class ChunkedPrefillModelRunner(
         # Initialize performance metric logger for tracking embedding times
         self.perf_logger = create_perf_metric_logger(rank=rank)
 
+        # Cross-request cache of pure image features (keyed by mm_hash), used only
+        # by the inline fallback encode path (TP=1 / async encoder off / warmup).
+        # The async encoder subprocess has its own cache. Per-worker and
+        # deterministic across ranks (identical request stream), so no coordination.
+        self.mm_encoder_cache = MMEncoderCache(
+            capacity_bytes=envs_spyre.SENDNN_INFERENCE_MM_ENCODER_CACHE_MB * 1024 * 1024
+        )
+
         # Pre-computed MM embeddings for waiting requests (keyed by request_id).
         # Populated by store_mm_embeddings() (async path via executor).
         # Consumed and removed by add_new_request() when the request begins prefill.
@@ -1006,10 +1023,8 @@ class ChunkedPrefillModelRunner(
                     # the other ranks that are waiting on broadcast A.
                     t0 = time.time()
                     with torch.inference_mode():
-                        full_embeds = self.model.get_maybe_mm_embeddings(
-                            full_input_tokens,
-                            mm_features=mm_features,
-                            is_decode=False,
+                        full_embeds = self._encode_and_merge_cached(
+                            full_input_tokens, mm_features, req_id
                         )
                     t_elapsed = time.time() - t0
                     logger.info("maybe_mm_embedding processing time: %.2fms", (t_elapsed * 1000))
@@ -1071,11 +1086,7 @@ class ChunkedPrefillModelRunner(
             # original behaviour — no SHM, no coordination overhead.
             t0 = time.time()
             with torch.inference_mode():
-                full_embeds = self.model.get_maybe_mm_embeddings(
-                    full_input_tokens,
-                    mm_features=mm_features,
-                    is_decode=False,
-                )
+                full_embeds = self._encode_and_merge_cached(full_input_tokens, mm_features, req_id)
             # Ensure embeddings are on CPU before passing to the Spyre decoder.
             # When the vision tower runs on NNPA, get_maybe_mm_embeddings returns
             # an NNPA tensor; slicing it into a CPU input_embeds in
@@ -1097,6 +1108,51 @@ class ChunkedPrefillModelRunner(
             req_id,
             self.rank,
         )
+
+    def _encode_and_merge_cached(
+        self, full_input_tokens: torch.Tensor, mm_features: Any, req_id: str
+    ) -> torch.Tensor:
+        """Build merged MM embeddings, reusing cached image features by mm_hash.
+
+        Three stages (mirroring FMS's ``prepare_inputs_for_generation``): reuse or
+        compute the image features (cached; only the vision tower is skipped on a
+        hit), look up the text embeddings, and merge. Must run inside
+        ``torch.inference_mode`` (merge updates the text-embedding tensor in place).
+        Equivalent to ``get_maybe_mm_embeddings(mm_features, is_decode=False)``.
+        """
+        identifiers = cacheable_identifiers(mm_features)
+        cacheable = self.mm_encoder_cache.enabled and len(identifiers) == 1 == len(mm_features)
+        identifier = identifiers[0] if cacheable else None
+
+        image_features = None
+        if cacheable:
+            # Keyed by the mm_hash identifier only; do NOT gate on
+            # mm_position.length (the reserved placeholder span can differ from the
+            # packed feature-row count, so a length check rejects valid entries).
+            cached = self.mm_encoder_cache.get(identifier)  # ty: ignore[invalid-argument-type]
+            if cached is not None:
+                image_features = cached
+                self.mm_encoder_cache.record_lookup(hit=True)
+                cache = self.mm_encoder_cache
+                logger.info(
+                    "vision-encoder-cache hit rate: %.1f%% (req '%s', HIT — skipped tower)",
+                    100 * cache.hits / (cache.hits + cache.misses),
+                    req_id,
+                )
+        if image_features is None:
+            image_features = self.model.encode_images(mm_features)
+            if cacheable:
+                self.mm_encoder_cache.put(identifier, image_features)  # ty: ignore[invalid-argument-type]
+                self.mm_encoder_cache.record_lookup(hit=False)
+                cache = self.mm_encoder_cache
+                logger.info(
+                    "vision-encoder-cache hit rate: %.1f%% (req '%s', MISS)",
+                    100 * cache.hits / (cache.hits + cache.misses),
+                    req_id,
+                )
+
+        text_embeds = self.model.embed_text(full_input_tokens)
+        return self.model.merge_embeddings(full_input_tokens, text_embeds, image_features)
 
     def _prepare_chunked_prefill(self, req_id: str) -> SamplingForwardInputs:
         """
@@ -1653,6 +1709,8 @@ class ChunkedPrefillModelRunner(
             num_nans_in_logits=None,
             tkv=0,
             left_padding={},
+            mm_cache_hits=self.mm_encoder_cache.hits,
+            mm_cache_queries=self.mm_encoder_cache.hits + self.mm_encoder_cache.misses,
         )
 
     def check_incomplete_prefill(self, scheduler_output: SchedulerOutput):
@@ -1924,6 +1982,8 @@ class ChunkedPrefillModelRunner(
             tkv=self.tkv,
             left_padding=left_padding,
             prefix_cache_hit_len=self.get_prefix_cache_len(),
+            mm_cache_hits=self.mm_encoder_cache.hits,
+            mm_cache_queries=self.mm_encoder_cache.hits + self.mm_encoder_cache.misses,
         )
 
     def sample_tokens(self, grammar_output: "GrammarOutput | None") -> ModelRunnerOutput | None:
@@ -2000,6 +2060,8 @@ class ChunkedPrefillModelRunner(
             pooler_output=[],
             tkv=self.tkv,
             left_padding=left_padding,
+            mm_cache_hits=self.mm_encoder_cache.hits,
+            mm_cache_queries=self.mm_encoder_cache.hits + self.mm_encoder_cache.misses,
         )
 
     def get_prefix_cache_len(self) -> dict[str, int]:

@@ -152,8 +152,12 @@ class TestVisionEncoderRunnerInit:
 
 
 class TestVisionEncoderRunnerExecuteModel:
-    def _make_runner_direct(self):
-        """Build a VisionEncoderRunner instance bypassing __init__."""
+    def _make_runner_direct(self, cache_mb: int = 0):
+        """Build a VisionEncoderRunner instance bypassing __init__.
+
+        cache_mb=0 disables the encoder cache (every request encodes).
+        """
+        from sendnn_inference.v1.worker.mm_encoder_cache import MMEncoderCache
         from sendnn_inference.v1.worker.mm_encoder_process import VisionEncoderRunner
 
         runner = VisionEncoderRunner.__new__(VisionEncoderRunner)
@@ -161,14 +165,16 @@ class TestVisionEncoderRunnerExecuteModel:
         runner.mm_device = "cpu"
         runner.mm_utils_cls = MagicMock()
         runner.fms_model = MagicMock()
+        runner.mm_encoder_cache = MMEncoderCache(capacity_bytes=cache_mb * 1024 * 1024)
         return runner
 
     def test_output_is_float16_cpu_contiguous(self):
         """execute_model must cast to _decoder_dtype and return a CPU tensor."""
         runner = self._make_runner_direct()
-        # Simulate vision encoder returning float32
-        raw_embeds = torch.ones(1, 8, 16, dtype=torch.float32)
-        runner.mm_utils_cls.get_maybe_mm_embeddings.return_value = raw_embeds
+        # Simulate the merge stage returning float32 merged embeddings.
+        runner.mm_utils_cls.merge_embeddings.return_value = torch.ones(
+            1, 8, 16, dtype=torch.float32
+        )
 
         job = _make_mm_encode_request()
         result = runner.execute_model(job)
@@ -178,9 +184,9 @@ class TestVisionEncoderRunnerExecuteModel:
         assert result.is_contiguous()
 
     def test_input_ids_built_from_prompt_token_ids(self):
-        """execute_model must pass the job's prompt_token_ids as input_ids."""
+        """execute_model must pass the job's prompt_token_ids as input_ids to embed_text."""
         runner = self._make_runner_direct()
-        runner.mm_utils_cls.get_maybe_mm_embeddings.return_value = torch.zeros(
+        runner.mm_utils_cls.merge_embeddings.return_value = torch.zeros(
             1, 4, 8, dtype=torch.float16
         )
         job = _make_mm_encode_request()
@@ -188,8 +194,8 @@ class TestVisionEncoderRunnerExecuteModel:
 
         runner.execute_model(job)
 
-        call_kwargs = runner.mm_utils_cls.get_maybe_mm_embeddings.call_args
-        input_ids = call_kwargs[0][1]  # second positional arg
+        # embed_text(fms_model, input_ids) — input_ids is the second positional arg.
+        input_ids = runner.mm_utils_cls.embed_text.call_args[0][1]
         assert input_ids.shape == (1, 3)
         assert input_ids.tolist() == [[10, 20, 30]]
 
@@ -253,6 +259,9 @@ class TestEncoderProcessMain:
 
         mock_runner = MagicMock()
         mock_runner.execute_model.return_value = fake_embeds
+        # Real ints so the (widened) result tuple stays picklable across the queue.
+        mock_runner.mm_encoder_cache.hits = 0
+        mock_runner.mm_encoder_cache.misses = 1
         fake_shm = MagicMock()
 
         with (
@@ -268,10 +277,11 @@ class TestEncoderProcessMain:
             encoder_process_main(_make_vllm_config(), jq, rq, stop)
 
         assert rq.get(timeout=2) == "READY"
-        req_id, shape, dtype = rq.get(timeout=2)
+        req_id, shape, dtype, hits, misses = rq.get(timeout=2)
         assert req_id == "req-job"
         assert shape == tuple(fake_embeds.shape)
         assert dtype == fake_embeds.dtype
+        assert (hits, misses) == (0, 1)
 
     def test_encode_failure_puts_none_metadata(self):
         """When execute_model raises, (req_id, None, None) must be put on result queue."""
@@ -287,6 +297,8 @@ class TestEncoderProcessMain:
 
         mock_runner = MagicMock()
         mock_runner.execute_model.side_effect = RuntimeError("encode error")
+        mock_runner.mm_encoder_cache.hits = 0
+        mock_runner.mm_encoder_cache.misses = 0
 
         with patch(
             "sendnn_inference.v1.worker.mm_encoder_process.VisionEncoderRunner",
@@ -295,7 +307,7 @@ class TestEncoderProcessMain:
             encoder_process_main(_make_vllm_config(), jq, rq, stop)
 
         assert rq.get(timeout=2) == "READY"
-        req_id, shape, dtype = rq.get(timeout=2)
+        req_id, shape, dtype, hits, misses = rq.get(timeout=2)
         assert req_id == "req-fail"
         assert shape is None
         assert dtype is None
@@ -316,6 +328,8 @@ class TestEncoderProcessMain:
         jq.put(None)
 
         mock_runner = MagicMock()
+        mock_runner.mm_encoder_cache.hits = 0
+        mock_runner.mm_encoder_cache.misses = 0
 
         with (
             patch(
@@ -327,7 +341,7 @@ class TestEncoderProcessMain:
             encoder_process_main(_make_vllm_config(), jq, rq, stop, cq)
 
         assert rq.get(timeout=2) == "READY"
-        assert rq.get(timeout=2) == ("req-cancel", None, None)
+        assert rq.get(timeout=2) == ("req-cancel", None, None, 0, 0)
         assert not mock_runner.execute_model.called
 
     def test_resubmitted_request_encodes_after_cancel_consumed(self):
@@ -359,6 +373,8 @@ class TestEncoderProcessMain:
         fake_embeds = torch.zeros(1, 4, 8, dtype=torch.float16)
         mock_runner = MagicMock()
         mock_runner.execute_model.return_value = fake_embeds
+        mock_runner.mm_encoder_cache.hits = 0
+        mock_runner.mm_encoder_cache.misses = 0
         mock_shm = MagicMock()
 
         with (
@@ -374,10 +390,10 @@ class TestEncoderProcessMain:
             encoder_process_main(_make_vllm_config(), jq, rq, stop, cq)
 
         assert rq.get(timeout=2) == "READY"
-        # First job: cancelled → abort result
-        assert rq.get(timeout=2) == ("req-1", None, None)
+        # First job: cancelled → abort result (with cumulative cache counters)
+        assert rq.get(timeout=2) == ("req-1", None, None, 0, 0)
         # Re-request: skip_ids cleared → encoded normally
-        req_id, shape, dtype = rq.get(timeout=2)
+        req_id, shape, dtype, hits, misses = rq.get(timeout=2)
         assert req_id == "req-1"
         assert shape is not None
         mock_runner.execute_model.assert_called_once()

@@ -200,6 +200,12 @@ class ChunkedPrefillSpyreSchedulerStats:
     num_paused_reqs: int = 0
     pause_events: int = 0
     resume_events: int = 0
+    # Per-interval delta of the cross-request vision-encoder cache: how many
+    # images reused cached vision features (hits) out of those looked up
+    # (queries). Whole-image granularity, keyed by mm_hash — distinct from
+    # upstream mm_cache_stats and from text prefix/block caching.
+    vision_encoder_cache_hits: int = 0
+    vision_encoder_cache_queries: int = 0
 
 
 class ChunkedPrefillSpyreScheduler(SpyreScheduler):
@@ -288,6 +294,17 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         self.pause_events = 0
         self.resume_events = 0
 
+        # Cross-request vision-encoder cache stats. The worker/encoder-subprocess
+        # caches report cumulative counters (only one path is active per run, so
+        # they sum without double counting); make_stats emits the per-interval
+        # delta into the dedicated sendnn ``vision_encoder_cache`` metric.
+        self._mm_async_cum_hits = 0
+        self._mm_async_cum_queries = 0
+        self._mm_inline_cum_hits = 0
+        self._mm_inline_cum_queries = 0
+        self._mm_reported_hits = 0
+        self._mm_reported_queries = 0
+
         self.request_last_decode_step = defaultdict(int)
         self.long_output_prio = envs_spyre.SENDNN_INFERENCE_LONG_OUT_PRIO
 
@@ -317,6 +334,16 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         for req_id in getattr(scheduler_output, "_spyre_failed_encode_req_ids", []):
             logger.error("MM encode failed for req '%s' — aborting request", req_id)
             self.finish_requests([req_id], RequestStatus.FINISHED_ABORTED)
+
+        # Track the latest cumulative MM encoder-cache counters. The async encoder
+        # subprocess reports via scheduler_output (only when it encoded this step);
+        # the inline fallback path reports via model_runner_output every step.
+        async_hits = getattr(scheduler_output, "_spyre_mm_cache_hits", None)
+        if async_hits is not None:
+            self._mm_async_cum_hits = async_hits
+            self._mm_async_cum_queries = getattr(scheduler_output, "_spyre_mm_cache_queries", 0)
+        self._mm_inline_cum_hits = getattr(model_runner_output, "mm_cache_hits", 0)
+        self._mm_inline_cum_queries = getattr(model_runner_output, "mm_cache_queries", 0)
 
         # Remove completed prefills
         self.ongoing_prefills = [
@@ -1180,8 +1207,11 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
         """Update the scheduler stats from the base scheduler.
         In sendnn-inference the last chunk is always recomputed, even though
         the space is not duplicated.
-        Spyre does not support cross-request MM cache reuse today, so MM cache
-        hit reporting is forced to 0.0%.
+        Spyre forces upstream ``mm_cache_stats`` (vLLM's multimodal processor/input
+        cache) hit reporting to 0.0% — pre-existing Spyre behavior, unrelated to our
+        cache. Our cross-request vision-encoder cache is reported *separately* as a
+        dedicated sendnn ``vision_encoder_cache`` metric, from cumulative counters
+        plumbed back via update_from_output.
         """
         base_stats = super().make_stats(*args, **kwargs)
 
@@ -1194,6 +1224,16 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
                 mm_cache_stats = getattr(base_stats, "mm_cache_stats", None)
                 if mm_cache_stats is not None:
                     mm_cache_stats.hits = 0
+
+            # Per-interval delta of the real vision-encoder cache hit/query counts.
+            # Sum the two sources (async subprocess + inline fallback); only one is
+            # active per run, so the inactive one stays 0.
+            cum_hits = self._mm_async_cum_hits + self._mm_inline_cum_hits
+            cum_queries = self._mm_async_cum_queries + self._mm_inline_cum_queries
+            ve_cache_hits = max(0, cum_hits - self._mm_reported_hits)
+            ve_cache_queries = max(0, cum_queries - self._mm_reported_queries)
+            self._mm_reported_hits = cum_hits
+            self._mm_reported_queries = cum_queries
 
             decode_batch_size = sum(1 for r in self.running if r not in self.ongoing_prefills)
             num_paused_reqs = len(self.paused_decoding_requests)
@@ -1208,6 +1248,8 @@ class ChunkedPrefillSpyreScheduler(SpyreScheduler):
                 num_paused_reqs=num_paused_reqs,
                 pause_events=self.pause_events,
                 resume_events=self.resume_events,
+                vision_encoder_cache_hits=ve_cache_hits,
+                vision_encoder_cache_queries=ve_cache_queries,
             )
             self.pause_events = 0
             self.resume_events = 0

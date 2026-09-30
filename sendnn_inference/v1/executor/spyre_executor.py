@@ -131,13 +131,19 @@ class SpyreMultiprocExecutor(MultiprocExecutor):
                     )
                     failed_encode_req_ids.append(req.request_id)
 
+        # Latest cumulative encoder-cache counters seen this drain (None if the
+        # encoder reported none this step); stamped onto scheduler_output below.
+        mm_cache_hits: int | None = None
+        mm_cache_misses: int | None = None
         if self._mm_result_queue is not None and self._mm_in_flight > 0:
             # Collect completed results (non-blocking drain).
             newly_encoded_metadata: list[tuple] = []
             while True:
                 try:
-                    req_id, shape, dtype = self._mm_result_queue.get_nowait()
+                    req_id, shape, dtype, c_hits, c_misses = self._mm_result_queue.get_nowait()
                     self._mm_in_flight -= 1
+                    # Cumulative snapshots grow monotonically; keep the newest.
+                    mm_cache_hits, mm_cache_misses = c_hits, c_misses
                     if shape is not None and dtype is not None:
                         newly_encoded_metadata.append((req_id, shape, dtype))
                     else:
@@ -176,6 +182,12 @@ class SpyreMultiprocExecutor(MultiprocExecutor):
             scheduler_output._spyre_newly_encoded_req_ids = newly_encoded_req_ids
         if failed_encode_req_ids:
             scheduler_output._spyre_failed_encode_req_ids = failed_encode_req_ids
+        # Surface the async encoder subprocess's cumulative cache counters so the
+        # scheduler can report the real MM cache hit rate.  Only stamp when the
+        # encoder reported this step; otherwise the scheduler keeps its last value.
+        if mm_cache_hits is not None:
+            scheduler_output._spyre_mm_cache_hits = mm_cache_hits
+            scheduler_output._spyre_mm_cache_queries = mm_cache_hits + mm_cache_misses
 
         # Clear _spyre_mm_encode_requests before dispatching to workers.
         # The async encoder owns all MM encoding jobs

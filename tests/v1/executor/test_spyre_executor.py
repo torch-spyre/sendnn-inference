@@ -117,7 +117,7 @@ class TestExecuteModel:
         """When a result is drained, collective_rpc + cleanup must fire."""
         shape = (1, 4, 8)
         dtype = torch.float16
-        _install_queues(executor, result_items=[("req-done", shape, dtype)])
+        _install_queues(executor, result_items=[("req-done", shape, dtype, 3, 1)])
         executor._mm_in_flight = 1
 
         sched = _make_scheduler_output()
@@ -132,16 +132,20 @@ class TestExecuteModel:
         rpc_call = executor._parent_collective_rpc.call_args
         assert rpc_call[0][0] == "store_mm_embeddings"
         # args is passed as a tuple wrapping the metadata list: args=([...],)
+        # The cumulative cache counters are stripped before the RPC (3-tuples).
         assert rpc_call[1]["args"][0] == [("req-done", shape, dtype)]
 
         mock_cleanup.assert_called_once_with("req-done")
         assert sched._spyre_newly_encoded_req_ids == ["req-done"]
+        # Cumulative MM cache counters are stamped for the scheduler.
+        assert sched._spyre_mm_cache_hits == 3
+        assert sched._spyre_mm_cache_queries == 4
         assert executor._mm_in_flight == 0
 
     def test_error_result_sets_failed_req_ids_for_scheduler_retry(self, executor):
         """(req_id, None, None) must be collected into _spyre_failed_encode_req_ids
         so the scheduler can clear _mm_encoding_submitted and allow retry."""
-        _install_queues(executor, result_items=[("req-err", None, None)])
+        _install_queues(executor, result_items=[("req-err", None, None, 0, 0)])
         executor._mm_in_flight = 1
 
         sched = _make_scheduler_output()
@@ -212,7 +216,7 @@ class TestExecuteModel:
         """When _mm_in_flight == 0, the result queue must not be polled."""
         # Even though the queue conceptually has an item, _mm_in_flight==0
         # should prevent any get_nowait() call.
-        _install_queues(executor, result_items=[("req-sneaky", (1, 4, 8), torch.float16)])
+        _install_queues(executor, result_items=[("req-sneaky", (1, 4, 8), torch.float16, 0, 0)])
         executor._mm_in_flight = 0
 
         sched = _make_scheduler_output()

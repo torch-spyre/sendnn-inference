@@ -12,7 +12,6 @@ so all TP workers can read the embedding independently without a rank-0 broadcas
 of the full tensor.
 """
 
-import logging
 import math
 import os
 import platform
@@ -21,13 +20,15 @@ import time
 
 import torch
 from vllm.config import VllmConfig
+from vllm.logger import init_logger
 
 import sendnn_inference.envs as envs_spyre
 from sendnn_inference.model_executor.model_loader.spyre import SpyreCausalLM, cast_params_for_spyre
 from sendnn_inference.platform import SpyrePlatform, THREADING_ENVS
+from sendnn_inference.v1.worker.mm_encoder_cache import MMEncoderCache, cacheable_identifiers
 from sendnn_inference.v1.worker.mm_shared_memory import write_embeddings
 
-logger = logging.getLogger(__name__)
+logger = init_logger(__name__)
 
 
 def _resolve_mm_utils_cls(hf_config):
@@ -122,22 +123,75 @@ class VisionEncoderRunner:
             self.mm_utils_cls.mm_parameter_prefixes,
             is_fp8_model=False,
         )
+        # Cross-request cache of pure image features, keyed by mm_hash. A repeat
+        # image reuses its features and skips the vision tower; text embedding and
+        # merge still run per request so the emitted (merged) embedding is correct.
+        # Process-local — there is a single encoder subprocess, so no coordination.
+        self.mm_encoder_cache = MMEncoderCache(
+            capacity_bytes=envs_spyre.SENDNN_INFERENCE_MM_ENCODER_CACHE_MB * 1024 * 1024
+        )
         logger.info("encoder_process: mm_utils=%s", self.mm_utils_cls.__name__)
         torch.set_grad_enabled(False)
         logger.info("encoder_process: vision model loaded in %.2fs", time.time() - t0)
 
     def execute_model(self, request) -> torch.Tensor:
-        """Encode a single MMEncodeRequest and return a CPU-contiguous tensor."""
+        """Encode a single MMEncodeRequest and return a CPU-contiguous tensor.
+
+        Three stages (mirroring FMS's ``prepare_inputs_for_generation``): reuse or
+        compute the image features (cached by mm_hash), look up the text embeddings,
+        and merge. Only the vision tower is skipped on a cache hit; the emitted
+        tensor is the full merged embedding, so the downstream SHM/worker path is
+        unchanged.
+        """
         input_ids = torch.tensor(request.prompt_token_ids, dtype=torch.int64).unsqueeze(0)
         with torch.inference_mode():
-            embeds = self.mm_utils_cls.get_maybe_mm_embeddings(
-                self.fms_model,
-                input_ids,
-                request.mm_features,
-                is_decode=False,
-                mm_device=self.mm_device,
+            image_features = self._get_or_encode_image_features(request)
+            text_embeds = self.mm_utils_cls.embed_text(self.fms_model, input_ids)
+            embeds = self.mm_utils_cls.merge_embeddings(
+                self.fms_model, input_ids, text_embeds, image_features
             )
         return embeds.to(dtype=self._decoder_dtype).cpu().contiguous()
+
+    def _get_or_encode_image_features(self, request) -> torch.Tensor:
+        """Return packed image features for the request, using the mm_hash cache.
+
+        One image per request (matching the mm_mapping asserts). Warmup identifiers
+        are never cached (handled by ``MMEncoderCache.is_cacheable``).
+        """
+        mm_features = request.mm_features
+        identifiers = cacheable_identifiers(mm_features)
+        cacheable = self.mm_encoder_cache.enabled and len(identifiers) == 1 == len(mm_features)
+        identifier = identifiers[0] if cacheable else None
+
+        if cacheable:
+            # The mm_hash identifier (sha256 of the image) uniquely identifies the
+            # image, so a stored entry is exactly what encode_images would produce.
+            cached = self.mm_encoder_cache.get(identifier)  # ty: ignore[invalid-argument-type]
+            if cached is not None:
+                self.mm_encoder_cache.record_lookup(hit=True)
+                logger.info(
+                    "encoder_process: vision-encoder-cache hit rate: %.1f%% "
+                    "(req '%s', HIT — skipped tower)",
+                    self._hit_rate() * 100,
+                    request.request_id,
+                )
+                return cached
+
+        image_embed = self.mm_utils_cls.encode_images(self.fms_model, mm_features, self.mm_device)
+        if cacheable:
+            self.mm_encoder_cache.put(identifier, image_embed)  # ty: ignore[invalid-argument-type]
+            self.mm_encoder_cache.record_lookup(hit=False)
+            logger.info(
+                "encoder_process: vision-encoder-cache hit rate: %.1f%% (req '%s', MISS)",
+                self._hit_rate() * 100,
+                request.request_id,
+            )
+        return image_embed
+
+    def _hit_rate(self) -> float:
+        cache = self.mm_encoder_cache
+        total = cache.hits + cache.misses
+        return (cache.hits / total) if total else 0.0
 
 
 # ── Process entry point ───────────────────────────────────────────────────────
@@ -301,7 +355,10 @@ def encoder_process_main(
         # can clean up promptly instead of waiting for a timeout.
         if req_id in skip_ids:
             skip_ids.discard(req_id)
-            result_queue.put((req_id, None, None))
+            # Carry the current cumulative cache counters even on skip so the
+            # scheduler always sees the latest hit/miss totals.
+            cache = runner.mm_encoder_cache
+            result_queue.put((req_id, None, None, cache.hits, cache.misses))
             logger.debug("encoder_process: skipped encode for cancelled req '%s'", req_id)
             continue
 
@@ -316,11 +373,15 @@ def encoder_process_main(
             shm.close()
 
             t_elapsed = time.time() - t0
-            result_queue.put((req_id, tuple(embeds.shape), embeds.dtype))
+            # Cumulative encoder-cache counters ride along so the scheduler can
+            # surface the real MM cache hit rate (see scheduler.make_stats).
+            cache = runner.mm_encoder_cache
+            result_queue.put((req_id, tuple(embeds.shape), embeds.dtype, cache.hits, cache.misses))
             # Tombstone: a late cancel may still arrive on cancel_queue for this req_id.
             processed_ids.add(req_id)
             logger.info("maybe_mm_embedding processing time: %.2fms", t_elapsed * 1000)
         except Exception as exc:
             logger.exception("encoder_process: failed to execute_model '%s': %s", req_id, exc)
-            result_queue.put((req_id, None, None))
+            cache = runner.mm_encoder_cache
+            result_queue.put((req_id, None, None, cache.hits, cache.misses))
             processed_ids.add(req_id)
