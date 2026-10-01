@@ -303,6 +303,50 @@ models:
         max_num_seqs: 32
         device_config: *granite_8b_tp4_device_config
 
+  # Granite 4.2 8B
+  ibm-granite/granite-4.2-8b:
+    architecture:
+      <<: *granite_4_8b_architecture
+    platforms: [x86_64, ppc64le, s390x]
+
+    # Continuous batching configurations
+    continuous_batching_configs:
+      - tp_size: 1
+        max_model_len: 3072
+        max_num_seqs: 16
+      - tp_size: 1
+        max_model_len: 8192
+        max_num_seqs: 4
+      - tp_size: 2
+        max_model_len: 8192
+        max_num_seqs: 4
+      - tp_size: 4
+        max_model_len: 32768
+        max_num_seqs: 32
+        device_config: *granite_8b_tp4_device_config
+
+  # Granite 4.2 8B FP8
+  ibm-granite/granite-4.2-8b-fp8:
+    architecture:
+      <<: *granite_4_8b_architecture
+      quantization_config:
+        format: float-quantized
+    platforms: [x86_64, ppc64le, s390x]
+
+    # Continuous batching configurations
+    continuous_batching_configs:
+      - tp_size: 1
+        max_model_len: 3072
+        max_num_seqs: 16
+      - tp_size: 4
+        max_model_len: 16384
+        max_num_seqs: 4
+        device_config: *granite_8b_tp4_device_config
+      - tp_size: 4
+        max_model_len: 32768
+        max_num_seqs: 32
+        device_config: *granite_8b_tp4_device_config
+
   # Granite 4.1 30B
   ibm-granite/granite-4.1-30b:
     architecture: *granite_41_30b_architecture
